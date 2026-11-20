@@ -17,15 +17,19 @@ FROM ${BASE_IMAGE}
 
 # Live boot from the ISO (dracut's dmsquash-live), the ISO bootloaders for
 # both 64- and 32-bit UEFI, and what image-builder needs to assemble the ISO.
-# bootc images ship an empty /boot/efi; the ISO build takes its EFI files
-# from there, so the shims are reinstalled to put them back.
-RUN dnf5 install -y \
+# bootc images ship no /boot/efi; the ISO build takes its EFI files from
+# there, so it's created first and the shims/GRUBs reinstalled -- their
+# scriptlets then copy the files in (in the system image they can't).
+RUN mkdir -p /boot/efi \
+    && dnf5 install -y \
         dracut-live \
         grub2-efi-x64-cdboot \
         grub2-efi-ia32-cdboot \
         xorriso \
         squashfs-tools \
     && dnf5 reinstall -y shim-x64 shim-ia32 grub2-efi-x64 grub2-efi-ia32 \
+    && ls -R /boot/efi/EFI \
+    && test -f /boot/efi/EFI/BOOT/BOOTIA32.EFI \
     && dnf5 clean all
 
 RUN mkdir -p /usr/lib/immutable-kiosk \

@@ -135,9 +135,7 @@ build-raw $variant="x86" $target_image=("localhost/" + image_name + "-" + varian
         *.xz) xz -d "${RAW}"; RAW=${RAW%.xz} ;;
         *.zst) zstd -d --rm "${RAW}"; RAW=${RAW%.zst} ;;
     esac
-    CTR=$(podman create "${target_image}:${tag}")
-    rm -rf output/efi && podman cp "${CTR}:/usr/lib/bootupd/updates/EFI" output/efi
-    podman rm "${CTR}"
+    rm -rf output/efi && ./scripts/extract-efi.sh "${target_image}:${tag}" output/efi
     ./scripts/ensure-efi-ia32.sh "${RAW}" output/efi
     mv "${RAW}" dist/disk.raw
     ./scripts/make-payload.sh dist/disk.raw dist/payload "${target_image}:${tag}" "local-$(date +%Y%m%d)"

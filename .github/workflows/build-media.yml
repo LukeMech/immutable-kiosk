@@ -129,9 +129,7 @@ jobs:
 
           # The image's own EFI payload, the source for anything bootupd left out.
           sudo podman pull "${IMAGE}"
-          CTR=$(sudo podman create "${IMAGE}")
-          sudo podman cp "${CTR}:/usr/lib/bootupd/updates/EFI" efi
-          sudo podman rm "${CTR}"
+          sudo ./scripts/extract-efi.sh "${IMAGE}" efi
           sudo chown -R "$(id -u):$(id -g)" efi
           if [[ "${{ steps.dev.outputs.efi_ia32 }}" == "true" ]]; then
             ./scripts/ensure-efi-ia32.sh "${RAW}" efi
