@@ -16,7 +16,8 @@ ARG BASE_IMAGE=ghcr.io/lukemech/immutable-kiosk-x86:latest
 FROM ${BASE_IMAGE}
 
 # Live boot from the ISO (dracut's dmsquash-live), the ISO bootloaders for
-# both 64- and 32-bit UEFI, and what image-builder needs to assemble the ISO.
+# both 64- and 32-bit UEFI, and what image-builder needs to assemble the ISO
+# (it runs its stages inside this image: xorrisofs, mksquashfs, implantisomd5).
 # bootc images ship no /boot/efi, but the ISO build takes its EFI files from
 # there, so it's filled here. Since Fedora 45 the packages keep their files in
 # /usr/lib/efi/<pkg>/<ver>/EFI/ and only their %posttrans scriptlets copy them
@@ -29,6 +30,7 @@ RUN dnf5 install -y \
         grub2-efi-ia32-cdboot \
         xorriso \
         squashfs-tools \
+        isomd5sum \
     && mkdir -p /boot/efi/EFI/BOOT /boot/efi/EFI/fedora \
     && dnf5 reinstall -y shim-x64 shim-ia32 grub2-efi-x64 grub2-efi-ia32 \
     && for t in /usr/lib/efi/*/*/EFI /usr/lib/bootupd/updates/EFI; do \
