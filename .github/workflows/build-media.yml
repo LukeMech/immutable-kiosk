@@ -1,0 +1,219 @@
+name: Build disk images and installer ISOs
+
+# Called by build.yml after a release is published (attaches to it), or run
+# by hand from the Actions UI (artifacts only, unless publish + tag).
+#
+# Per device in images/devices.toml:
+#   1. raw disk image of the published system image (image-builder), checked
+#      for 32-bit UEFI boot files (scripts/ensure-efi-ia32.sh);
+#   2. that image compressed into the installer payload (scripts/make-payload.sh);
+#   3. the installer container (installer/Containerfile: the system image +
+#      installer mode + payload) -> bootable ISO (image-builder bootc-generic-iso);
+#   4. ISO checked (scripts/check-iso.sh), split if >= 2 GiB, attached.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Attach to an existing release"
+        type: boolean
+        default: false
+      tag:
+        description: "Existing release tag (required if publish is checked)"
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      tag:
+        type: string
+        default: ""
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
+  DEFAULT_TAG: "latest"
+  LOCAL_REGISTRY: "localhost:5000"
+
+concurrency:
+  group: build-media-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover devices
+    runs-on: ubuntu-latest
+    outputs:
+      devices: ${{ steps.list.outputs.devices }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: List devices
+        id: list
+        run: |
+          set -euo pipefail
+          devices=$(python3 -c '
+          import json, tomllib
+          with open("images/devices.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(json.dumps(sorted(k for k, v in data.items() if k != "default" and "variant" in v)))
+          ')
+          echo "Discovered devices: ${devices}"
+          echo "devices=${devices}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build media (${{ matrix.device }})
+    needs: discover
+    strategy:
+      matrix:
+        device: ${{ fromJson(needs.discover.outputs.devices) }}
+      fail-fast: false
+    # Not 26.04: osbuild can't mount the container storage there
+    # (lm-server's build-iso.yml, same pin).
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # The system image, its raw disk, the installer image holding a
+      # compressed copy of that disk, and the ISO holding all of it: more
+      # than the stock runner's free space.
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6 # v10
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y podman skopeo zstd mtools gdisk xorriso jq
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Load device config
+        id: dev
+        run: |
+          set -euo pipefail
+          python3 - "${{ matrix.device }}" >> "$GITHUB_OUTPUT" <<'PY'
+          import sys, tomllib
+          with open("images/devices.toml", "rb") as f:
+              d = tomllib.load(f)[sys.argv[1]]
+          print(f"variant={d['variant']}")
+          print(f"efi_ia32={'true' if d.get('efi_ia32') else 'false'}")
+          PY
+
+      - name: Prepare environment
+        run: |
+          IMAGE="${IMAGE_REGISTRY,,}/immutable-kiosk-${{ steps.dev.outputs.variant }}:${DEFAULT_TAG}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "INSTALLER=${LOCAL_REGISTRY}/immutable-kiosk-installer-${{ matrix.device }}:latest" >> "$GITHUB_ENV"
+          echo "OUT=immutable-kiosk-${{ matrix.device }}${{ inputs.tag && format('-{0}', inputs.tag) || '' }}" >> "$GITHUB_ENV"
+          echo "ISO_NAME=immutable-kiosk-installer-${{ matrix.device }}${{ inputs.tag && format('-{0}', inputs.tag) || '' }}.iso" >> "$GITHUB_ENV"
+
+      - name: Build disk image
+        uses: osbuild/image-builder-action@a56f95dd77327e604a4f4d9fc06a9641313fda36 # main
+        with:
+          image_type: raw
+          bootc_ref: ${{ env.IMAGE }}
+          bootc_default_fs: btrfs
+
+      - name: Check 32-bit UEFI boot files, make the payload
+        run: |
+          set -euxo pipefail
+          RAW=$(sudo find output -iname '*.raw*' -print -quit)
+          [[ -n "${RAW}" ]] || { echo "no raw disk image under output/" >&2; sudo find output; exit 1; }
+          sudo chown -R "$(id -u):$(id -g)" output
+          case "${RAW}" in
+            *.xz) xz -d "${RAW}"; RAW=${RAW%.xz} ;;
+            *.zst) zstd -d --rm "${RAW}"; RAW=${RAW%.zst} ;;
+          esac
+
+          # The image's own EFI payload, the source for anything bootupd left out.
+          sudo podman pull "${IMAGE}"
+          CTR=$(sudo podman create "${IMAGE}")
+          sudo podman cp "${CTR}:/usr/lib/bootupd/updates/EFI" efi
+          sudo podman rm "${CTR}"
+          sudo chown -R "$(id -u):$(id -g)" efi
+          if [[ "${{ steps.dev.outputs.efi_ia32 }}" == "true" ]]; then
+            ./scripts/ensure-efi-ia32.sh "${RAW}" efi
+          fi
+
+          mkdir -p dist
+          mv "${RAW}" disk.raw
+          sudo rm -rf output
+          ./scripts/make-payload.sh disk.raw dist/payload "${IMAGE}" "${{ inputs.tag || 'manual' }}"
+          rm -f disk.raw
+
+          # The same disk image as a release asset of its own: for writing it
+          # some other way (another Linux on the tablet, a USB eMMC reader).
+          mkdir -p release
+          cp dist/payload/disk.raw.zst "release/${OUT}.img.zst"
+          (cd release && sha256sum "${OUT}.img.zst" > "${OUT}.img.zst.sha256")
+
+      # image-builder-action always pulls bootc_ref, and a localhost/ image
+      # can't be pulled: the installer goes into a registry that only lives on
+      # this runner for this job (as in lm-server's build-iso.yml).
+      - name: Start a local registry
+        run: |
+          set -euxo pipefail
+          printf '[[registry]]\nlocation = "%s"\ninsecure = true\n' "${LOCAL_REGISTRY}" |
+            sudo tee /etc/containers/registries.conf.d/50-local-registry.conf
+          sudo podman run -d --rm --name registry -p "127.0.0.1:5000:5000" docker.io/library/registry:2
+          timeout 30 bash -c "until curl -fsS http://${LOCAL_REGISTRY}/v2/ >/dev/null; do sleep 1; done"
+
+      - name: Build and push the installer container
+        run: |
+          set -euxo pipefail
+          sudo podman build --build-arg "BASE_IMAGE=${IMAGE}" --tag "${INSTALLER}" -f installer/Containerfile .
+          sudo podman push "${INSTALLER}"
+          rm -rf dist/payload
+
+      - name: Build ISO
+        uses: osbuild/image-builder-action@a56f95dd77327e604a4f4d9fc06a9641313fda36 # main
+        with:
+          image_type: bootc-generic-iso
+          bootc_ref: ${{ env.INSTALLER }}
+
+      - name: Check the ISO
+        id: iso
+        run: |
+          set -euo pipefail
+          ISO=$(sudo find output -iname '*.iso' -print -quit)
+          [[ -n "${ISO}" ]] || { echo "no ISO produced" >&2; exit 1; }
+          sudo mv "${ISO}" "release/${ISO_NAME}"
+          sudo chown "$(id -u):$(id -g)" "release/${ISO_NAME}"
+          rc=0
+          ./scripts/check-iso.sh "release/${ISO_NAME}" installer/iso.yaml || rc=$?
+          if [[ ${rc} == 2 ]]; then
+            if [[ "${{ steps.dev.outputs.efi_ia32 }}" == "true" ]]; then
+              echo "::warning title=No 32-bit UEFI boot on the ISO::${ISO_NAME} has no BOOTIA32.EFI -- ${{ matrix.device }} can't boot it. The .img.zst release asset is unaffected.."
+            fi
+          elif [[ ${rc} != 0 ]]; then
+            exit "${rc}"
+          fi
+
+      - name: Prepare release files
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum "${ISO_NAME}" > "${ISO_NAME}.sha256"
+          # GitHub release assets are capped at 2 GiB.
+          if (( $(stat -c %s "${ISO_NAME}") >= 2147483648 )); then
+            split -b 2000M -d -a 2 "${ISO_NAME}" "${ISO_NAME}.part-" && rm -f "${ISO_NAME}"
+          fi
+          ls -la
+
+      - name: Upload artifacts
+        if: inputs.publish != true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: immutable-kiosk-${{ matrix.device }}-media
+          path: release/
+          retention-days: 3
+
+      - name: Attach to release
+        if: inputs.publish == true
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          tag_name: ${{ inputs.tag }}
+          fail_on_unmatched_files: true
+          files: release/*

@@ -1,0 +1,3 @@
+# Quiet boot straight into the kiosk: no console text, no blinking cursor
+# while cage starts.
+kargs = ["quiet", "loglevel=3", "vt.global_cursor_default=0", "consoleblank=0"]

@@ -1,0 +1,22 @@
+# A device (what build-media.yml matrixes over) is one physical model: which
+# variant it runs, plus the few runtime defaults that differ per model.
+#
+# Shipped read-only into every image as /usr/share/immutable-kiosk/devices.toml.
+# kiosk-shell finds the running device by matching `dmi_product` against
+# /sys/class/dmi/id/product_name (substring) and uses its defaults until the
+# user changes them in Settings. Unknown hardware gets the [default] values.
+#
+# rotation: "portrait" | "landscape" (picked from the panel's native mode at
+# runtime), or a fixed wlr-randr transform: "normal" | "90" | "180" | "270".
+
+[default]
+rotation = "landscape"
+
+[hp-pro-tablet-408]
+name = "HP Pro Tablet 408 G1 (Intel Atom Z3736F, 32-bit UEFI)"
+variant = "x86"
+dmi_product = "HP Pro Tablet 408"
+rotation = "portrait"
+# The firmware only boots EFI/BOOT/BOOTIA32.EFI: the disk image and the ISO
+# both get checked for it in build-media.yml.
+efi_ia32 = true

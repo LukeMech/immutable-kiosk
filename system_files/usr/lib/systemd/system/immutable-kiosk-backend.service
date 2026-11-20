@@ -1,0 +1,13 @@
+[Unit]
+Description=immutable-kiosk settings API (kioskd, localhost only)
+After=network.target NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/immutable-kiosk/kioskd
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

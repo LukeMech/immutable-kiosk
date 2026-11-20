@@ -1,0 +1,27 @@
+{
+    "default": [
+        {
+            "type": "reject"
+        }
+    ],
+    "transports": {
+        "docker": {
+            "ghcr.io/lukemech": [
+                {
+                    "type": "sigstoreSigned",
+                    "keyPath": "/etc/pki/containers/lukemech-cosign.pub",
+                    "signedIdentity": {
+                        "type": "matchRepository"
+                    }
+                }
+            ]
+        },
+        "containers-storage": {
+            "": [
+                {
+                    "type": "insecureAcceptAnything"
+                }
+            ]
+        }
+    }
+}

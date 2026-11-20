@@ -1,0 +1,395 @@
+#!/usr/bin/python3
+"""kiosk-shell -- the only window cage ever shows.
+
+Two WebKit views in a stack:
+  * "hmi":      the configured HMI (Beckhoff TwinCAT HMI / TF2000 or any web
+                HMI), fullscreen. A small invisible hot corner, held for
+                ~2 s, opens Settings. If the HMI can't be reached, an error
+                page with a big "Ustawienia" button replaces it and the HMI
+                is retried every few seconds.
+  * "settings": kioskd's local page (http://127.0.0.1:8088/) -- Wi-Fi, IP,
+                HMI address, updates. On the installer ISO this is the only
+                view and shows the installer instead.
+
+Two separate views rather than the HMI in an <iframe>: HMI servers commonly
+forbid framing (X-Frame-Options), and this way the HMI's page never shares a
+JavaScript context with Settings.
+
+Settings talks back through a WebKit script message handler ("kiosk") that
+only the Settings view registers.
+"""
+
+import json
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("WebKit", "6.0")
+from gi.repository import Gdk, GLib, Gtk, WebKit  # noqa: E402
+
+API = "http://127.0.0.1:8088"
+SETTINGS_URL = f"{API}/"
+OSK_JS = Path("/usr/share/immutable-kiosk/web/osk.js")
+DATA = Path(GLib.get_user_data_dir()) / "immutable-kiosk"
+CACHE = Path(GLib.get_user_cache_dir()) / "immutable-kiosk"
+
+CSS = b"""
+window, stack { background: #10151c; }
+.hotcorner { background: transparent; }
+.hotcorner.armed { background: radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%); }
+"""
+
+CORNERS = {
+    "top-left": (Gtk.Align.START, Gtk.Align.START),
+    "top-right": (Gtk.Align.END, Gtk.Align.START),
+    "bottom-left": (Gtk.Align.START, Gtk.Align.END),
+    "bottom-right": (Gtk.Align.END, Gtk.Align.END),
+}
+
+
+def log(*a):
+    print("kiosk-shell:", *a, file=sys.stderr, flush=True)
+
+
+def api_get(path, timeout=2):
+    req = urllib.request.Request(API + path, headers={"X-Kiosk": "1"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+# ------------------------------------------------------------ rotation
+
+def wlr_outputs():
+    """[(name, width, height)] of enabled outputs, size in the panel's native orientation."""
+    try:
+        out = subprocess.run(["wlr-randr", "--json"], capture_output=True, text=True, timeout=5)
+        outputs = json.loads(out.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        log("wlr-randr failed:", e)
+        return []
+    result = []
+    for o in outputs:
+        if not o.get("enabled", True):
+            continue
+        mode = next((m for m in o.get("modes", []) if m.get("current")), None)
+        if mode:
+            result.append((o["name"], mode["width"], mode["height"]))
+    return result
+
+
+def apply_rotation(rotation):
+    for name, w, h in wlr_outputs():
+        if rotation == "portrait":
+            transform = "90" if w > h else "normal"
+        elif rotation == "landscape":
+            transform = "90" if h > w else "normal"
+        else:
+            transform = rotation
+        log(f"output {name} {w}x{h}: transform {transform} ({rotation})")
+        subprocess.run(["wlr-randr", "--output", name, "--transform", transform], timeout=5)
+
+
+# ------------------------------------------------------------ error page
+
+ERROR_PAGE = """<!doctype html><html lang="pl"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html,body{{margin:0;height:100%;background:#10151c;color:#e6edf3;
+    font:18px/1.45 "Noto Sans",system-ui,sans-serif;-webkit-user-select:none}}
+  main{{display:flex;flex-direction:column;justify-content:center;align-items:center;
+    height:100%;padding:24px;box-sizing:border-box;text-align:center;gap:14px}}
+  h1{{font-size:26px;margin:0}} p{{margin:0;color:#9aa7b4;max-width:34em;overflow-wrap:anywhere}}
+  code{{color:#e6edf3}}
+  .row{{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:18px}}
+  button{{font:inherit;font-weight:600;min-height:64px;padding:0 28px;border-radius:14px;border:0;
+    background:#2f81f7;color:#fff}} button.sec{{background:#273241}}
+</style>
+<main>
+  <h1>{title}</h1>
+  <p>{detail}</p>
+  <p>Ponowna próba za <span id="s">{retry}</span> s</p>
+  <div class="row">
+    <button onclick="go('settings')">⚙ Ustawienia</button>
+    <button class="sec" onclick="go('retry')">↻ Spróbuj teraz</button>
+  </div>
+</main>
+<script>
+  function go(c){{window.webkit.messageHandlers.kioskNav.postMessage(c)}}
+  let s={retry};setInterval(()=>{{if(s>0)document.getElementById('s').textContent=--s}},1000);
+</script></html>"""
+
+
+def is_benign(error):
+    """A load replaced by another one (navigation, our own retry) -- not a failure."""
+    if error.domain == "WebKitNetworkError":
+        return error.code == int(WebKit.NetworkError.CANCELLED)
+    if error.domain == "WebKitPolicyError":
+        return error.code == int(WebKit.PolicyError.FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE)
+    return False
+
+
+def esc(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+# ------------------------------------------------------------ app
+
+class KioskShell(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="io.github.lukemech.ImmutableKiosk")
+        self.cfg = None
+        self.retry_source = None
+        self.loaded_url = None
+        self.hmi = None
+
+    # -- setup
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.win = Gtk.ApplicationWindow(application=self, title="Kiosk")
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=150)
+        self.overlay = Gtk.Overlay(child=self.stack)
+        self.win.set_child(self.overlay)
+
+        self.settings = self.make_settings_view()
+        self.stack.add_named(self.settings, "settings")
+
+        self.cfg = self.wait_for_config()
+        GLib.idle_add(apply_rotation, self.cfg.get("rotation_effective", "landscape"))
+
+        if self.cfg.get("mode") != "installer":
+            DATA.mkdir(parents=True, exist_ok=True)
+            CACHE.mkdir(parents=True, exist_ok=True)
+            # Persistent: TwinCAT HMI's login session survives a restart.
+            self.hmi_session = WebKit.NetworkSession.new(str(DATA / "hmi"), str(CACHE / "hmi"))
+            self.hmi = self.make_hmi_view()
+            self.stack.add_named(self.hmi, "hmi")
+            self.hotcorner = self.make_hotcorner()
+            self.overlay.add_overlay(self.hotcorner)
+            self.apply_hmi_config(force_load=True)
+
+        self.settings.load_uri(SETTINGS_URL)
+        if self.hmi and self.cfg.get("hmi_url"):
+            self.show("hmi")
+        else:
+            self.show("settings")  # first boot: nothing to show yet but Settings
+
+        self.win.fullscreen()
+        self.win.present()
+
+    def wait_for_config(self):
+        # kioskd starts first (unit ordering), but give it a moment on a slow eMMC.
+        for _ in range(60):
+            try:
+                return api_get("/api/config")
+            except OSError:
+                GLib.usleep(500_000)
+        log("kioskd unreachable, starting with defaults")
+        return {"mode": "kiosk", "hmi_url": "", "rotation_effective": "landscape",
+                "osk_in_hmi": True, "accept_self_signed": True, "zoom": 1.0, "retry_seconds": 10}
+
+    def common_view_setup(self, view):
+        s = view.get_settings()
+        s.set_enable_developer_extras(False)
+        s.set_javascript_can_open_windows_automatically(False)
+        s.set_enable_back_forward_navigation_gestures(False)
+        view.connect("context-menu", lambda *a: True)
+
+    def make_settings_view(self):
+        ucm = WebKit.UserContentManager()
+        ucm.register_script_message_handler("kiosk", None)
+        ucm.connect("script-message-received::kiosk", self.on_settings_message)
+        view = WebKit.WebView(user_content_manager=ucm,
+                              network_session=WebKit.NetworkSession.new_ephemeral())
+        self.common_view_setup(view)
+        view.connect("decide-policy", self.settings_policy)
+        view.connect("web-process-terminated", lambda v, r: v.load_uri(SETTINGS_URL))
+        # kioskd restarting / not up yet: keep trying.
+        view.connect("load-failed", self.settings_load_failed)
+        return view
+
+    def make_hmi_view(self):
+        ucm = WebKit.UserContentManager()
+        ucm.register_script_message_handler("kioskNav", None)
+        ucm.connect("script-message-received::kioskNav", self.on_hmi_nav)
+        view = WebKit.WebView(user_content_manager=ucm, network_session=self.hmi_session)
+        self.common_view_setup(view)
+        view.connect("load-failed", self.on_hmi_load_failed)
+        view.connect("load-failed-with-tls-errors", self.on_hmi_tls_error)
+        view.connect("load-changed", self.on_hmi_load_changed)
+        view.connect("web-process-terminated", lambda v, r: self.load_hmi())
+        # target=_blank / window.open: stay in the same view, there are no other windows.
+        view.connect("create", self.on_hmi_create)
+        return view
+
+    def make_hotcorner(self):
+        box = Gtk.Box(width_request=72, height_request=72)
+        box.add_css_class("hotcorner")
+        press = Gtk.GestureLongPress(touch_only=False)
+        press.set_delay_factor(4.0)  # ~2 s: no accidental trips during operation
+        press.connect("begin", lambda *a: box.add_css_class("armed"))
+        press.connect("end", lambda *a: box.remove_css_class("armed"))
+        press.connect("cancelled", lambda *a: box.remove_css_class("armed"))
+        press.connect("pressed", lambda *a: self.show("settings"))
+        box.add_controller(press)
+        return box
+
+    # -- switching
+    def show(self, name):
+        if name == "hmi" and not self.hmi:
+            return
+        self.stack.set_visible_child_name(name)
+        if self.hmi:
+            self.hotcorner.set_visible(name == "hmi")
+        if name == "settings":
+            self.settings.evaluate_javascript("window.kioskShown && window.kioskShown()", -1,
+                                              None, None, None, None, None)
+
+    # -- config
+    def apply_hmi_config(self, force_load=False):
+        cfg = self.cfg
+        h, v = CORNERS.get(cfg.get("settings_corner", "top-right"), CORNERS["top-right"])
+        self.hotcorner.set_halign(h)
+        self.hotcorner.set_valign(v)
+
+        ucm = self.hmi.get_user_content_manager()
+        ucm.remove_all_scripts()
+        if cfg.get("osk_in_hmi", True) and OSK_JS.exists():
+            ucm.add_script(WebKit.UserScript.new(
+                OSK_JS.read_text(), WebKit.UserContentInjectedFrames.ALL_FRAMES,
+                WebKit.UserScriptInjectionTime.END, None, None))
+        self.hmi.set_zoom_level(float(cfg.get("zoom", 1.0)))
+        if force_load or cfg.get("hmi_url") != self.loaded_url:
+            self.load_hmi()
+
+    def reload_config(self):
+        try:
+            self.cfg = api_get("/api/config")
+        except OSError as e:
+            log("reload config:", e)
+            return
+        apply_rotation(self.cfg.get("rotation_effective", "landscape"))
+        if self.hmi:
+            self.apply_hmi_config()
+
+    # -- HMI loading
+    def load_hmi(self):
+        self.cancel_retry()
+        url = self.cfg.get("hmi_url")
+        self.loaded_url = url
+        if not url:
+            self.show_error("Brak adresu HMI", "Ustaw adres wizualizacji w Ustawieniach.", None)
+            return
+        self.hmi.load_uri(url)
+
+    def cancel_retry(self):
+        if self.retry_source:
+            GLib.source_remove(self.retry_source)
+            self.retry_source = None
+
+    def schedule_retry(self):
+        self.cancel_retry()
+        secs = int(self.cfg.get("retry_seconds", 10))
+
+        def fire():
+            self.retry_source = None
+            self.load_hmi()
+            return GLib.SOURCE_REMOVE
+        self.retry_source = GLib.timeout_add_seconds(secs, fire)
+        return secs
+
+    def show_error(self, title, detail, failing_uri):
+        secs = self.schedule_retry() if failing_uri else 0
+        html = ERROR_PAGE.format(title=esc(title), detail=detail, retry=secs)
+        self.hmi.load_alternate_html(html, failing_uri or "about:blank", None)
+
+    def on_hmi_load_failed(self, view, event, uri, error):
+        if is_benign(error):
+            return False
+        log("HMI load failed:", uri, error.message)
+        self.show_error("Brak połączenia z HMI",
+                        f"Nie można otworzyć <code>{esc(uri)}</code>.<br>{esc(error.message)}", uri)
+        return True
+
+    def on_hmi_tls_error(self, view, uri, certificate, errors):
+        host = urlsplit(uri).hostname or ""
+        hmi_host = urlsplit(self.cfg.get("hmi_url", "")).hostname or ""
+        if self.cfg.get("accept_self_signed", True) and host and host == hmi_host:
+            # TwinCAT HMI's own self-signed certificate -- only for the HMI host.
+            log(f"accepting certificate for {host} ({errors})")
+            self.hmi_session.allow_tls_certificate_for_host(certificate, host)
+            view.load_uri(uri)
+            return True
+        self.show_error("Niezaufany certyfikat",
+                        f"Serwer <code>{esc(host)}</code> przedstawił niezaufany certyfikat. "
+                        "Włącz „Akceptuj certyfikat HMI” w Ustawieniach.", uri)
+        return True
+
+    def on_hmi_load_changed(self, view, event):
+        if event == WebKit.LoadEvent.COMMITTED:
+            self.cancel_retry()
+
+    def on_hmi_create(self, view, action):
+        uri = action.get_request().get_uri()
+        if uri:
+            view.load_uri(uri)
+        return None
+
+    def on_hmi_nav(self, ucm, value):
+        cmd = value.to_string()
+        if cmd == "settings":
+            self.show("settings")
+        elif cmd == "retry":
+            self.load_hmi()
+
+    # -- settings view
+    def settings_policy(self, view, decision, kind):
+        if kind == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
+            uri = decision.get_navigation_action().get_request().get_uri()
+            if not uri.startswith(API + "/"):
+                decision.ignore()
+                return True
+        elif kind == WebKit.PolicyDecisionType.NEW_WINDOW_ACTION:
+            decision.ignore()
+            return True
+        return False
+
+    def settings_load_failed(self, view, event, uri, error):
+        if is_benign(error):
+            return False
+        GLib.timeout_add_seconds(2, lambda: (view.load_uri(SETTINGS_URL), GLib.SOURCE_REMOVE)[1])
+        view.load_alternate_html("<body style='background:#10151c;color:#9aa7b4;font:20px sans-serif;"
+                                 "display:grid;place-items:center;height:100vh;margin:0'>Uruchamianie…</body>",
+                                 uri, None)
+        return True
+
+    def on_settings_message(self, ucm, value):
+        try:
+            msg = json.loads(value.to_string())
+        except ValueError:
+            return
+        cmd = msg.get("cmd")
+        if cmd == "show-hmi":
+            self.show("hmi")
+        elif cmd == "config-changed":
+            self.reload_config()
+        elif cmd == "reload-hmi" and self.hmi:
+            self.load_hmi()
+            self.show("hmi")
+
+
+def main():
+    app = KioskShell()
+    return app.run(sys.argv[:1])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,55 @@
+#!/bin/bash
+# check-iso.sh <installer.iso> <iso.yaml>
+#
+# 1. The root squashfs is where iso.yaml's kernel line says it is
+#    (rd.live.dir/rd.live.squashimg) -- otherwise the ISO boots into a dracut
+#    emergency shell. Hard failure.
+# 2. The ISO boots on 32-bit UEFI: BOOTIA32.EFI in its EFI boot image.
+#    Exit 2 when missing, so the caller can decide (build-media.yml only
+#    warns: the disk image release asset still works with any other way of
+#    writing it).
+#
+# Needs: xorriso, mtools.
+set -euo pipefail
+
+ISO=${1:?usage: $0 <iso> <iso.yaml>}
+YAML=${2:?usage: $0 <iso> <iso.yaml>}
+WORK=$(mktemp -d)
+trap 'rm -rf "${WORK}"' EXIT
+export MTOOLS_SKIP_CHECK=1
+
+echo "== ISO tree"
+xorriso -indev "${ISO}" -find / -type f 2>/dev/null | sed "s/^'//; s/'$//" | tee "${WORK}/files" | head -100
+
+DIR=$(grep -o 'rd.live.dir=[^ "]*' "${YAML}" | head -1 | cut -d= -f2)
+IMG=$(grep -o 'rd.live.squashimg=[^ "]*' "${YAML}" | head -1 | cut -d= -f2)
+WANT="/${DIR:-LiveOS}/${IMG:-squashfs.img}"
+if ! grep -qx "${WANT}" "${WORK}/files"; then
+    echo "error: iso.yaml boots the root from ${WANT}, but the ISO has no such file." >&2
+    echo "squashfs-looking files on the ISO:" >&2
+    grep -Ei '\.img$|squashfs' "${WORK}/files" >&2 || true
+    exit 1
+fi
+echo "root squashfs: ${WANT} -- OK"
+
+echo "== 32-bit UEFI"
+ia32=0
+if grep -qi 'BOOTIA32.EFI' "${WORK}/files"; then
+    ia32=1
+fi
+# The El Torito EFI image (a FAT image file, or an appended partition).
+while read -r f; do
+    xorriso -osirrox on -indev "${ISO}" -extract "${f}" "${WORK}/efiboot.img" >/dev/null 2>&1 || continue
+    echo "EFI boot image ${f}:"
+    mdir -/ -i "${WORK}/efiboot.img" ::/EFI || true
+    if mdir -/ -i "${WORK}/efiboot.img" ::/EFI 2>/dev/null | grep -qi 'BOOTIA32'; then
+        ia32=1
+    fi
+done < <(grep -i 'efiboot.img$' "${WORK}/files" || true)
+
+if ((ia32)); then
+    echo "BOOTIA32.EFI present -- boots on 32-bit UEFI"
+else
+    echo "BOOTIA32.EFI NOT found -- this ISO won't boot on 32-bit UEFI (e.g. HP Pro Tablet 408)" >&2
+    exit 2
+fi

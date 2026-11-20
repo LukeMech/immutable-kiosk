@@ -1,0 +1,28 @@
+# Local `just build-*` output (see Justfile's `clean` recipe)
+output/
+dist/
+*_build*
+previous.manifest.json
+changelog.md
+output.env
+
+# Disk/container images -- build artifacts, never committed
+*.raw
+*.qcow2
+*.iso
+*.img
+*.zst
+*.xz
+*.sha256
+
+# cosign private key material -- only the .pub belongs in this repo
+cosign.key
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor/OS cruft
+.DS_Store
+Thumbs.db
+*.swp

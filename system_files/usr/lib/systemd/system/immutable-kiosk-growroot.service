@@ -1,0 +1,12 @@
+[Unit]
+Description=Grow the root filesystem to fill the physical disk
+# Not on the live installer ISO: there root is an overlay in RAM.
+ConditionPathExists=!/run/initramfs/live
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/immutable-kiosk/grow-root.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ustawienia</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ============================== KIOSK: SETTINGS ============================== -->
+<div id="settings" hidden>
+  <div class="top">
+  <header class="bar">
+    <h1>Ustawienia</h1>
+    <button id="back" class="btn primary">← Wróć do HMI</button>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="hmi" class="on">HMI</button>
+    <button data-tab="wifi">Wi-Fi</button>
+    <button data-tab="net">Sieć</button>
+    <button data-tab="screen">Ekran</button>
+    <button data-tab="system">System</button>
+  </nav>
+  </div>
+
+  <main>
+    <!-- HMI -->
+    <section id="tab-hmi" class="tab">
+      <div class="card">
+        <h2>Adres wizualizacji</h2>
+        <p class="hint">Beckhoff TwinCAT HMI (TF2000): HTTPS na porcie 1020 albo HTTP na 1010.</p>
+        <div class="seg" id="hmi-scheme">
+          <button data-v="https">HTTPS</button>
+          <button data-v="http">HTTP</button>
+        </div>
+        <label>Adres IP lub nazwa serwera HMI
+          <input id="hmi-host" type="text" inputmode="decimal" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="np. 192.168.1.50">
+        </label>
+        <div class="grid2">
+          <label>Port
+            <input id="hmi-port" type="text" inputmode="numeric" autocomplete="off">
+          </label>
+          <label>Ścieżka
+            <input id="hmi-path" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/">
+          </label>
+        </div>
+        <div class="chips">
+          <button class="chip" data-preset="https:1020">TwinCAT HTTPS :1020</button>
+          <button class="chip" data-preset="http:1010">TwinCAT HTTP :1010</button>
+        </div>
+        <p class="url" id="hmi-url">—</p>
+        <p class="msg" id="hmi-msg"></p>
+        <div class="actions">
+          <button class="btn" id="hmi-test">Sprawdź połączenie</button>
+          <button class="btn primary" id="hmi-save">Zapisz i otwórz HMI</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Zachowanie</h2>
+        <label class="switch"><input type="checkbox" id="opt-cert"><span>Akceptuj certyfikat serwera HMI (self-signed)</span></label>
+        <label class="switch"><input type="checkbox" id="opt-osk"><span>Klawiatura ekranowa także w HMI</span></label>
+        <label>Ponowna próba połączenia co (s)
+          <input id="opt-retry" type="text" inputmode="numeric">
+        </label>
+        <div class="actions"><button class="btn" id="opt-save">Zapisz</button></div>
+      </div>
+    </section>
+
+    <!-- WI-FI -->
+    <section id="tab-wifi" class="tab" hidden>
+      <div class="card">
+        <div class="row-between">
+          <h2>Wi-Fi</h2>
+          <label class="switch inline"><input type="checkbox" id="wifi-radio"><span>Włączone</span></label>
+        </div>
+        <p class="msg" id="wifi-msg"></p>
+        <div class="actions"><button class="btn" id="wifi-scan">↻ Szukaj sieci</button></div>
+        <ul class="list" id="wifi-list"></ul>
+      </div>
+      <div class="card">
+        <h2>Zapisane sieci</h2>
+        <ul class="list" id="wifi-saved"></ul>
+      </div>
+      <div class="card">
+        <h2>Sieć ukryta</h2>
+        <label>Nazwa sieci (SSID)<input id="hid-ssid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label>Hasło<input id="hid-pass" type="password" autocomplete="off"></label>
+        <div class="actions"><button class="btn primary" id="hid-connect">Połącz</button></div>
+      </div>
+    </section>
+
+    <!-- NETWORK -->
+    <section id="tab-net" class="tab" hidden>
+      <div id="net-list"></div>
+    </section>
+
+    <!-- SCREEN -->
+    <section id="tab-screen" class="tab" hidden>
+      <div class="card">
+        <h2>Orientacja</h2>
+        <div class="seg wrap" id="rot">
+          <button data-v="">Domyślna urządzenia</button>
+          <button data-v="portrait">Pion</button>
+          <button data-v="landscape">Poziom</button>
+          <button data-v="normal">0°</button>
+          <button data-v="90">90°</button>
+          <button data-v="180">180°</button>
+          <button data-v="270">270°</button>
+        </div>
+        <p class="hint" id="rot-hint"></p>
+      </div>
+      <div class="card">
+        <h2>Powiększenie HMI</h2>
+        <div class="stepper">
+          <button class="btn" id="zoom-minus">−</button>
+          <span id="zoom-val">100%</span>
+          <button class="btn" id="zoom-plus">+</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Wejście do ustawień z HMI</h2>
+        <p class="hint">Przytrzymaj ok. 2 s wybrany róg ekranu.</p>
+        <div class="seg wrap" id="corner">
+          <button data-v="top-left">↖ Lewy górny</button>
+          <button data-v="top-right">↗ Prawy górny</button>
+          <button data-v="bottom-left">↙ Lewy dolny</button>
+          <button data-v="bottom-right">↘ Prawy dolny</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SYSTEM -->
+    <section id="tab-system" class="tab" hidden>
+      <div class="card">
+        <h2>Wersja systemu</h2>
+        <dl class="kv" id="sys-info"></dl>
+      </div>
+      <div class="card">
+        <h2>Aktualizacja</h2>
+        <p class="msg" id="sys-msg"></p>
+        <div class="job" id="job" hidden>
+          <div class="job-stage" id="job-stage"></div>
+          <div class="progress"><div id="job-bar"></div></div>
+          <div class="job-detail" id="job-detail"></div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="sys-check">Sprawdź aktualizacje</button>
+          <button class="btn primary" id="sys-upgrade">Aktualizuj</button>
+        </div>
+        <div class="actions" id="sys-reboot-box" hidden>
+          <button class="btn primary hold" data-hold="1500" id="sys-reboot-now">Przytrzymaj: uruchom ponownie teraz</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Własny obraz systemu</h2>
+        <p class="hint">Obraz bootc z rejestru, np. gałąź testowa. System przyjmuje tylko obrazy podpisane kluczem ghcr.io/lukemech.</p>
+        <label>Obraz
+          <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
+        </label>
+        <div class="actions"><button class="btn hold" data-hold="1500" id="sys-switch">Przytrzymaj: przełącz obraz</button></div>
+      </div>
+      <div class="card">
+        <h2>Przywracanie i zasilanie</h2>
+        <div class="actions col">
+          <button class="btn hold" data-hold="1500" id="sys-rollback">Przytrzymaj: przywróć poprzednią wersję</button>
+          <button class="btn hold" data-hold="1500" id="pw-reboot">Przytrzymaj: uruchom ponownie</button>
+          <button class="btn danger hold" data-hold="2000" id="pw-off">Przytrzymaj: wyłącz</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Urządzenie</h2>
+        <dl class="kv" id="dev-info"></dl>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ============================== INSTALLER ============================== -->
+<div id="installer" hidden>
+  <header class="bar">
+    <h1>Instalator</h1>
+  </header>
+  <main>
+    <section id="inst-choose">
+      <div class="card hero">
+        <h2>Instalacja systemu kiosku</h2>
+        <p>System zostanie skopiowany na wewnętrzną pamięć tabletu. <strong>Wszystkie dane na wybranym dysku zostaną usunięte.</strong></p>
+        <dl class="kv" id="inst-payload"></dl>
+      </div>
+      <div class="card">
+        <h2>Dysk docelowy</h2>
+        <ul class="list pick" id="inst-disks"></ul>
+      </div>
+      <p class="msg warn" id="inst-power" hidden></p>
+      <p class="msg" id="inst-msg"></p>
+      <button class="btn primary big hold" data-hold="3000" id="inst-go">Przytrzymaj 3 s, aby zainstalować</button>
+    </section>
+
+    <section id="inst-progress" hidden>
+      <div class="card hero">
+        <h2 id="inst-title">Instalowanie…</h2>
+        <div class="job">
+          <div class="job-stage" id="inst-stage"></div>
+          <div class="progress big"><div id="inst-bar"></div></div>
+          <div class="job-detail" id="inst-detail"></div>
+        </div>
+        <p class="hint" id="inst-note">Nie wyłączaj tabletu i nie wyjmuj pendrive'a.</p>
+        <div class="actions" id="inst-done" hidden>
+          <button class="btn primary big hold" data-hold="1000" id="inst-reboot">Wyjąłem pendrive — uruchom ponownie</button>
+        </div>
+        <div class="actions" id="inst-failed" hidden>
+          <button class="btn big" id="inst-retry">Wróć</button>
+        </div>
+        <details class="log"><summary>Szczegóły</summary><pre id="inst-log"></pre></details>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" hidden></div>
+<script src="osk.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

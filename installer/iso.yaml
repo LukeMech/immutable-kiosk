@@ -1,0 +1,19 @@
+# image-builder's ISO config: volume label and the boot menu.
+#
+# root=live:CDLABEL must name the same label. rd.live.dir/rd.live.squashimg
+# say where image-builder put the root squashfs on the ISO --
+# scripts/check-iso.sh verifies that path exists in every built ISO and fails
+# the build otherwise, so a layout change upstream can't ship an ISO that
+# boots into an emergency shell.
+#
+# selinux=0: the live root comes straight from the container's files, which
+# carry no SELinux labels on the ISO (same as lm-server's installer).
+label: "KIOSK-INSTALLER"
+grub2:
+  entries:
+    - name: "Instalator immutable-kiosk"
+      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=KIOSK-INSTALLER rd.live.image rd.live.dir=images rd.live.squashimg=install.img selinux=0 quiet loglevel=3 vt.global_cursor_default=0"
+      initrd: "/images/pxeboot/initrd.img"
+    - name: "Instalator immutable-kiosk (podstawowa grafika)"
+      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=KIOSK-INSTALLER rd.live.image rd.live.dir=images rd.live.squashimg=install.img selinux=0 nomodeset"
+      initrd: "/images/pxeboot/initrd.img"
