@@ -12,8 +12,8 @@ label: "KIOSK-INSTALLER"
 grub2:
   entries:
     - name: "Instalator immutable-kiosk"
-      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=KIOSK-INSTALLER rd.live.image rd.live.dir=images rd.live.squashimg=install.img selinux=0 quiet loglevel=3 vt.global_cursor_default=0"
+      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=KIOSK-INSTALLER rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 quiet loglevel=3 vt.global_cursor_default=0"
       initrd: "/images/pxeboot/initrd.img"
     - name: "Instalator immutable-kiosk (podstawowa grafika)"
-      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=KIOSK-INSTALLER rd.live.image rd.live.dir=images rd.live.squashimg=install.img selinux=0 nomodeset"
+      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=KIOSK-INSTALLER rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 nomodeset"
       initrd: "/images/pxeboot/initrd.img"

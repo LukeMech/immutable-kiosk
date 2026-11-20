@@ -18,8 +18,25 @@ WORK=$(mktemp -d)
 trap 'rm -rf "${WORK}"' EXIT
 export MTOOLS_SKIP_CHECK=1
 
-echo "== ISO tree"
-xorriso -indev "${ISO}" -find / -type f 2>/dev/null | sed "s/^'//; s/'$//" | tee "${WORK}/files" | head -100
+echo "== ISO tree (without GRUB's module dirs)"
+xorriso -indev "${ISO}" -find / -type f 2>/dev/null | sed "s/^'//; s/'$//" > "${WORK}/files"
+grep -v -E '^/boot/grub2/(i386-pc|x86_64-efi|i386-efi|fonts|locale)/' "${WORK}/files" | head -150
+
+# The kernel and initrd every boot entry loads.
+missing=0
+for p in $(grep -o -E '(linux|initrd): *"[^ "]+' "${YAML}" | sed -E 's/^[a-z]+: *"//' | sort -u); do
+    if grep -qx "${p}" "${WORK}/files"; then
+        echo "${p} -- OK"
+    else
+        echo "error: iso.yaml boots ${p}, but the ISO has no such file." >&2
+        missing=1
+    fi
+done
+if ((missing)); then
+    echo "kernels/initrds on the ISO:" >&2
+    grep -E -i 'vmlinuz|initrd' "${WORK}/files" >&2 || true
+    exit 1
+fi
 
 DIR=$(grep -o 'rd.live.dir=[^ "]*' "${YAML}" | head -1 | cut -d= -f2)
 IMG=$(grep -o 'rd.live.squashimg=[^ "]*' "${YAML}" | head -1 | cut -d= -f2)
