@@ -17,7 +17,9 @@ FROM ${BASE_IMAGE}
 
 # Live boot from the ISO (dracut's dmsquash-live), the ISO bootloaders for
 # both 64- and 32-bit UEFI, and what image-builder needs to assemble the ISO
-# (it runs its stages inside this image: xorrisofs, mksquashfs, implantisomd5).
+# (it runs its stages inside this image: xorrisofs, mksquashfs, implantisomd5),
+# plus mtools for scripts/iso-add-ia32.sh, which build-media.yml / `just
+# build-iso` also run in this image to add the ia32 files image-builder skips.
 # bootc images ship no /boot/efi, but the ISO build takes its EFI files from
 # there, so it's filled here. Since Fedora 45 the packages keep their files in
 # /usr/lib/efi/<pkg>/<ver>/EFI/ and only their %posttrans scriptlets copy them
@@ -31,6 +33,8 @@ RUN dnf5 install -y \
         xorriso \
         squashfs-tools \
         isomd5sum \
+        mtools \
+        grub2-pc-modules \
     && mkdir -p /boot/efi/EFI/BOOT /boot/efi/EFI/fedora \
     && dnf5 reinstall -y shim-x64 shim-ia32 grub2-efi-x64 grub2-efi-ia32 \
     && for t in /usr/lib/efi/*/*/EFI /usr/lib/bootupd/updates/EFI; do \

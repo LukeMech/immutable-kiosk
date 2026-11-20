@@ -161,8 +161,12 @@ build-iso $variant="x86" $target_image=("localhost/" + image_name + "-" + varian
       build --bootc-ref "${INSTALLER}" bootc-generic-iso
     sudo chown -R "$(id -u):$(id -g)" output
     ISO=$(find output -iname '*.iso' -print -quit)
-    mv "${ISO}" dist/immutable-kiosk-installer.iso
-    ./scripts/check-iso.sh dist/immutable-kiosk-installer.iso installer/iso.yaml || [[ $? == 2 ]]
+    # image-builder only puts the x64 shim/GRUB on the ISO; add the ia32 ones.
+    sudo podman run --rm -v "${PWD}:/w" -w /w "${INSTALLER}" \
+        bash scripts/iso-add-ia32.sh "${ISO}" dist/immutable-kiosk-installer.iso
+    sudo chown "$(id -u):$(id -g)" dist/immutable-kiosk-installer.iso
+    rm -rf output
+    ./scripts/check-iso.sh dist/immutable-kiosk-installer.iso installer/iso.yaml
     ls -la dist
 
 # Boot an ISO or disk image in QEMU with 32-bit UEFI firmware -- how the HP Pro Tablet 408 boots.

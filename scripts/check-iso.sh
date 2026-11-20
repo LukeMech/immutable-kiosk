@@ -5,9 +5,9 @@
 #    (rd.live.dir/rd.live.squashimg) -- otherwise the ISO boots into a dracut
 #    emergency shell. Hard failure.
 # 2. The ISO boots on 32-bit UEFI: BOOTIA32.EFI in its EFI boot image.
-#    Exit 2 when missing, so the caller can decide (build-media.yml only
-#    warns: the disk image release asset still works with any other way of
-#    writing it).
+#    Exit 2 when missing, so the caller can decide (build-media.yml fails
+#    for devices with efi_ia32, ignores it for the rest). scripts/iso-add-ia32.sh
+#    adds the files image-builder leaves out.
 #
 # Needs: xorriso, mtools.
 set -euo pipefail

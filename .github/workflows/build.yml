@@ -321,7 +321,7 @@ jobs:
           body_path: changelog.md
 
   build-media:
-    name: Build disk images and installer ISOs
+    name: Build installer ISOs
     needs: [discover, build_push, release-meta]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.release-meta.result == 'success' }}
     uses: ./.github/workflows/build-media.yml

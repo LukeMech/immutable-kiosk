@@ -1,4 +1,4 @@
-name: Build disk images and installer ISOs
+name: Build installer ISOs
 
 # Called by build.yml after a release is published (attaches to it), or run
 # by hand from the Actions UI (artifacts only, unless publish + tag).
@@ -9,7 +9,10 @@ name: Build disk images and installer ISOs
 #   2. that image compressed into the installer payload (scripts/make-payload.sh);
 #   3. the installer container (installer/Containerfile: the system image +
 #      installer mode + payload) -> bootable ISO (image-builder bootc-generic-iso);
-#   4. ISO checked (scripts/check-iso.sh), split if >= 2 GiB, attached.
+#   4. ia32 shim/GRUB added to the ISO where the device needs 32-bit UEFI
+#      (scripts/iso-add-ia32.sh -- image-builder only adds x64);
+#   5. ISO checked (scripts/check-iso.sh), split if >= 2 GiB, attached.
+# Only the ISO is released; the raw disk image exists only as its payload.
 on:
   workflow_dispatch:
     inputs:
@@ -106,7 +109,6 @@ jobs:
           IMAGE="${IMAGE_REGISTRY,,}/immutable-kiosk-${{ steps.dev.outputs.variant }}:${DEFAULT_TAG}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
           echo "INSTALLER=${LOCAL_REGISTRY}/immutable-kiosk-installer-${{ matrix.device }}:latest" >> "$GITHUB_ENV"
-          echo "OUT=immutable-kiosk-${{ matrix.device }}${{ inputs.tag && format('-{0}', inputs.tag) || '' }}" >> "$GITHUB_ENV"
           echo "ISO_NAME=immutable-kiosk-installer-${{ matrix.device }}${{ inputs.tag && format('-{0}', inputs.tag) || '' }}.iso" >> "$GITHUB_ENV"
 
       - name: Build disk image
@@ -140,12 +142,7 @@ jobs:
           sudo rm -rf output
           ./scripts/make-payload.sh disk.raw dist/payload "${IMAGE}" "${{ inputs.tag || 'manual' }}"
           rm -f disk.raw
-
-          # The same disk image as a release asset of its own: for writing it
-          # some other way (another Linux on the tablet, a USB eMMC reader).
           mkdir -p release
-          cp dist/payload/disk.raw.zst "release/${OUT}.img.zst"
-          (cd release && sha256sum "${OUT}.img.zst" > "${OUT}.img.zst.sha256")
 
       # image-builder-action always pulls bootc_ref, and a localhost/ image
       # can't be pulled: the installer goes into a registry that only lives on
@@ -171,23 +168,29 @@ jobs:
           image_type: bootc-generic-iso
           bootc_ref: ${{ env.INSTALLER }}
 
-      - name: Check the ISO
+      - name: Add 32-bit UEFI boot files, check the ISO
         id: iso
         run: |
           set -euo pipefail
           ISO=$(sudo find output -iname '*.iso' -print -quit)
           [[ -n "${ISO}" ]] || { echo "no ISO produced" >&2; exit 1; }
-          sudo mv "${ISO}" "release/${ISO_NAME}"
+          if [[ "${{ steps.dev.outputs.efi_ia32 }}" == "true" ]]; then
+            # image-builder only puts the x64 shim/GRUB on the ISO.
+            sudo mv "${ISO}" iso-x64.iso
+            sudo podman run --rm -v "${PWD}:/w" -w /w "${INSTALLER}" \
+              bash scripts/iso-add-ia32.sh iso-x64.iso "release/${ISO_NAME}"
+            sudo rm -f iso-x64.iso
+          else
+            sudo mv "${ISO}" "release/${ISO_NAME}"
+          fi
+          sudo rm -rf output
           sudo chown "$(id -u):$(id -g)" "release/${ISO_NAME}"
           rc=0
           ./scripts/check-iso.sh "release/${ISO_NAME}" installer/iso.yaml || rc=$?
-          if [[ ${rc} == 2 ]]; then
-            if [[ "${{ steps.dev.outputs.efi_ia32 }}" == "true" ]]; then
-              echo "::warning title=No 32-bit UEFI boot on the ISO::${ISO_NAME} has no BOOTIA32.EFI -- ${{ matrix.device }} can't boot it. The .img.zst release asset is unaffected.."
-            fi
-          elif [[ ${rc} != 0 ]]; then
-            exit "${rc}"
+          if [[ ${rc} == 2 && "${{ steps.dev.outputs.efi_ia32 }}" != "true" ]]; then
+            rc=0
           fi
+          exit "${rc}"
 
       - name: Prepare release files
         run: |

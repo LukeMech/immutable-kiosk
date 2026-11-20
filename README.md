@@ -63,9 +63,6 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
 5. First boot grows the root partition to the whole eMMC and opens Settings
    (no HMI configured yet): Wi-Fi → HMI address → *Zapisz i otwórz HMI*.
 
-The raw disk image is also attached on its own
-(`immutable-kiosk-<device>-<tag>.img.zst`) for writing it any other way.
-
 ## Updates
 
 Settings → **System**: *Sprawdź aktualizacje* / *Aktualizuj* (`bootc upgrade`,
@@ -86,7 +83,7 @@ just run-vm-ia32           # boot the ISO in QEMU with 32-bit UEFI firmware (edk
 CI: [build.yml](.github/workflows/build.yml) builds, rechunks, pushes and signs
 `ghcr.io/lukemech/immutable-kiosk-<variant>` and publishes a release
 (`v<fedora>.<date>`); [build-media.yml](.github/workflows/build-media.yml) then
-builds per device the raw disk image and the installer ISO and attaches them.
+builds the installer ISO per device and attaches it (the raw disk image is only its payload, not a release asset).
 Needs the repo secret **`SIGNING_SECRET`** (the same cosign key as
 immutable-sbc / lm-server).
 
@@ -99,4 +96,4 @@ immutable-sbc / lm-server).
 | `images/devices.toml` | physical devices: variant, DMI match, default rotation, whether it needs 32-bit UEFI; shipped into the image for runtime defaults |
 | `system_files/` | copied onto `/`: kioskd, kiosk-shell, the web page, systemd units, signature policy |
 | `installer/` | the installer image (FROM the system image + payload + installer mode) and the ISO boot menu |
-| `scripts/` | `ensure-efi-ia32.sh` (disk image boots on 32-bit UEFI), `check-iso.sh`, `make-payload.sh`; changelog helpers from immutable-sbc |
+| `scripts/` | `ensure-efi-ia32.sh` (disk image boots on 32-bit UEFI), `iso-add-ia32.sh` (installer ISO boots on 32-bit UEFI), `check-iso.sh`, `make-payload.sh`; changelog helpers from immutable-sbc |
