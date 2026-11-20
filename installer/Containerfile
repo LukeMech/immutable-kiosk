@@ -17,18 +17,25 @@ FROM ${BASE_IMAGE}
 
 # Live boot from the ISO (dracut's dmsquash-live), the ISO bootloaders for
 # both 64- and 32-bit UEFI, and what image-builder needs to assemble the ISO.
-# bootc images ship no /boot/efi; the ISO build takes its EFI files from
-# there, so it's created first and the shims/GRUBs reinstalled -- their
-# scriptlets then copy the files in (in the system image they can't).
-RUN mkdir -p /boot/efi \
-    && dnf5 install -y \
+# bootc images ship no /boot/efi, but the ISO build takes its EFI files from
+# there, so it's filled here. Since Fedora 45 the packages keep their files in
+# /usr/lib/efi/<pkg>/<ver>/EFI/ and only their %posttrans scriptlets copy them
+# to /boot/efi/EFI/{BOOT,fedora} -- without creating those directories. So:
+# create them, reinstall (scriptlets copy), then copy every package tree
+# (and bootupd's, for the older layout) over anything a scriptlet missed.
+RUN dnf5 install -y \
         dracut-live \
         grub2-efi-x64-cdboot \
         grub2-efi-ia32-cdboot \
         xorriso \
         squashfs-tools \
+    && mkdir -p /boot/efi/EFI/BOOT /boot/efi/EFI/fedora \
     && dnf5 reinstall -y shim-x64 shim-ia32 grub2-efi-x64 grub2-efi-ia32 \
+    && for t in /usr/lib/efi/*/*/EFI /usr/lib/bootupd/updates/EFI; do \
+           if [ -d "$t" ]; then cp -rn "$t/." /boot/efi/EFI/; fi; \
+       done \
     && ls -R /boot/efi/EFI \
+    && test -f /boot/efi/EFI/BOOT/BOOTX64.EFI \
     && test -f /boot/efi/EFI/BOOT/BOOTIA32.EFI \
     && dnf5 clean all
 
