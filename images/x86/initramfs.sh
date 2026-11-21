@@ -1,6 +1,7 @@
 #!/bin/bash
-# The image's own initramfs, rebuilt last (build.sh runs it after
-# post-build.sh). fedora-bootc ships a generic one: network boot (NFS, iSCSI,
+# The x86 variant's own initramfs, rebuilt last (build.sh runs a variant's
+# initramfs.sh after post-build.sh; a variant without one keeps the stock one).
+# fedora-bootc ships a generic one: network boot (NFS, iSCSI,
 # FCoE, NetworkManager), LVM, RAID, multipath, LUKS -- none of which a kiosk
 # booting btrfs off its own eMMC uses, yet GRUB ia32 reads all of it through
 # a Bay Trail's firmware from a slow eMMC, and an Atom unpacks it, on every

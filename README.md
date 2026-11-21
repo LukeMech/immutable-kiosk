@@ -91,8 +91,8 @@ immutable-sbc / lm-server).
 
 | Path | What |
 |---|---|
-| `Containerfile`, `build_files/` | the system image: Fedora bootc 45, numbered hooks as in immutable-sbc. `05-base` network/zram/growroot, `10-kiosk` cage + WebKit + services, `20-efi-ia32` 32-bit UEFI boot (shim/GRUB ia32 + bootupd metadata), `initramfs.sh` (last) a slimmer initramfs: no network/LVM/RAID/LUKS stacks, i915 for early KMS |
-| `images/variants.toml`, `images/<variant>/` | OS variants (`x86` today: tablet Wi-Fi firmware, thermald) |
+| `Containerfile`, `build_files/` | the system image: Fedora bootc 45, numbered hooks as in immutable-sbc. `05-base` network/zram/growroot, `10-kiosk` cage + WebKit + services, `20-efi-ia32` 32-bit UEFI boot (shim/GRUB ia32 + bootupd metadata) |
+| `images/variants.toml`, `images/<variant>/` | OS variants (`x86` today: tablet Wi-Fi firmware, thermald, and `initramfs.sh`, run last: a slimmer initramfs without network/LVM/RAID/LUKS/cloud stacks, i915 for early KMS) |
 | `images/devices.toml` | physical devices: variant, DMI match, default rotation, whether it needs 32-bit UEFI; shipped into the image for runtime defaults |
 | `system_files/` | copied onto `/`: kioskd, kiosk-shell, the web page, systemd units, signature policy |
 | `installer/` | the installer image (FROM the system image + payload + installer mode) and the ISO boot menu |

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Same shape as immutable-sbc's build.sh: shared system_files/ + numbered
-# hooks, then the variant's own overlay + hooks, then post-build.sh, then
-# initramfs.sh last.
+# hooks, then the variant's own overlay + hooks, then post-build.sh, then the
+# variant's initramfs.sh (if it has one) last.
 
 set -ouex pipefail
 
@@ -20,7 +20,7 @@ install -Dm0644 /ctx/images/devices.toml /usr/share/immutable-kiosk/devices.toml
 for hook in /ctx/*.sh; do
     [[ -e "${hook}" ]] || continue
     case "$(basename "${hook}")" in
-        build.sh | post-build.sh | initramfs.sh) continue ;;
+        build.sh | post-build.sh) continue ;;
     esac
     bash "${hook}"
 done
@@ -33,4 +33,8 @@ done
 bash /ctx/post-build.sh
 
 # After every package is in: the initramfs is built from what the image ships.
-bash /ctx/initramfs.sh
+# Per variant -- what it drops and requires is hardware-specific (x86: i915,
+# Intel eMMC); a variant without one keeps fedora-bootc's stock initramfs.
+if [[ -f "${VARIANT_DIR}/initramfs.sh" ]]; then
+    bash "${VARIANT_DIR}/initramfs.sh"
+fi
