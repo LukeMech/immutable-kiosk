@@ -51,11 +51,20 @@ RUN mkdir -p /usr/lib/immutable-kiosk \
 # ISO volume label and boot menu (read by image-builder).
 COPY installer/iso.yaml /usr/lib/image-builder/bootc/iso.yaml
 
-# Initramfs that can find its root on the ISO.
-RUN kernel=$(ls /usr/lib/modules | head -1) \
-    && DRACUT_NO_XATTR=1 dracut --force --zstd --reproducible --no-hostonly \
-        --add "dmsquash-live" \
-        "/usr/lib/modules/${kernel}/initramfs.img" "${kernel}"
+# Initramfs that can find its root on the ISO: the system image's own recipe
+# (images/<variant>/initramfs.sh from the repo -- slim, i915 for early KMS)
+# plus dmsquash-live. A variant without one: fedora-bootc's stock initramfs
+# plus dmsquash-live.
+ARG VARIANT=x86
+RUN --mount=type=bind,source=images,target=/ctx/images \
+    if [ -f "/ctx/images/${VARIANT}/initramfs.sh" ]; then \
+        bash "/ctx/images/${VARIANT}/initramfs.sh" dmsquash-live; \
+    else \
+        kernel=$(ls /usr/lib/modules | head -1) \
+        && DRACUT_NO_XATTR=1 dracut --force --zstd --reproducible --no-hostonly \
+            --add "dmsquash-live" \
+            "/usr/lib/modules/${kernel}/initramfs.img" "${kernel}"; \
+    fi
 
 # Last, so a new payload doesn't rebuild the layers above.
 COPY dist/payload/ /usr/share/immutable-kiosk/payload/

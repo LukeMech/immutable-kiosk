@@ -9,9 +9,7 @@
 #
 # Two changes, both as command-line options ON TOP of the image's own dracut
 # config (/usr/lib/dracut/dracut.conf.d -- ostree/bootc modules, compression,
-# hostonly=no), not as a drop-in: the installer image (installer/Containerfile)
-# regenerates the initramfs with that same config plus dmsquash-live and needs
-# USB/ISO/network-agnostic pieces this list drops.
+# hostonly=no):
 #   --omit:        dracut modules for storage/network stacks never used here;
 #   --add-drivers: i915 (early KMS) -- the GPU is up before switch-root
 #                  instead of whenever udev loads it from the real root, so
@@ -23,8 +21,15 @@
 # A bad initramfs can't brick a device: the previous deployment keeps its own,
 # selectable in the GRUB menu (05_timeout.cfg) -- but the checks below are
 # what keep one from shipping.
+#
+# Usage: initramfs.sh [extra dracut module...]
+# build.sh runs it bare; the installer image (installer/Containerfile) runs it
+# from the repo with `dmsquash-live`, so the live ISO boots the system's own
+# slim initramfs (i915 included) plus what finding a root on the ISO takes.
 
 set -ouex pipefail
+
+EXTRA=("$@")
 
 OMIT=(
     network network-manager network-legacy ifcfg kernel-network-modules
@@ -81,9 +86,14 @@ has_kmod() {
 
 # DRACUT_NO_XATTR: a container build can't set xattrs. --no-hostonly: never
 # size the initramfs to the build host.
+ADD=()
+if [[ ${#EXTRA[@]} -gt 0 ]]; then
+    ADD=(--add " ${EXTRA[*]} ")
+fi
 DRACUT_NO_XATTR=1 dracut --force --zstd --reproducible --no-hostonly \
     --omit " ${OMIT[*]} " \
     --add-drivers " i915 " \
+    "${ADD[@]}" \
     "${IMG}" "${KVER}"
 
 STOCK_MODS=$(dracut_modules "${STOCK}")
@@ -95,6 +105,10 @@ echo "--- dracut modules dropped (expected: the OMIT list and what only it neede
 comm -23 <(echo "${STOCK_MODS}") <(echo "${NEW_MODS}")
 echo "--- dracut modules added:"
 comm -13 <(echo "${STOCK_MODS}") <(echo "${NEW_MODS}")
+
+for m in "${EXTRA[@]}"; do
+    grep -qx "${m}" <<<"${NEW_MODS}" || { echo "error: requested dracut module '${m}' is not in the initramfs" >&2; exit 1; }
+done
 
 for m in "${CRITICAL_DRACUT[@]}"; do
     if grep -qx "${m}" <<<"${STOCK_MODS}" && ! grep -qx "${m}" <<<"${NEW_MODS}"; then

@@ -163,7 +163,8 @@ jobs:
       - name: Build and push the installer container
         run: |
           set -euxo pipefail
-          sudo podman build --build-arg "BASE_IMAGE=${IMAGE}" --tag "${INSTALLER}" -f installer/Containerfile .
+          sudo podman build --build-arg "BASE_IMAGE=${IMAGE}" --build-arg "VARIANT=${{ steps.dev.outputs.variant }}" \
+            --tag "${INSTALLER}" -f installer/Containerfile .
           sudo podman push "${INSTALLER}"
           rm -rf dist/payload
 

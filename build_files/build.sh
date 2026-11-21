@@ -35,6 +35,7 @@ bash /ctx/post-build.sh
 # After every package is in: the initramfs is built from what the image ships.
 # Per variant -- what it drops and requires is hardware-specific (x86: i915,
 # Intel eMMC); a variant without one keeps fedora-bootc's stock initramfs.
+# installer/Containerfile runs the same script (plus dmsquash-live).
 if [[ -f "${VARIANT_DIR}/initramfs.sh" ]]; then
     bash "${VARIANT_DIR}/initramfs.sh"
 fi

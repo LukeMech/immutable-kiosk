@@ -151,7 +151,7 @@ build-iso $variant="x86" $target_image=("localhost/" + image_name + "-" + varian
     if [[ -z "$(sudo podman images -q "${target_image}:${tag}")" ]]; then
         podman save "${target_image}:${tag}" | sudo podman load
     fi
-    sudo podman build --build-arg "BASE_IMAGE=${target_image}:${tag}" \
+    sudo podman build --build-arg "BASE_IMAGE=${target_image}:${tag}" --build-arg "VARIANT=${variant}" \
         --tag "${INSTALLER}" -f installer/Containerfile .
     rm -rf output && mkdir -p output
     sudo podman run --rm --privileged --pull=newer \
