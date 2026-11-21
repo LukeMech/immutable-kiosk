@@ -29,7 +29,11 @@ OMIT=(
     network network-manager network-legacy ifcfg kernel-network-modules
     nfs iscsi nbd fcoe fcoe-uefi cifs nvmf lunmask
     lvm mdraid dmraid multipath
-    crypt crypt-gpg crypt-loop systemd-cryptsetup tpm2-tss
+    crypt crypt-gpg crypt-loop systemd-cryptsetup tpm2-tss systemd-pcrextend
+    # fedora-bootc's dracut config forces clevis (LUKS unlock via TPM/tang);
+    # forced + its dependency omitted = dracut fails, so omit it too
+    # (an omit beats an add).
+    clevis clevis-pin-file clevis-pin-null clevis-pin-sss clevis-pin-tang clevis-pin-tpm2
     qemu qemu-net biosdevname memstrack resume plymouth
 )
 
