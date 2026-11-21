@@ -323,6 +323,13 @@ function loadScreen() {
     $("rot-hint").textContent = `Teraz: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
         (cfg.rotation ? "" : " (domyślna dla tego urządzenia)");
     $("zoom-val").textContent = Math.round(cfg.zoom * 100) + "%";
+    // No backlight device (e.g. "basic graphics" boot): no slider.
+    const b = cfg.brightness ?? cfg.brightness_now;
+    $("bright-card").hidden = cfg.brightness_now == null;
+    if (b != null) {
+        $("bright").value = b;
+        $("bright-val").textContent = b + "%";
+    }
     seg($("corner"), cfg.settings_corner, v => saveCfg({ settings_corner: v }).then(loadScreen).catch(e => toast(e.message, true)));
 }
 
@@ -331,6 +338,25 @@ function initScreen() {
         .then(loadScreen).catch(e => toast(e.message, true));
     $("zoom-minus").addEventListener("click", () => step(-0.1));
     $("zoom-plus").addEventListener("click", () => step(0.1));
+
+    // Brightness follows the finger: applied while dragging (throttled, one
+    // request in flight), the last value always sent. Straight to kioskd, not
+    // saveCfg: kiosk-shell has nothing to reload for it.
+    let sending = false, pending = null;
+    const send = async () => {
+        if (sending || pending == null) return;
+        const v = pending;
+        pending = null;
+        sending = true;
+        try { cfg = await api("/config", { brightness: v }); }
+        catch (e) { toast(e.message, true); }
+        finally { sending = false; send(); }
+    };
+    $("bright").addEventListener("input", e => {
+        pending = Number(e.target.value);
+        $("bright-val").textContent = pending + "%";
+        send();
+    });
 }
 
 /* ---------- System */

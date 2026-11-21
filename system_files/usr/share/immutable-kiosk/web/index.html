@@ -98,6 +98,13 @@
 
     <!-- SCREEN -->
     <section id="tab-screen" class="tab" hidden>
+      <div class="card" id="bright-card" hidden>
+        <h2>Jasność</h2>
+        <div class="slider">
+          <input type="range" id="bright" min="5" max="100" step="5">
+          <span id="bright-val">–</span>
+        </div>
+      </div>
       <div class="card">
         <h2>Orientacja</h2>
         <div class="seg wrap" id="rot">
@@ -121,7 +128,7 @@
       </div>
       <div class="card">
         <h2>Wejście do ustawień z HMI</h2>
-        <p class="hint">Przytrzymaj ok. 2 s wybrany róg ekranu.</p>
+        <p class="hint">Przytrzymaj ok. 1 s wybrany róg ekranu.</p>
         <div class="seg wrap" id="corner">
           <button data-v="top-left">↖ Lewy górny</button>
           <button data-v="top-right">↗ Prawy górny</button>

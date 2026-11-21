@@ -59,7 +59,14 @@ DEFAULT_CONFIG = {
     "retry_seconds": 10,
     # Where the invisible "hold ~2 s for Settings" spot sits on top of the HMI.
     "settings_corner": "top-right",
+    # Backlight in percent, applied by kioskd at start and on change. None =
+    # never touched (systemd-backlight's restored value stays).
+    "brightness": None,
 }
+
+# Never fully dark: a black panel with no keyboard can't be turned back up.
+BRIGHTNESS_MIN = 5
+BACKLIGHT_DIR = Path("/sys/class/backlight")
 
 CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 
@@ -129,10 +136,49 @@ def load_config():
     return cfg
 
 
+def backlight():
+    """The panel's backlight device, preferring firmware > platform > raw (as systemd/GNOME do)."""
+    order = {"firmware": 0, "platform": 1, "raw": 2}
+    best = None
+    for d in BACKLIGHT_DIR.glob("*"):
+        try:
+            kind = (d / "type").read_text().strip()
+            int((d / "max_brightness").read_text())
+        except (OSError, ValueError):
+            continue
+        rank = order.get(kind, 3)
+        if best is None or rank < best[0]:
+            best = (rank, d)
+    return best[1] if best else None
+
+
+def brightness_get():
+    """Current backlight in percent, or None if there's no backlight device."""
+    d = backlight()
+    if not d:
+        return None
+    try:
+        cur = int((d / "brightness").read_text())
+        mx = int((d / "max_brightness").read_text())
+    except (OSError, ValueError):
+        return None
+    return round(cur * 100 / mx) if mx > 0 else None
+
+
+def brightness_set(percent):
+    d = backlight()
+    if not d:
+        raise ApiError("Ten ekran nie ma regulacji jasności")
+    percent = max(BRIGHTNESS_MIN, min(100, int(percent)))
+    mx = int((d / "max_brightness").read_text())
+    (d / "brightness").write_text(str(max(1, round(mx * percent / 100))))
+
+
 def effective_config():
     cfg = load_config()
     _, dev = device()
     cfg["rotation_effective"] = cfg["rotation"] or dev.get("rotation", "landscape")
+    cfg["brightness_now"] = brightness_get()
     cfg["hmi_url"] = hmi_url(cfg["hmi"])
     cfg["mode"] = mode()
     return cfg
@@ -194,6 +240,15 @@ def save_config(update):
         cfg["settings_corner"] = update["settings_corner"]
     if "retry_seconds" in update:
         cfg["retry_seconds"] = max(3, min(300, int(update["retry_seconds"])))
+    if "brightness" in update:
+        try:
+            b = int(update["brightness"])
+        except (TypeError, ValueError):
+            raise ApiError("Jasność musi być liczbą")
+        if not BRIGHTNESS_MIN <= b <= 100:
+            raise ApiError(f"Jasność: {BRIGHTNESS_MIN}-100%")
+        brightness_set(b)
+        cfg["brightness"] = b
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2))
@@ -968,6 +1023,14 @@ def main():
     ThreadingHTTPServer.allow_reuse_address = True
     srv = ThreadingHTTPServer(LISTEN, Handler)
     srv.daemon_threads = True
+    # Re-apply the saved brightness: systemd-backlight only restores what it
+    # saved at a clean shutdown, and a panel is often just switched off.
+    saved = load_config().get("brightness")
+    if saved is not None:
+        try:
+            brightness_set(saved)
+        except (ApiError, OSError, ValueError) as e:
+            print(f"kioskd: brightness {saved}%: {e}", flush=True)
     print(f"kioskd: listening on http://{LISTEN[0]}:{LISTEN[1]} (mode: {mode()})", flush=True)
     srv.serve_forever()
 
