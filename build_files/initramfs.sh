@@ -130,6 +130,10 @@ awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ {
         s[a] += $5
      } END { for (a in s) printf "%8.1f  %s\n", s[a] / 1048576, a }' /tmp/initramfs-new.list | sort -rn
 echo "--- 20 biggest files:"
+# Through a file, not `sort | head`: head exits after 20 lines, sort dies of
+# SIGPIPE, and pipefail fails the build (exit 141).
 awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ { printf "%8.1f MiB  %s\n", $5 / 1048576, $NF }' /tmp/initramfs-new.list |
-    sort -rn | head -20
+    sort -rn > /tmp/initramfs-biggest.list
+head -20 /tmp/initramfs-biggest.list
+rm -f /tmp/initramfs-biggest.list
 rm -f "${STOCK}" /tmp/initramfs-stock.list /tmp/initramfs-new.list
