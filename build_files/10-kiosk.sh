@@ -62,6 +62,8 @@ sed -i "s|^PRETTY_NAME=.*|PRETTY_NAME=\"immutable-kiosk (Fedora Linux ${VERSION_
 grep -q '^PRETTY_NAME="immutable-kiosk' /usr/lib/os-release
 # Hostname until one is set in Settings (hostnamectl -> /etc/hostname, which
 # wins): systemd falls back to os-release's DEFAULT_HOSTNAME, not "fedora".
+# (/etc/hostname itself can't be touched here: during a RUN step podman
+# bind-mounts the build host's -- "Device or resource busy" -- and it never
+# ends up in the image anyway.)
 sed -i '/^DEFAULT_HOSTNAME=/d' /usr/lib/os-release
 echo 'DEFAULT_HOSTNAME="immutable-kiosk"' >> /usr/lib/os-release
-rm -f /etc/hostname
