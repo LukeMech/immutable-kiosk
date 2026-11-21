@@ -1001,6 +1001,77 @@ def r_hostname_set(body, q):
     return {"hostname": socket.gethostname()}
 
 
+# ---------------------------------------------------------------- touch rotation
+#
+# The screen is rotated by the compositor (wlr-randr --transform), but cage
+# only maps a touchscreen onto an output when the device names one, which
+# these tablets' touchscreens don't. Without that, touch keeps the panel's
+# native axes: a left-right swipe scrolls up-down and taps land in the wrong
+# place. The fix lives in libinput (the input driver layer), not the page: a
+# udev rule sets LIBINPUT_CALIBRATION_MATRIX on every touchscreen to match
+# the output transform.
+#
+# The matrix maps normalized touch coordinates (0..1, panel-native) to the
+# rotated screen's: x' = a*x + b*y + c, y' = d*x + e*y + f.
+TOUCH_MATRICES = {
+    "normal": "1 0 0 0 1 0",
+    "90": "0 -1 1 1 0 0",
+    "180": "-1 0 1 0 -1 1",
+    "270": "0 1 0 -1 0 1",
+}
+TOUCH_RULE = Path("/etc/udev/rules.d/99-immutable-kiosk-touch.rules")
+CAGE_UNIT = "immutable-kiosk-cage.service"
+
+
+def touchscreens_present():
+    for ev in Path("/sys/class/input").glob("event*"):
+        props = subprocess.run(["udevadm", "info", "-q", "property", str(ev)],
+                               capture_output=True, text=True, timeout=5).stdout
+        if "ID_INPUT_TOUCHSCREEN=1" in props.splitlines():
+            return True
+    return False
+
+
+def r_touch_set(body, q):
+    """kiosk-shell reports the transform it gave the panel; make touch follow it.
+
+    libinput reads the calibration matrix only when a device is added, i.e.
+    when cage starts -- so if the rule changed, cage is restarted once. The
+    rule lives in /etc and udev applies it at boot, before cage starts: after
+    that first time, no restart.
+    """
+    transform = str(body.get("transform", ""))
+    matrix = TOUCH_MATRICES.get(transform)
+    if not matrix:
+        raise ApiError("Nieznana orientacja")
+    rule = (
+        "# Written by kioskd: touch follows the screen rotation "
+        f"(wlr-randr transform {transform}).\n"
+        'ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", '
+        f'ENV{{ID_INPUT_TOUCHSCREEN}}=="1", ENV{{LIBINPUT_CALIBRATION_MATRIX}}="{matrix}"\n'
+    )
+    try:
+        current = TOUCH_RULE.read_text()
+    except OSError:
+        current = None
+    if current == rule:
+        return {"changed": False, "restart": False}
+    TOUCH_RULE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = TOUCH_RULE.with_suffix(".tmp")
+    tmp.write_text(rule)
+    tmp.replace(TOUCH_RULE)
+    run(["udevadm", "control", "--reload"], timeout=10)
+    run(["udevadm", "trigger", "--action=change", "--subsystem-match=input"], timeout=10)
+    run(["udevadm", "settle", "--timeout=5"], check=False, timeout=10)
+    restart = touchscreens_present()
+    print(f"kioskd: touch matrix for transform {transform}: {matrix}"
+          f"{' -- restarting cage' if restart else ' (no touchscreen)'}", flush=True)
+    if restart:
+        # After the reply: the request comes from inside cage.
+        threading.Timer(1.0, subprocess.run, args=(["systemctl", "restart", CAGE_UNIT],)).start()
+    return {"changed": True, "restart": restart}
+
+
 def r_system(body, q):
     return bootc_status()
 
@@ -1073,6 +1144,7 @@ ROUTES = {
     ("GET", "/api/network"): r_network,
     ("POST", "/api/network"): r_network_set,
     ("POST", "/api/hostname"): r_hostname_set,
+    ("POST", "/api/touch"): r_touch_set,
     ("GET", "/api/system"): r_system,
     ("POST", "/api/system/check"): r_system_check,
     ("POST", "/api/system/upgrade"): r_system_upgrade,

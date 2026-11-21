@@ -93,7 +93,17 @@ def api_get(path, timeout=2):
         return json.loads(r.read())
 
 
+def api_post(path, data, timeout=20):
+    req = urllib.request.Request(API + path, data=json.dumps(data).encode(), method="POST",
+                                 headers={"X-Kiosk": "1", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
 # ------------------------------------------------------------ rotation
+
+# Built-in panels first: that's the one the touchscreen sits on.
+INTERNAL_OUTPUTS = ("eDP", "DSI", "LVDS")
 
 def wlr_outputs():
     """[(name, width, height)] of enabled outputs, size in the panel's native orientation."""
@@ -124,7 +134,9 @@ def apply_output(cfg):
         scale = min(2.0, max(1.0, float(cfg.get("scale", 1.0))))
     except (TypeError, ValueError):
         scale = 1.0
-    for name, w, h in wlr_outputs():
+    outputs = sorted(wlr_outputs(), key=lambda o: not o[0].startswith(INTERNAL_OUTPUTS))
+    touch_transform = None
+    for name, w, h in outputs:
         if rotation == "portrait":
             transform = "90" if w > h else "normal"
         elif rotation == "landscape":
@@ -134,6 +146,17 @@ def apply_output(cfg):
         log(f"output {name} {w}x{h}: transform {transform} ({rotation}), scale {scale}")
         subprocess.run(["wlr-randr", "--output", name, "--transform", transform,
                         "--scale", f"{scale:g}"], timeout=5)
+        if touch_transform is None:
+            touch_transform = transform
+    # Touch follows the panel: kioskd sets libinput's calibration matrix
+    # (udev) and restarts cage once if it changed -- see kioskd r_touch_set.
+    if touch_transform:
+        try:
+            r = api_post("/api/touch", {"transform": touch_transform})
+            if r.get("restart"):
+                log(f"touch matrix changed to transform {touch_transform}, cage restarts")
+        except (OSError, ValueError) as e:
+            log("touch rotation:", e)
 
 
 # ------------------------------------------------------------ error page
@@ -208,10 +231,15 @@ class KioskShell(Gtk.Application):
         GLib.idle_add(apply_output, self.cfg)
 
         if self.cfg.get("mode") != "installer":
-            DATA.mkdir(parents=True, exist_ok=True)
+            (DATA / "hmi").mkdir(parents=True, exist_ok=True)
             CACHE.mkdir(parents=True, exist_ok=True)
             # Persistent: TwinCAT HMI's login session survives a restart.
             self.hmi_session = WebKit.NetworkSession.new(str(DATA / "hmi"), str(CACHE / "hmi"))
+            # Cookies on disk explicitly (SQLite), so a login with an expiry
+            # survives a reboot. A pure session cookie (no expiry) is still
+            # dropped at restart -- that one is the HMI server's choice.
+            self.hmi_session.get_cookie_manager().set_persistent_storage(
+                str(DATA / "hmi" / "cookies.sqlite"), WebKit.CookiePersistentStorage.SQLITE)
             self.hmi = self.make_hmi_view()
             self.stack.add_named(self.hmi, "hmi")
             self.hotcorner = self.make_hotcorner()
