@@ -39,19 +39,58 @@ if [[ "${FSTYPE}" != btrfs ]]; then
 fi
 
 mount "${PART}" "${MNT}"
-# No balance first: it moves chunks towards the end of the device, which
-# makes min-dev-size larger, not smaller (tried: 4.0 -> 5.8 GiB).
-btrfs filesystem usage -b "${MNT}" | sed -n '1,12p'
-# "<bytes> bytes (<human>)"
-MIN=$(btrfs inspect-internal min-dev-size "${MNT}" | awk '{print $1}')
+allocated() { btrfs filesystem usage -b "${MNT}" | awk '/Device allocated:/ {print $3}'; }
+
+# btrfs sizes new data chunks at ~10% of the filesystem (max 1 GiB): on the
+# 8.5 GiB root they're ~850 MiB, half empty, and moving one during a resize
+# needs that much *contiguous* free space below the new end -- shrinking
+# stalls at ENOSPC gigabytes above what's used. The smallest chunks the
+# kernel allows instead (per-fs chunk_size knob, 6.0+: a multiple of 256 MiB,
+# at least 256 MiB; data and metadata only), then a full balance repacks
+# everything into them and the resize can get within a chunk or two of the
+# data. The installed system's later chunks are sized normally again.
+UUID=$(blkid -o value -s UUID "${PART}")
+for kind in data metadata; do
+    knob="/sys/fs/btrfs/${UUID}/allocation/${kind}/chunk_size"
+    if ! echo $(( 256 * MIB )) 2>/dev/null > "${knob}"; then
+        echo "note: couldn't set ${knob}, default chunk sizes (shrinks less)"
+    fi
+done
+# Then in rounds: balance, aim at allocated + margin, halfway if that
+# doesn't fit; stop when a round gains < 64 MiB. (Not min-dev-size: it
+# counts chunk positions and grows after a balance.)
 CUR=$(blockdev --getsize64 "${PART}")
-NEW=$(( (MIN + MARGIN_MIB * MIB + MIB - 1) / MIB * MIB ))
-echo "root ${PART}: ${CUR} B now, min ${MIN} B, target ${NEW} B (+${MARGIN_MIB} MiB)"
-if (( NEW >= CUR )); then
+ORIG=${CUR}
+round_mib() { echo $(( ($1 + MIB - 1) / MIB * MIB )); }
+for round in $(seq 1 12); do
+    # Near the end there's no room left to repack: that's as far as it goes.
+    btrfs balance start -dusage=100 -musage=100 "${MNT}" >/dev/null 2>&1 || break
+    ALLOC=$(allocated)
+    GOAL=$(round_mib $(( ALLOC + MARGIN_MIB * MIB )))
+    if (( GOAL >= CUR - 64 * MIB )); then
+        break
+    fi
+    if btrfs filesystem resize "${GOAL}" "${MNT}" >/dev/null 2>&1; then
+        NEXT=${GOAL}
+    else
+        NEXT=$(round_mib $(( (CUR + GOAL) / 2 )))
+        (( NEXT < CUR - 64 * MIB )) || break
+        btrfs filesystem resize "${NEXT}" "${MNT}" >/dev/null 2>&1 || break
+    fi
+    echo "round ${round}: allocated ${ALLOC} B, ${CUR} -> ${NEXT} B"
+    CUR=${NEXT}
+done
+btrfs filesystem usage -b "${MNT}" | sed -n '1,8p'
+if (( CUR >= ORIG )); then
     echo "nothing to shrink"
     exit 0
 fi
-btrfs filesystem resize "${NEW}" "${MNT}"
+NEW=${CUR}
+echo "root ${PART}: ${ORIG} -> ${NEW} B"
+# Balancing left old copies of every moved extent in what's now free space:
+# discard it (on a loop device that punches holes -- zeros again), or the
+# payload compresses ~30% worse (1.19 -> 1.57 GB in testing).
+fstrim -v "${MNT}"
 umount "${MNT}"
 losetup -d "${LOOP}"
 trap 'rmdir "${MNT}"' EXIT

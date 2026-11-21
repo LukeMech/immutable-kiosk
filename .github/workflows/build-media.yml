@@ -202,9 +202,11 @@ jobs:
           set -euo pipefail
           cd release
           sha256sum "${ISO_NAME}" > "${ISO_NAME}.sha256"
-          # GitHub release assets are capped at 2 GiB.
+          # GitHub release assets are capped at 2 GiB. Parts are named
+          # <iso>.001, .002, ...: 7-Zip / NanaZip open .001 as one split file
+          # and extract the whole ISO; `cat`/`copy /b` join them too.
           if (( $(stat -c %s "${ISO_NAME}") >= 2147483648 )); then
-            split -b 2000M -d -a 2 "${ISO_NAME}" "${ISO_NAME}.part-" && rm -f "${ISO_NAME}"
+            split -b 2000M -d -a 3 --numeric-suffixes=1 "${ISO_NAME}" "${ISO_NAME}." && rm -f "${ISO_NAME}"
           fi
           ls -la
 

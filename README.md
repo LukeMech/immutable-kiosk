@@ -50,7 +50,7 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
 ## Installing
 
 1. From a [Release](../../releases): `immutable-kiosk-installer-<device>-<tag>.iso`
-   (parts `…iso.part-NN` when ≥ 2 GiB: `cat … > …iso`).
+   (over 2 GiB it comes in parts `…iso.001`, `…iso.002`: open `.001` in 7-Zip / NanaZip and extract, or `cat …iso.0* > …iso`).
 2. Write it to a USB stick (Fedora Media Writer, Rufus in DD mode, `dd`).
 3. Tablet: USB-OTG hub with the stick (and a charger), boot from USB
    (on HP tablets the startup menu is usually *Volume down* held at
@@ -96,4 +96,4 @@ immutable-sbc / lm-server).
 | `images/devices.toml` | physical devices: variant, DMI match, default rotation, whether it needs 32-bit UEFI; shipped into the image for runtime defaults |
 | `system_files/` | copied onto `/`: kioskd, kiosk-shell, the web page, systemd units, signature policy |
 | `installer/` | the installer image (FROM the system image + payload + installer mode) and the ISO boot menu |
-| `scripts/` | `ensure-efi-ia32.sh` (disk image boots on 32-bit UEFI), `iso-add-ia32.sh` (installer ISO boots on 32-bit UEFI), `check-iso.sh`, `make-payload.sh`; changelog helpers from immutable-sbc |
+| `scripts/` | `ensure-efi-ia32.sh` (disk image boots on 32-bit UEFI), `iso-add-ia32.sh` (installer ISO boots on 32-bit UEFI), `shrink-raw.sh` (10 GiB disk image → its contents + 256 MiB), `check-iso.sh`, `make-payload.sh`; changelog helpers from immutable-sbc |

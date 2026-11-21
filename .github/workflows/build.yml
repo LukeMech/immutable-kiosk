@@ -290,9 +290,16 @@ jobs:
           {
             echo "## Instalacja"
             echo
-            echo "Zapisz \`immutable-kiosk-installer-<urządzenie>-<tag>.iso\` na pendrive (np. Fedora Media Writer, Rufus w trybie DD, \`dd\`),"
-            echo "uruchom z niego tablet (przez hub USB-OTG) i przytrzymaj *Instaluj*. ISO powyżej 2 GiB jest w częściach:"
-            echo "\`cat <plik>.iso.part-* > <plik>.iso\` (Windows: \`copy /b <part-00> + <part-01> <plik>.iso\`)."
+            echo "1. Pobierz \`immutable-kiosk-installer-<urządzenie>-<tag>.iso\`. Jeśli ISO ma ponad 2 GiB, jest podzielone na"
+            echo "   \`….iso.001\`, \`….iso.002\`, …: pobierz wszystkie części do jednego folderu i otwórz \`.001\` w 7-Zip / NanaZip"
+            echo "   → *Wypakuj* daje jedno ISO. Bez programu: \`copy /b <plik>.iso.001 + <plik>.iso.002 <plik>.iso\` (Windows),"
+            echo "   \`cat <plik>.iso.0* > <plik>.iso\` (Linux). Suma kontrolna całego ISO: \`.sha256\`."
+            echo "2. Zapisz ISO na pendrive (Fedora Media Writer, Rufus w trybie DD, \`dd\`)."
+            echo "3. Podłącz pendrive i ładowarkę do tabletu przez hub USB-OTG, uruchom z pendrive'a"
+            echo "   (HP: *Volume −* przytrzymany przy włączaniu)."
+            echo "4. Instalator sam wybiera wewnętrzne eMMC → przytrzymaj przycisk instalacji 3 s. Po zakończeniu wyjmij pendrive i uruchom ponownie."
+            echo "5. Pierwszy start otwiera Ustawienia: Wi-Fi → adres HMI → *Zapisz i otwórz HMI*."
+            echo "   Później do Ustawień: przytrzymaj ~1 s prawy górny róg ekranu (róg zmienisz w *Ekran*)."
             echo
             echo "## Commits"
             echo
