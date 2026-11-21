@@ -64,6 +64,23 @@ if ! grep -qx "${WANT}" "${WORK}/files"; then
 fi
 echo "root squashfs: ${WANT} -- OK"
 
+# GRUB menu timeout: iso.yaml's grub2.timeout must reach every grub.cfg
+# (an image-builder too old for the key silently keeps osbuild's 60 s).
+WANT_T=$(sed -n 's/^ *timeout: *\([0-9]*\).*/\1/p' "${YAML}" | head -1)
+if [[ -n "${WANT_T}" ]]; then
+    for cfg in /EFI/BOOT/grub.cfg /boot/grub2/grub.cfg; do
+        grep -qx "${cfg}" "${WORK}/files" || continue
+        xorriso -osirrox on -indev "${ISO}" -extract "${cfg}" "${WORK}/grub.cfg" >/dev/null 2>&1
+        got=$(sed -n 's/^ *set timeout=\([0-9]*\).*/\1/p' "${WORK}/grub.cfg" | head -1)
+        rm -f "${WORK}/grub.cfg"
+        if [[ "${got}" != "${WANT_T}" ]]; then
+            echo "error: ${cfg} has timeout=${got:-unset}, iso.yaml asks for ${WANT_T} (image-builder too old for grub2.timeout?)" >&2
+            exit 1
+        fi
+        echo "${cfg}: timeout=${got} -- OK"
+    done
+fi
+
 echo "== 32-bit UEFI"
 ia32=0
 if grep -qi 'BOOTIA32.EFI' "${WORK}/files"; then

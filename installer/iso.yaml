@@ -14,6 +14,8 @@
 # carry no SELinux labels on the ISO (same as lm-server's installer).
 label: "IMMKIOSK"
 grub2:
+  # Menu wait (osbuild default 60 s): the tablet has no keyboard to skip it.
+  timeout: 3
   entries:
     - name: "Instalator immutable-kiosk"
       linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=IMMKIOSK rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 systemd.tpm2_wait=0 quiet loglevel=3 vt.global_cursor_default=0"
