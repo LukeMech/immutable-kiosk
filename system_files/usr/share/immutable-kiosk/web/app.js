@@ -143,6 +143,7 @@ async function loadHmi() {
     $("opt-cert").checked = cfg.accept_self_signed;
     $("opt-osk").checked = cfg.osk_in_hmi;
     $("opt-retry").value = cfg.retry_seconds;
+    $("zoom-val").textContent = Math.round(cfg.zoom * 100) + "%";
     renderHmiUrl();
     msg($("hmi-msg"), cfg.hmi_url ? "" : "Podaj adres serwera HMI, żeby wyświetlić wizualizację.", cfg.hmi_url ? "" : "warn");
     $("back").disabled = !cfg.hmi_url;
@@ -348,7 +349,7 @@ function loadScreen() {
     seg($("rot"), cfg.rotation || "", v => saveCfg({ rotation: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
     $("rot-hint").textContent = `Teraz: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
         (cfg.rotation ? "" : " (domyślna dla tego urządzenia)");
-    $("zoom-val").textContent = Math.round(cfg.zoom * 100) + "%";
+    $("scale-val").textContent = Math.round((cfg.scale || 1) * 100) + "%";
     // No backlight device (e.g. "basic graphics" boot): no slider.
     const b = cfg.brightness ?? cfg.brightness_now;
     $("bright-card").hidden = cfg.brightness_now == null;
@@ -360,10 +361,19 @@ function loadScreen() {
 }
 
 function initScreen() {
-    const step = d => saveCfg({ zoom: Math.min(3, Math.max(0.5, Math.round((cfg.zoom + d) * 10) / 10)) })
+    // Whole-screen scaling in 25% steps (fractional scales stay sharp only
+    // at quarters on most panels).
+    const scaleStep = d => saveCfg({ scale: Math.min(2, Math.max(1, Math.round(((cfg.scale || 1) + d) * 4) / 4)) })
         .then(loadScreen).catch(e => toast(e.message, true));
-    $("zoom-minus").addEventListener("click", () => step(-0.1));
-    $("zoom-plus").addEventListener("click", () => step(0.1));
+    $("scale-minus").addEventListener("click", () => scaleStep(-0.25));
+    $("scale-plus").addEventListener("click", () => scaleStep(0.25));
+
+    // HMI zoom (card in the HMI tab).
+    const zoomStep = d => saveCfg({ zoom: Math.min(3, Math.max(0.5, Math.round((cfg.zoom + d) * 10) / 10)) })
+        .then(c => { $("zoom-val").textContent = Math.round(c.zoom * 100) + "%"; })
+        .catch(e => toast(e.message, true));
+    $("zoom-minus").addEventListener("click", () => zoomStep(-0.1));
+    $("zoom-plus").addEventListener("click", () => zoomStep(0.1));
 
     // Brightness follows the finger: applied while dragging (throttled, one
     // request in flight), the last value always sent. Straight to kioskd, not

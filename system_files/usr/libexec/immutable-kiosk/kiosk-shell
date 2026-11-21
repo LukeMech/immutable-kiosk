@@ -113,7 +113,17 @@ def wlr_outputs():
     return result
 
 
-def apply_rotation(rotation):
+def apply_output(cfg):
+    """Rotation and screen scaling (Settings > Ekran) for every output.
+
+    Scaling is the compositor's: everything -- HMI, Settings, keyboard --
+    gets bigger, unlike the HMI zoom, which only zooms the HMI page.
+    """
+    rotation = cfg.get("rotation_effective", "landscape")
+    try:
+        scale = min(2.0, max(1.0, float(cfg.get("scale", 1.0))))
+    except (TypeError, ValueError):
+        scale = 1.0
     for name, w, h in wlr_outputs():
         if rotation == "portrait":
             transform = "90" if w > h else "normal"
@@ -121,8 +131,9 @@ def apply_rotation(rotation):
             transform = "90" if h > w else "normal"
         else:
             transform = rotation
-        log(f"output {name} {w}x{h}: transform {transform} ({rotation})")
-        subprocess.run(["wlr-randr", "--output", name, "--transform", transform], timeout=5)
+        log(f"output {name} {w}x{h}: transform {transform} ({rotation}), scale {scale}")
+        subprocess.run(["wlr-randr", "--output", name, "--transform", transform,
+                        "--scale", f"{scale:g}"], timeout=5)
 
 
 # ------------------------------------------------------------ error page
@@ -194,7 +205,7 @@ class KioskShell(Gtk.Application):
         self.stack.add_named(self.settings, "settings")
 
         self.cfg = self.wait_for_config()
-        GLib.idle_add(apply_rotation, self.cfg.get("rotation_effective", "landscape"))
+        GLib.idle_add(apply_output, self.cfg)
 
         if self.cfg.get("mode") != "installer":
             DATA.mkdir(parents=True, exist_ok=True)
@@ -309,7 +320,7 @@ class KioskShell(Gtk.Application):
         except OSError as e:
             log("reload config:", e)
             return
-        apply_rotation(self.cfg.get("rotation_effective", "landscape"))
+        apply_output(self.cfg)
         if self.hmi:
             self.apply_hmi_config()
 

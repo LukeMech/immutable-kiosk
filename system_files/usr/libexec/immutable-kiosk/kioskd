@@ -54,7 +54,11 @@ DEFAULT_CONFIG = {
     # TwinCAT HMI ships a self-signed certificate: accept it, but only for the
     # configured HMI host -- never for anything else.
     "accept_self_signed": True,
+    # Zoom of the HMI page only (WebKit).
     "zoom": 1.0,
+    # Scaling of the whole screen (compositor, wlr-randr --scale): HMI,
+    # Settings and the keyboard alike. 1.0-2.0.
+    "scale": 1.0,
     # Seconds between reload attempts while the HMI can't be reached.
     "retry_seconds": 10,
     # Where the invisible "hold ~2 s for Settings" spot sits on top of the HMI.
@@ -234,6 +238,14 @@ def save_config(update):
         if not 0.5 <= z <= 3.0:
             raise ApiError("Powiększenie: 50-300%")
         cfg["zoom"] = round(z, 2)
+    if "scale" in update:
+        try:
+            s = float(update["scale"])
+        except (TypeError, ValueError):
+            raise ApiError("Skalowanie musi być liczbą")
+        if not 1.0 <= s <= 2.0:
+            raise ApiError("Skalowanie ekranu: 100-200%")
+        cfg["scale"] = round(s, 2)
     if "settings_corner" in update:
         if update["settings_corner"] not in CORNERS:
             raise ApiError("Niepoprawny róg ekranu")
