@@ -18,6 +18,21 @@ WORK=$(mktemp -d)
 trap 'rm -rf "${WORK}"' EXIT
 export MTOOLS_SKIP_CHECK=1
 
+# Volume label: the one on the ISO, the one every boot entry looks for, and
+# short enough to survive Rufus "ISO mode" (FAT32 labels: 11 characters).
+LABEL=$(xorriso -indev "${ISO}" -pvd_info 2>/dev/null | sed -n 's/^Volume Id *: *//p' | head -1)
+echo "== volume label: ${LABEL}"
+if ((${#LABEL} > 11)); then
+    echo "error: label '${LABEL}' is longer than 11 characters -- Rufus ISO mode truncates it and the live boot can't find its root" >&2
+    exit 1
+fi
+for l in $(grep -o 'CDLABEL=[^ "]*' "${YAML}" | cut -d= -f2 | sort -u); do
+    if [[ "${l}" != "${LABEL}" ]]; then
+        echo "error: iso.yaml boots root=live:CDLABEL=${l}, but the ISO is labelled '${LABEL}'" >&2
+        exit 1
+    fi
+done
+
 echo "== ISO tree (without GRUB's module dirs)"
 xorriso -indev "${ISO}" -find / -type f 2>/dev/null | sed "s/^'//; s/'$//" > "${WORK}/files"
 grep -v -E '^/boot/grub2/(i386-pc|x86_64-efi|i386-efi|fonts|locale)/' "${WORK}/files" | head -150
