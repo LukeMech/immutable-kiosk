@@ -64,6 +64,9 @@
         -webkit-user-select: none; user-select: none; touch-action: manipulation;
         display: flex; flex-direction: column; gap: 6px;
     }
+    /* display: flex above beats the UA's [hidden] { display: none }: without
+       this, kb.hidden = true never hid anything (⌨▾, ↵, a tap elsewhere). */
+    .kb[hidden] { display: none; }
     .kb.top { top: 0; bottom: auto; border-top: 0; border-bottom: 1px solid #3a4655;
         box-shadow: 0 6px 24px rgba(0,0,0,.45); }
     .kb.num { left: 50%; right: auto; transform: translateX(-50%); width: min(560px, 100%);

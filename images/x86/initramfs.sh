@@ -14,6 +14,15 @@
 #   --add-drivers: i915 (early KMS) -- the GPU is up before switch-root
 #                  instead of whenever udev loads it from the real root, so
 #                  cage doesn't sit in its wait-for-/dev/dri loop.
+#                  Plus drivers/pwm: on Bay Trail/Cherry Trail the panel
+#                  backlight is a PWM (LPSS pwm-lpss-platform or the PMIC's
+#                  pwm-crc) that i915 looks up once, at probe. Without the
+#                  PWM driver there, i915 registers no intel_backlight and
+#                  Settings' brightness slider is gone/dead. (dracut's own
+#                  drm module adds =drivers/pwm for the same reason; we don't
+#                  use drm -- it drags in every GPU driver and its firmware.)
+#                  softdep in /usr/lib/modprobe.d/i915-backlight.conf makes
+#                  sure the PWM driver is bound before i915 probes.
 #
 # Panel PCs with other storage (SATA, NVMe, USB) still boot: kernel driver
 # selection (dracut's kernel-modules, hostonly=no) isn't touched.
@@ -92,7 +101,8 @@ if [[ ${#EXTRA[@]} -gt 0 ]]; then
 fi
 DRACUT_NO_XATTR=1 dracut --force --zstd --reproducible --no-hostonly \
     --omit " ${OMIT[*]} " \
-    --add-drivers " i915 " \
+    --add-drivers " i915 =drivers/pwm " \
+    --install /usr/lib/modprobe.d/i915-backlight.conf \
     "${ADD[@]}" \
     "${IMG}" "${KVER}"
 
@@ -124,10 +134,13 @@ for k in overlay erofs btrfs; do
         exit 1
     fi
 done
-# Bay Trail eMMC (sdhci-acpi + mmc_block) and early KMS: always required.
-for k in mmc_block 'sdhci[-_]acpi' i915; do
+# Bay Trail eMMC (sdhci-acpi + mmc_block), early KMS and the backlight PWM
+# i915 needs at probe: always required.
+for k in mmc_block 'sdhci[-_]acpi' i915 'pwm[-_]lpss[-_]platform'; do
     has_kmod /tmp/initramfs-new.list "${k}" || { echo "error: kernel module '${k}' missing from the initramfs" >&2; exit 1; }
 done
+grep -q 'usr/lib/modprobe.d/i915-backlight.conf' /tmp/initramfs-new.list ||
+    { echo "error: i915-backlight.conf (PWM before i915) missing from the initramfs" >&2; exit 1; }
 
 echo "i915 in stock initramfs: $(has_kmod /tmp/initramfs-stock.list i915 && echo yes || echo no)"
 ls -l "${STOCK}" "${IMG}"
