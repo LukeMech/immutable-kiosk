@@ -47,3 +47,16 @@ passwd -l kiosk
 systemctl enable immutable-kiosk-backend.service
 systemctl enable immutable-kiosk-cage.service
 systemctl set-default graphical.target
+
+# tty1 belongs to the kiosk: no login prompt there, ever -- not even when
+# cage is between restarts (logind would spawn autovt@tty1 on the VT).
+# Nobody can log in anyway (kiosk and root are locked); debugging goes
+# through systemd.debug_shell=1 (tty9).
+systemctl mask getty@tty1.service autovt@tty1.service
+
+# GRUB's menu entry and "Booting ..." line come from PRETTY_NAME (ostree
+# writes it into each deployment's BLS entry). NAME/ID stay Fedora: dnf,
+# bootc and friends key off those.
+. /usr/lib/os-release
+sed -i "s|^PRETTY_NAME=.*|PRETTY_NAME=\"immutable-kiosk (Fedora Linux ${VERSION_ID})\"|" /usr/lib/os-release
+grep -q '^PRETTY_NAME="immutable-kiosk' /usr/lib/os-release

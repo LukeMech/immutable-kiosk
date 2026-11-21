@@ -9,11 +9,19 @@ Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 Conflicts=getty@tty1.service
 After=getty@tty1.service
 ConditionPathExists=/dev/tty0
+# Never give up: with the default limit (5 starts in 10 s) a few early
+# failures left the unit dead, and tty1 showed a login prompt instead.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=kiosk
 WorkingDirectory=/var/home/kiosk
+# i915 on Bay Trail can come up after this unit starts (slower still from a
+# USB stick over OTG): cage then finds no GPU and exits. Wait up to 30 s
+# for a DRM card first; after that, start anyway and let Restart= retry.
+# ($$: systemd expands $ itself.)
+ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do ls /dev/dri/card* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo "no /dev/dri/card* after 30 s" >&2'
 PAMName=login
 Environment=XDG_SESSION_TYPE=wayland
 # -d: no client-side decorations, kiosk-shell is the only (fullscreen) window.
