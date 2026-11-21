@@ -60,3 +60,8 @@ systemctl mask getty@tty1.service autovt@tty1.service
 . /usr/lib/os-release
 sed -i "s|^PRETTY_NAME=.*|PRETTY_NAME=\"immutable-kiosk (Fedora Linux ${VERSION_ID})\"|" /usr/lib/os-release
 grep -q '^PRETTY_NAME="immutable-kiosk' /usr/lib/os-release
+# Hostname until one is set in Settings (hostnamectl -> /etc/hostname, which
+# wins): systemd falls back to os-release's DEFAULT_HOSTNAME, not "fedora".
+sed -i '/^DEFAULT_HOSTNAME=/d' /usr/lib/os-release
+echo 'DEFAULT_HOSTNAME="immutable-kiosk"' >> /usr/lib/os-release
+rm -f /etc/hostname

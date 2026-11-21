@@ -271,6 +271,7 @@ async function loadNet() {
     let n;
     try { n = await api("/network"); }
     catch (e) { box.innerHTML = `<div class="card"><p class="msg err">${esc(e.message)}</p></div>`; return; }
+    if (document.activeElement !== $("host-name")) $("host-name").value = n.hostname;
     if (!n.connections.length) {
         box.innerHTML = `<div class="card"><h2>Brak aktywnego połączenia</h2>
             <p class="hint">Połącz się z siecią Wi-Fi albo podłącz kabel (adapter USB-Ethernet).</p></div>`;
@@ -324,6 +325,15 @@ async function loadNet() {
         }).catch(e => msg(m, e.message, "err")));
         box.appendChild(card);
     }
+}
+
+function initHostname() {
+    const btn = $("host-save"), m = $("host-msg");
+    btn.addEventListener("click", () => busy(btn, async () => {
+        const r = await api("/hostname", { hostname: $("host-name").value });
+        $("host-name").value = r.hostname;
+        msg(m, `Zapisano: ${r.hostname}. Router zobaczy ją przy następnym połączeniu.`, "ok");
+    }).catch(e => msg(m, e.message, "err")));
 }
 
 /* ---------- Screen */
@@ -467,6 +477,7 @@ async function initSettings() {
     });
     initHmi();
     initWifi();
+    initHostname();
     initScreen();
     initSystem();
     showTab("hmi");

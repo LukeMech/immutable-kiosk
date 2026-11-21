@@ -977,6 +977,18 @@ def r_network_set(body, q):
     return {"ok": True}
 
 
+HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def r_hostname_set(body, q):
+    """Static hostname (hostnamectl). One DNS label: what DHCP and routers show."""
+    name = str(body.get("hostname", "")).strip().lower()
+    if not HOSTNAME.fullmatch(name):
+        raise ApiError("Nazwa: 1-63 znaki, małe litery, cyfry i myślniki (nie na początku ani końcu)")
+    run(["hostnamectl", "set-hostname", name])
+    return {"hostname": socket.gethostname()}
+
+
 def r_system(body, q):
     return bootc_status()
 
@@ -1048,6 +1060,7 @@ ROUTES = {
     ("POST", "/api/wifi/radio"): r_wifi_radio,
     ("GET", "/api/network"): r_network,
     ("POST", "/api/network"): r_network_set,
+    ("POST", "/api/hostname"): r_hostname_set,
     ("GET", "/api/system"): r_system,
     ("POST", "/api/system/check"): r_system_check,
     ("POST", "/api/system/upgrade"): r_system_upgrade,

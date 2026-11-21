@@ -93,6 +93,15 @@
 
     <!-- NETWORK -->
     <section id="tab-net" class="tab" hidden>
+      <div class="card">
+        <h2>Nazwa urządzenia</h2>
+        <p class="hint">Pod tą nazwą tablet widać w sieci (DHCP, router). Małe litery, cyfry i myślniki.</p>
+        <label>Nazwa hosta
+          <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
+        </label>
+        <p class="msg" id="host-msg"></p>
+        <div class="actions"><button class="btn primary" id="host-save">Zapisz</button></div>
+      </div>
       <div id="net-list"></div>
     </section>
 
