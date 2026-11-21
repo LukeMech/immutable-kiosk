@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -123,17 +124,24 @@ def wlr_outputs():
     return result
 
 
-def apply_output(cfg):
-    """Rotation and screen scaling (Settings > Ekran) for every output.
+def screen_scale(cfg):
+    try:
+        return min(2.0, max(1.0, float(cfg.get("scale", 1.0))))
+    except (TypeError, ValueError):
+        return 1.0
 
-    Scaling is the compositor's: everything -- HMI, Settings, keyboard --
-    gets bigger, unlike the HMI zoom, which only zooms the HMI page.
+
+def apply_output(cfg):
+    """Rotation for every output.
+
+    The compositor's scale stays at 1, always set explicitly: a fractional
+    output scale (wlr-randr --scale 1.25) made GTK/WebKit render far bigger
+    than 125 %, and going back to 1 didn't undo it until cage restarted.
+    Screen scaling (Settings > Ekran) is WebKit zoom on both views instead
+    (KioskShell.apply_scale) -- sharp at any step, and it can't get stuck.
     """
     rotation = cfg.get("rotation_effective", "landscape")
-    try:
-        scale = min(2.0, max(1.0, float(cfg.get("scale", 1.0))))
-    except (TypeError, ValueError):
-        scale = 1.0
+    scale = 1
     outputs = sorted(wlr_outputs(), key=lambda o: not o[0].startswith(INTERNAL_OUTPUTS))
     touch_transform = None
     for name, w, h in outputs:
@@ -143,9 +151,9 @@ def apply_output(cfg):
             transform = "90" if h > w else "normal"
         else:
             transform = rotation
-        log(f"output {name} {w}x{h}: transform {transform} ({rotation}), scale {scale}")
+        log(f"output {name} {w}x{h}: transform {transform} ({rotation})")
         subprocess.run(["wlr-randr", "--output", name, "--transform", transform,
-                        "--scale", f"{scale:g}"], timeout=5)
+                        "--scale", str(scale)], timeout=5)
         if touch_transform is None:
             touch_transform = transform
     # Touch follows the panel: kioskd sets libinput's calibration matrix
@@ -211,6 +219,9 @@ class KioskShell(Gtk.Application):
         self.retry_source = None
         self.loaded_url = None
         self.hmi = None
+        self.settings_loaded = False
+        self.hmi_error = False
+        self.boot_reported = False
 
     # -- setup
     def do_activate(self):
@@ -245,9 +256,12 @@ class KioskShell(Gtk.Application):
             self.hotcorner = self.make_hotcorner()
             self.overlay.add_overlay(self.hotcorner)
             self.apply_hmi_config(force_load=True)
+        self.apply_scale()
 
-        self.settings.load_uri(SETTINGS_URL)
         if self.hmi and self.cfg.get("hmi_url"):
+            # Settings' page loads once the HMI is up (or Settings is opened):
+            # two web processes starting side by side on a Bay Trail Atom
+            # slowed the HMI's first paint down.
             self.show("hmi")
         else:
             self.show("settings")  # first boot: nothing to show yet but Settings
@@ -315,9 +329,17 @@ class KioskShell(Gtk.Application):
         return box
 
     # -- switching
+    def ensure_settings(self):
+        if not self.settings_loaded:
+            self.settings_loaded = True
+            self.settings.load_uri(SETTINGS_URL)
+        return GLib.SOURCE_REMOVE
+
     def show(self, name):
         if name == "hmi" and not self.hmi:
             return
+        if name == "settings":
+            self.ensure_settings()
         self.stack.set_visible_child_name(name)
         if self.hmi:
             self.hotcorner.set_visible(name == "hmi")
@@ -338,9 +360,20 @@ class KioskShell(Gtk.Application):
             ucm.add_script(WebKit.UserScript.new(
                 OSK_JS.read_text(), WebKit.UserContentInjectedFrames.ALL_FRAMES,
                 WebKit.UserScriptInjectionTime.END, None, None))
-        self.hmi.set_zoom_level(float(cfg.get("zoom", 1.0)))
         if force_load or cfg.get("hmi_url") != self.loaded_url:
             self.load_hmi()
+
+    def apply_scale(self):
+        """Screen scaling = WebKit zoom: Settings (and its keyboard) at the
+        scale, the HMI at scale x its own zoom (the HMI tab's setting)."""
+        scale = screen_scale(self.cfg)
+        self.settings.set_zoom_level(scale)
+        if self.hmi:
+            try:
+                zoom = float(self.cfg.get("zoom", 1.0))
+            except (TypeError, ValueError):
+                zoom = 1.0
+            self.hmi.set_zoom_level(scale * zoom)
 
     def reload_config(self):
         try:
@@ -351,10 +384,12 @@ class KioskShell(Gtk.Application):
         apply_output(self.cfg)
         if self.hmi:
             self.apply_hmi_config()
+        self.apply_scale()
 
     # -- HMI loading
     def load_hmi(self):
         self.cancel_retry()
+        self.hmi_error = False
         url = self.cfg.get("hmi_url")
         self.loaded_url = url
         if not url:
@@ -379,6 +414,8 @@ class KioskShell(Gtk.Application):
         return secs
 
     def show_error(self, title, detail, failing_uri):
+        self.hmi_error = True
+        self.ensure_settings()  # the error page's "Ustawienia" button is the way out
         secs = self.schedule_retry() if failing_uri else 0
         html = ERROR_PAGE.format(title=esc(title), detail=detail, retry=secs)
         self.hmi.load_alternate_html(html, failing_uri or "about:blank", None)
@@ -408,6 +445,21 @@ class KioskShell(Gtk.Application):
     def on_hmi_load_changed(self, view, event):
         if event == WebKit.LoadEvent.COMMITTED:
             self.cancel_retry()
+        elif event == WebKit.LoadEvent.FINISHED and not self.hmi_error:
+            # The HMI is up: Settings may load now, with a head start for the
+            # HMI's own scripts.
+            GLib.timeout_add_seconds(3, self.ensure_settings)
+            if not self.boot_reported:
+                # Settings > System shows "HMI visible N s after boot".
+                self.boot_reported = True
+                threading.Thread(target=self.report_hmi_shown, daemon=True).start()
+
+    @staticmethod
+    def report_hmi_shown():
+        try:
+            api_post("/api/boot/hmi", {}, timeout=5)
+        except (OSError, ValueError) as e:
+            log("boot timing:", e)
 
     def on_hmi_create(self, view, action):
         uri = action.get_request().get_uri()

@@ -63,7 +63,17 @@ input[type=text], input[type=password] {
     font: inherit; font-size: 20px; color: var(--text); background: var(--field);
     border: 2px solid var(--line); border-radius: 12px; outline: none;
 }
-input:focus { border-color: var(--accent); }
+select {
+    display: block; width: 100%; min-height: 58px; padding: 0 14px;
+    font: inherit; font-size: 18px; color: var(--text); background: var(--field);
+    border: 2px solid var(--line); border-radius: 12px; outline: none;
+}
+input:focus, select:focus { border-color: var(--accent); }
+/* A field and its button (or two selects) on one row. */
+.inline { display: flex; gap: 10px; align-items: center; }
+.inline > input, .inline > select { flex: 1 1 0; min-width: 0; margin-top: 0; }
+.inline > .btn { flex: none; }
+div.inline { margin-top: 6px; }
 .grid2 { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
 
 .btn {
@@ -140,6 +150,51 @@ input:focus { border-color: var(--accent); }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; font-size: 16px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv dd .sub { display: block; color: var(--muted); font-size: 14px; margin-top: 6px; }
+.kv dt:has(+ dd.inline), .kv dt:has(+ dd > .inline) { align-self: center; }
+
+/* Update status: icon + one line of what's going on + one of detail. */
+.upd { display: flex; gap: 14px; align-items: center; }
+.upd-icon {
+    flex: none; width: 52px; height: 52px; border-radius: 50%;
+    display: grid; place-items: center; background: #273241; color: var(--muted);
+}
+.upd-icon svg { width: 28px; height: 28px; }
+.upd-text { min-width: 0; }
+.upd-title { font-weight: 600; font-size: 19px; }
+.upd-sub { color: var(--muted); font-size: 16px; overflow-wrap: anywhere; }
+.upd.ok .upd-icon, .upd.ready .upd-icon { background: rgba(63,185,80,.15); color: var(--ok); }
+.upd.new .upd-icon { background: rgba(47,129,247,.18); color: var(--accent); }
+.upd.err .upd-icon { background: rgba(248,81,73,.15); color: var(--bad); }
+.upd.busy .upd-icon svg { animation: spin 1s linear infinite; }
+.upd.ready { background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.35); border-radius: 12px; padding: 14px; }
+.actions .btn.icon { flex: 0 0 64px; padding: 0; }
+.btn.icon svg { width: 26px; height: 26px; }
+.btn.icon.spin { opacity: 1; }
+.btn.icon.spin svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Release notes ("Co nowego") from the GitHub release bodies. */
+.notes { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
+.notes h3 { margin: 0 0 2px; font-size: 16px; color: var(--muted); font-weight: 600; }
+.rel summary { min-height: 52px; display: flex; align-items: center; gap: 12px; list-style: none; }
+.rel summary::-webkit-details-marker { display: none; }
+.rel summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+.rel[open] summary::before { transform: rotate(90deg); }
+.rel .tag { font-weight: 600; }
+.rel .date { color: var(--muted); font-size: 15px; }
+.md { font-size: 16px; padding: 0 0 12px 24px; }
+.md h4 { margin: 12px 0 6px; font-size: 16px; }
+.md h5 { margin: 10px 0 4px; font-size: 15px; color: var(--muted); }
+.md p { margin: 6px 0; }
+.md ul { margin: 0; padding-left: 18px; }
+.md li { margin: 4px 0; }
+.md .sha { font-family: "Noto Sans Mono", monospace; font-size: 13px; color: var(--muted); margin-right: 6px; }
+.md code { font-family: "Noto Sans Mono", monospace; font-size: 14px; background: var(--field); padding: 1px 5px; border-radius: 5px; }
+.md .tbl { max-height: 40vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.md table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.md th, .md td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.md th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
 
 .msg { min-height: 1.4em; margin: 12px 0 0; font-size: 16px; }
 .msg.ok { color: var(--ok); }

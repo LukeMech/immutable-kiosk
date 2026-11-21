@@ -102,15 +102,6 @@
 
     <!-- NETWORK -->
     <section id="tab-net" class="tab" hidden>
-      <div class="card">
-        <h2>Nazwa urządzenia</h2>
-        <p class="hint">Pod tą nazwą tablet widać w sieci (DHCP, router). Małe litery, cyfry i myślniki.</p>
-        <label>Nazwa hosta
-          <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
-        </label>
-        <p class="msg" id="host-msg"></p>
-        <div class="actions"><button class="btn primary" id="host-save">Zapisz</button></div>
-      </div>
       <div id="net-list"></div>
     </section>
 
@@ -138,7 +129,7 @@
       </div>
       <div class="card">
         <h2>Skalowanie ekranu</h2>
-        <p class="hint">Powiększa wszystko: HMI, ustawienia i klawiaturę.</p>
+        <p class="hint">Powiększa wszystko: HMI, ustawienia i klawiaturę. Powiększenie HMI (zakładka HMI) mnoży się przez tę wartość.</p>
         <div class="stepper">
           <button class="btn" id="scale-minus">−</button>
           <span id="scale-val">100%</span>
@@ -165,19 +156,29 @@
       </div>
       <div class="card">
         <h2>Aktualizacja</h2>
-        <p class="msg" id="sys-msg"></p>
+        <div class="upd" id="upd">
+          <div class="upd-icon" id="upd-icon"></div>
+          <div class="upd-text">
+            <div class="upd-title" id="upd-title">Wczytywanie…</div>
+            <div class="upd-sub" id="upd-sub"></div>
+          </div>
+        </div>
+        <!-- Only while an update actually downloads / deploys. -->
         <div class="job" id="job" hidden>
           <div class="job-stage" id="job-stage"></div>
           <div class="progress"><div id="job-bar"></div></div>
           <div class="job-detail" id="job-detail"></div>
         </div>
-        <div class="actions">
-          <button class="btn" id="sys-check">Sprawdź aktualizacje</button>
-          <button class="btn primary" id="sys-upgrade">Aktualizuj</button>
+        <div class="actions upd-actions">
+          <button class="btn primary" id="sys-upgrade" disabled>Aktualizuj</button>
+          <button class="btn icon" id="sys-check" aria-label="Sprawdź aktualizacje">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+          </button>
         </div>
         <div class="actions" id="sys-reboot-box" hidden>
           <button class="btn primary hold" data-hold="1500" id="sys-reboot-now">Przytrzymaj: uruchom ponownie teraz</button>
         </div>
+        <div class="notes" id="upd-notes" hidden></div>
       </div>
       <div class="card">
         <h2>Własny obraz systemu</h2>
@@ -186,6 +187,12 @@
           <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
         </label>
         <div class="actions"><button class="btn hold" data-hold="1500" id="sys-switch">Przytrzymaj: przełącz obraz</button></div>
+        <label for="sys-repo">Repozytorium z listą zmian (GitHub, właściciel/nazwa)</label>
+        <div class="inline">
+          <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
+          <button class="btn" id="sys-repo-save" disabled>Zapisz</button>
+        </div>
+        <p class="hint" style="margin-top:8px">Stąd pochodzą opisy wersji („Co nowego”) — z wydań (releases) tego repozytorium.</p>
       </div>
       <div class="card">
         <h2>Przywracanie i zasilanie</h2>
@@ -197,7 +204,30 @@
       </div>
       <div class="card">
         <h2>Urządzenie</h2>
-        <dl class="kv" id="dev-info"></dl>
+        <dl class="kv" id="dev-info">
+          <dt>Urządzenie</dt><dd id="dev-name">—</dd>
+          <dt>Producent</dt><dd id="dev-vendor">—</dd>
+          <dt>Zasilanie</dt><dd id="dev-power">—</dd>
+          <dt>Czas</dt><dd id="dev-time">—</dd>
+          <dt>Strefa czasowa</dt>
+          <dd class="inline">
+            <select id="tz-region" aria-label="Region"></select>
+            <select id="tz-city" aria-label="Miasto"></select>
+          </dd>
+          <dt>Nazwa hosta</dt>
+          <dd>
+            <span class="inline">
+              <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
+              <button class="btn" id="host-save" disabled>Zapisz</button>
+            </span>
+            <span class="sub">Pod tą nazwą tablet widać w sieci (DHCP, router). Małe litery, cyfry i myślniki.</span>
+          </dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h2>Czas uruchamiania</h2>
+        <dl class="kv" id="boot-info"><dt>Stan</dt><dd>—</dd></dl>
+        <details class="log"><summary>Szczegóły (systemd)</summary><pre id="boot-detail"></pre></details>
       </div>
     </section>
   </main>

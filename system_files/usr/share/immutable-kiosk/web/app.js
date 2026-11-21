@@ -272,7 +272,6 @@ async function loadNet() {
     let n;
     try { n = await api("/network"); }
     catch (e) { box.innerHTML = `<div class="card"><p class="msg err">${esc(e.message)}</p></div>`; return; }
-    if (document.activeElement !== $("host-name")) $("host-name").value = n.hostname;
     if (!n.connections.length) {
         box.innerHTML = `<div class="card"><h2>Brak aktywnego połączenia</h2>
             <p class="hint">Połącz się z siecią Wi-Fi albo podłącz kabel (adapter USB-Ethernet).</p></div>`;
@@ -288,7 +287,6 @@ async function loadNet() {
             <dt>Adres</dt><dd>${esc(cur.addresses.join(", ") || "—")}</dd>
             <dt>Brama</dt><dd>${esc(cur.gateway || "—")}</dd>
             <dt>DNS</dt><dd>${esc(cur.dns.join(", ") || "—")}</dd>
-            <dt>Nazwa</dt><dd>${esc(n.hostname)}</dd>
           </dl>
           <div class="seg" style="margin-top:16px"><button data-v="auto">Automatycznie (DHCP)</button><button data-v="manual">Statyczny adres</button></div>
           <div class="manual">
@@ -328,15 +326,6 @@ async function loadNet() {
     }
 }
 
-function initHostname() {
-    const btn = $("host-save"), m = $("host-msg");
-    btn.addEventListener("click", () => busy(btn, async () => {
-        const r = await api("/hostname", { hostname: $("host-name").value });
-        $("host-name").value = r.hostname;
-        msg(m, `Zapisano: ${r.hostname}. Router zobaczy ją przy następnym połączeniu.`, "ok");
-    }).catch(e => msg(m, e.message, "err")));
-}
-
 /* ---------- Screen */
 async function saveCfg(part) {
     cfg = await api("/config", part);
@@ -361,12 +350,12 @@ function loadScreen() {
 }
 
 function initScreen() {
-    // Whole-screen scaling in 25% steps (fractional scales stay sharp only
-    // at quarters on most panels).
-    const scaleStep = d => saveCfg({ scale: Math.min(2, Math.max(1, Math.round(((cfg.scale || 1) + d) * 4) / 4)) })
+    // Whole-screen scaling in 10% steps (WebKit zoom in kiosk-shell: sharp at
+    // any value).
+    const scaleStep = d => saveCfg({ scale: Math.min(2, Math.max(1, Math.round(((cfg.scale || 1) + d) * 10) / 10)) })
         .then(loadScreen).catch(e => toast(e.message, true));
-    $("scale-minus").addEventListener("click", () => scaleStep(-0.25));
-    $("scale-plus").addEventListener("click", () => scaleStep(0.25));
+    $("scale-minus").addEventListener("click", () => scaleStep(-0.1));
+    $("scale-plus").addEventListener("click", () => scaleStep(0.1));
 
     // HMI zoom (card in the HMI tab).
     const zoomStep = d => saveCfg({ zoom: Math.min(3, Math.max(0.5, Math.round((cfg.zoom + d) * 10) / 10)) })
@@ -422,53 +411,296 @@ function pollJob(onUpdate) {
 
 const sysJobEls = () => ({ box: $("job"), stage: $("job-stage"), bar: $("job-bar"), detail: $("job-detail") });
 
-async function loadSystem() {
-    const info = $("sys-info");
-    let s;
-    try { s = await api("/system"); }
-    catch (e) { info.innerHTML = `<dt>Błąd</dt><dd>${esc(e.message)}</dd>`; return; }
-    if (!s.available) {
-        info.innerHTML = `<dt>bootc</dt><dd>${esc(s.error || "niedostępny")}</dd>`;
-    } else {
-        const b = s.booted || {};
-        info.innerHTML = `
-            <dt>Obraz</dt><dd>${esc(b.image || "—")}</dd>
-            <dt>Wersja</dt><dd>${esc(b.version || "—")}</dd>
-            <dt>Zbudowany</dt><dd>${esc(fmtTime(b.timestamp))}</dd>
-            ${s.staged ? `<dt>Po restarcie</dt><dd>${esc(s.staged.version || s.staged.image)}</dd>` : ""}
-            ${s.rollback ? `<dt>Poprzednia</dt><dd>${esc(s.rollback.version || s.rollback.image)}</dd>` : ""}`;
-        msg($("sys-msg"), s.staged ? "Nowa wersja jest pobrana — uruchom ponownie, aby ją włączyć."
-            : s.update ? `Dostępna aktualizacja: ${s.update.version || s.update.digest.slice(0, 19)}` : "", s.staged || s.update ? "ok" : "");
-        $("sys-reboot-box").hidden = !s.staged;
-        $("sys-rollback").disabled = !s.rollback;
-        if (!$("sys-image").value) $("sys-image").value = b.image || "";
+let sys = null;          // GET /system (bootc status + last check)
+let sysJob = null;       // last update-ish job (check / upgrade / switch)
+let sysWasRunning = false;
+let sysNotes = null;     // GET /system/changelog (GitHub releases)
+const UPDATE_JOBS = ["check", "upgrade", "switch"];
+const CHECK_EVERY = 15 * 60;  // s: opening System checks again after this
+
+const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const UPD_ICONS = {
+    ok: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+    new: svg('<path d="M12 4v12"/><path d="M6.5 11l5.5 5.5 5.5-5.5"/><path d="M5 20h14"/>'),
+    ready: svg('<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>'),
+    err: svg('<path d="M12 7v6"/><path d="M12 17h.01"/>'),
+    busy: svg('<path d="M12 3a9 9 0 1 0 9 9"/>'),
+};
+
+// "latest.20261121-22d3877" -> "20261121-22d3877" when no release matches.
+const shortVersion = e => !e ? "—" : ((e.version || "").replace(/^[^.]*\./, "") || (e.digest || "").slice(7, 19) || "—");
+function releaseOf(e) {
+    if (!e || !e.sha || !sysNotes) return null;
+    return [sysNotes.current, sysNotes.target, ...(sysNotes.news || [])]
+        .find(r => r && r.sha && r.sha.startsWith(e.sha)) || null;
+}
+const versionName = e => { const r = releaseOf(e); return r ? r.tag : shortVersion(e); };
+
+function fmtAgo(t) {
+    const s = Date.now() / 1000 - t;
+    if (s < 90) return "przed chwilą";
+    if (s < 3600) return `${Math.round(s / 60)} min temu`;
+    return "o " + new Date(t * 1000).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+}
+const fmtDate = t => t ? new Date(t).toLocaleDateString("pl-PL", { day: "numeric", month: "long", year: "numeric" }) : "";
+
+/* Just enough Markdown for the release bodies build.yml writes: headings,
+   lists (commits), tables (package changes), `code`, **bold**, links (text
+   only -- nothing on a kiosk opens them). */
+const MD_HEADINGS = {
+    "Package changes": "Zmiany pakietów", "Updated": "Zaktualizowane", "Added": "Dodane",
+    "Removed": "Usunięte", "Commits": "Zmiany", "Initial build": "Pierwsze wydanie",
+    "Notes": "Uwagi", "All images": "Wszystkie obrazy",
+    // table headers
+    "Package": "Pakiet", "Previous": "Było", "New": "Jest", "Version": "Wersja",
+};
+function md(src) {
+    const inline = s => esc(s)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+    const cells = l => l.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+    const lines = src.split("\n");
+    let out = "";
+    for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        let m;
+        if ((m = l.match(/^(#{1,6})\s+(.*)$/))) {
+            // No emoji font on the kiosk: drop them instead of showing boxes.
+            const text = m[2].replace(/[\p{Extended_Pictographic}️‍]/gu, "").trim();
+            out += m[1].length <= 2 ? `<h4>${inline(MD_HEADINGS[text] || text)}</h4>` : `<h5>${inline(MD_HEADINGS[text] || text)}</h5>`;
+        } else if (/^\s*\|/.test(l)) {
+            const rows = [];
+            for (; i < lines.length && /^\s*\|/.test(lines[i]); i++) {
+                if (!/^\s*\|?\s*:?-{2,}/.test(lines[i])) rows.push(cells(lines[i]));
+            }
+            i--;
+            const [head, ...body] = rows;
+            out += `<div class="tbl"><table><thead><tr>${head.map(c => `<th>${inline(MD_HEADINGS[c] || c)}</th>`).join("")}</tr></thead><tbody>` +
+                body.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("") + "</tbody></table></div>";
+        } else if (/^\s*[-*]\s+/.test(l)) {
+            out += "<ul>";
+            for (; i < lines.length && /^\s*[-*]\s+/.test(lines[i]); i++) {
+                // "- 22d3877 Subject": the commit's short hash, small and grey.
+                const item = inline(lines[i].replace(/^\s*[-*]\s+/, ""))
+                    .replace(/^([0-9a-f]{7,12}) /, '<span class="sha">$1</span>');
+                out += `<li>${item}</li>`;
+            }
+            i--;
+            out += "</ul>";
+        } else if (l.trim()) {
+            out += `<p>${inline(l)}</p>`;
+        }
     }
+    return out;
+}
+
+function renderUpdate() {
+    const s = sys, job = sysJob;
+    const running = !!(job && job.state === "running");
+    const checking = running && (job.kind === "check" || job.stage === "Sprawdzanie aktualizacji");
+    const working = running && !checking;  // downloading / deploying
+    let state, title, sub = "";
+    if (!s) {
+        state = "busy"; title = "Wczytywanie…";
+    } else if (!s.available) {
+        state = "err"; title = "Aktualizacje są niedostępne"; sub = s.error || "";
+    } else if (working) {
+        state = "busy";
+        title = job.kind === "switch" ? "Zmiana obrazu systemu…" : "Pobieranie aktualizacji…";
+        sub = job.kind === "upgrade" && s.update ? `Wersja ${versionName(s.update)}` : "";
+    } else if (checking) {
+        state = "busy"; title = "Sprawdzanie aktualizacji…"; sub = `Teraz działa ${versionName(s.booted)}`;
+    } else if (s.update) {
+        state = "new"; title = `Dostępna aktualizacja: ${versionName(s.update)}`;
+        sub = `Teraz działa ${versionName(s.booted)}`;
+    } else if (s.staged) {
+        state = "ready"; title = `Wersja ${versionName(s.staged)} czeka na restart`;
+        sub = `Jest pobrana i włączy się po ponownym uruchomieniu. Do tego czasu działa ${versionName(s.booted)}.`;
+    } else if (s.checked && s.checked.error) {
+        state = "err"; title = "Nie udało się sprawdzić aktualizacji"; sub = s.checked.error;
+    } else if (s.checked && s.checked.time) {
+        state = "ok"; title = "System jest aktualny";
+        sub = `${versionName(s.booted)} · sprawdzono ${fmtAgo(s.checked.time)}`;
+    } else {
+        state = "ok"; title = `Wersja ${versionName(s.booted)}`; sub = "Aktualizacje nie były jeszcze sprawdzane";
+    }
+    $("upd").className = "upd " + state;
+    $("upd-icon").innerHTML = UPD_ICONS[state];
+    $("upd-title").textContent = title;
+    $("upd-sub").textContent = sub;
+    // The bar only while there's progress to show -- a check is just a spinner.
+    renderJob(working ? job : null, sysJobEls());
+    const avail = !!(s && s.available);
+    $("sys-upgrade").disabled = running || !(avail && s.update);
+    $("sys-upgrade").hidden = !!(avail && s.staged && !s.update);
+    $("sys-check").disabled = running || !avail;
+    $("sys-check").classList.toggle("spin", checking);
+    $("sys-reboot-box").hidden = running || !(avail && s.staged);
+    $("sys-switch").disabled = running;
+    $("sys-rollback").disabled = running || !(avail && s.rollback);
+    renderNotes();
+}
+
+function renderNotes() {
+    const box = $("upd-notes"), n = sysNotes, s = sys;
+    if (!n || !s || !s.available) { box.hidden = true; return; }
+    const news = (s.update || s.staged) ? (n.news || []) : [];
+    const list = news.length ? news : n.current ? [n.current] : [];
+    if (!list.length) { box.hidden = true; return; }
+    const key = (news.length ? "news:" : "cur:") + list.map(r => r.tag).join(",");
+    box.hidden = false;
+    if (box.dataset.key === key) return;  // keeps what's open/closed
+    box.dataset.key = key;
+    box.innerHTML = `<h3>${news.length ? "Co nowego" : "Zmiany w tej wersji"}</h3>` + list.map((r, i) => `
+        <details class="rel"${news.length && i === 0 ? " open" : ""}>
+          <summary><span class="tag">${esc(r.tag)}</span><span class="date">${esc(fmtDate(r.date))}</span></summary>
+          <div class="md">${r.notes ? md(r.notes) : '<p class="hint">Brak opisu.</p>'}</div>
+        </details>`).join("");
+}
+
+function renderSysInfo() {
+    const info = $("sys-info"), s = sys;
+    if (!s || !s.available) {
+        info.innerHTML = `<dt>bootc</dt><dd>${esc((s && s.error) || "niedostępny")}</dd>`;
+        return;
+    }
+    const b = s.booted || {};
+    info.innerHTML = `
+        <dt>Wersja</dt><dd>${esc(versionName(b))}</dd>
+        <dt>Obraz</dt><dd>${esc(b.image || "—")}</dd>
+        <dt>Zbudowany</dt><dd>${esc(fmtTime(b.timestamp))}</dd>
+        ${s.rollback ? `<dt>Poprzednia</dt><dd>${esc(versionName(s.rollback))}</dd>` : ""}`;
+    if (!$("sys-image").value) $("sys-image").value = b.image || "";
+}
+
+function maybeAutoCheck() {
+    if (!sys || !sys.available || sysWasRunning || currentTab !== "system") return;
+    const t = sys.checked && sys.checked.time;
+    if (t && Date.now() / 1000 - t < CHECK_EVERY) return;
+    startSysJob("/system/check");
+}
+
+function pollSysJob() {
     pollJob(job => {
-        renderJob(job && job.kind !== "install" ? job : null, sysJobEls());
-        const running = job && job.state === "running";
-        ["sys-check", "sys-upgrade", "sys-switch", "sys-rollback"].forEach(id => { $(id).disabled = running || (id === "sys-rollback" && !(s && s.rollback)); });
-        if (job && job.state !== "running" && job.finished && Date.now() / 1000 - job.finished < 2) loadSystem();
-        if (job && job.state === "failed") msg($("sys-msg"), job.detail, "err");
+        const was = sysWasRunning;
+        sysJob = job && UPDATE_JOBS.includes(job.kind) ? job : null;
+        sysWasRunning = !!(sysJob && sysJob.state === "running");
+        renderUpdate();
+        if (was && !sysWasRunning) {
+            if (sysJob && sysJob.state === "failed" && sysJob.kind !== "check") toast(sysJob.detail || "Błąd aktualizacji", true);
+            else if (sysJob && sysJob.kind === "upgrade" && sysJob.result && !sysJob.result.update && !sysJob.result.staged) toast("System jest aktualny");
+            loadSystem();
+        } else if (!sysWasRunning) {
+            maybeAutoCheck();
+        }
     });
+}
+
+async function startSysJob(path) {
+    try {
+        sysJob = await api(path, {});
+        sysWasRunning = true;
+        renderUpdate();
+        pollSysJob();
+    } catch (e) { toast(e.message, true); }
+}
+
+async function loadNotes() {
+    try { sysNotes = await api("/system/changelog"); } catch (_) { return; }
+    if (document.activeElement !== $("sys-repo") && sysNotes.repo) {
+        $("sys-repo").value = sysNotes.repo;
+        $("sys-repo-save").disabled = true;
+    }
+    renderSysInfo();
+    renderUpdate();
+}
+
+async function loadSystem() {
+    try { sys = await api("/system"); }
+    catch (e) { sys = { available: false, error: e.message }; }
+    renderSysInfo();
+    renderUpdate();
+    pollSysJob();
+    refreshDevice();
+    loadTimezones();
+    loadBoot();
+    loadNotes();
+}
+
+/* Device: live power and clock (every ~5 s while System is open), time zone,
+   host name. Static markup, only values change -- fields keep their input. */
+let hostSaved = null;
+async function refreshDevice() {
     const i = await api("/info").catch(() => null);
-    if (i) $("dev-info").innerHTML = `
-        <dt>Urządzenie</dt><dd>${esc(i.device.name || i.device.product || "—")}</dd>
-        <dt>Producent</dt><dd>${esc(i.device.vendor || "—")}</dd>
-        <dt>Nazwa hosta</dt><dd>${esc(i.hostname)}</dd>
-        <dt>Zasilanie</dt><dd>${powerText(i.power)}</dd>
-        <dt>Czas</dt><dd>${esc(i.time)}</dd>`;
+    if (!i) return;
+    $("dev-name").textContent = i.device.name || i.device.product || "—";
+    $("dev-vendor").textContent = i.device.vendor || "—";
+    $("dev-power").textContent = powerText(i.power);
+    $("dev-time").textContent = i.time;
+    const h = $("host-name");
+    if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {
+        h.value = i.hostname;
+        $("host-save").disabled = true;
+    }
+    hostSaved = i.hostname;
+    if (tzZones && i.timezone !== tzCurrent && document.activeElement !== $("tz-city")) {
+        tzCurrent = i.timezone;
+        renderTz();
+    }
+}
+
+let tzZones = null, tzCurrent = null;
+const TZ_REGIONS = {
+    Africa: "Afryka", America: "Ameryka", Antarctica: "Antarktyda", Arctic: "Arktyka", Asia: "Azja",
+    Atlantic: "Atlantyk", Australia: "Australia", Europe: "Europa", Indian: "Ocean Indyjski",
+    Pacific: "Pacyfik", Other: "Inne",
+};
+const tzSplit = z => { const k = z.indexOf("/"); return k < 0 ? ["Other", z] : [z.slice(0, k), z.slice(k + 1)]; };
+
+async function loadTimezones() {
+    if (!tzZones) {
+        try { const r = await api("/timezones"); tzZones = r.zones; tzCurrent = r.current; }
+        catch (_) { return; }
+    }
+    renderTz();
+}
+
+function renderTz(region) {
+    const [curRegion] = tzSplit(tzCurrent || "UTC");
+    region = region || curRegion;
+    const regions = [...new Set(tzZones.map(z => tzSplit(z)[0]))];
+    $("tz-region").innerHTML = regions.map(r =>
+        `<option value="${esc(r)}"${r === region ? " selected" : ""}>${esc(TZ_REGIONS[r] || r)}</option>`).join("");
+    const chosen = region === curRegion ? tzCurrent : "";
+    $("tz-city").innerHTML = (chosen ? "" : '<option value="" selected>— wybierz —</option>') +
+        tzZones.filter(z => tzSplit(z)[0] === region).map(z =>
+            `<option value="${esc(z)}"${z === chosen ? " selected" : ""}>${esc(tzSplit(z)[1].replace(/_/g, " ").replace(/\//g, " / "))}</option>`).join("");
+}
+
+const BOOT_PHASES = { firmware: "Firmware (UEFI)", loader: "Bootloader (GRUB)", kernel: "Jądro", initrd: "initramfs", userspace: "Usługi systemu" };
+async function loadBoot() {
+    let b;
+    try { b = await api("/boot"); } catch (_) { return; }
+    const sec = v => v.toLocaleString("pl-PL", { maximumFractionDigits: 1 }) + " s";
+    const rows = [];
+    if (b.hmi_shown != null) rows.push(["HMI widoczne", `${sec(b.hmi_shown)} od startu jądra`]);
+    for (const p of b.phases || []) rows.push([BOOT_PHASES[p.name] || p.name, p.time]);
+    if (b.total) rows.push(["System gotowy po", b.total]);
+    if (!rows.length) rows.push(["Stan", b.error || "brak danych"]);
+    $("boot-info").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+    $("boot-detail").textContent = ["Najdłużej startujące usługi:", ...(b.blame || []), "",
+        "Łańcuch startu kiosku (@ = kiedy ruszyła, + = ile trwała):", ...(b.chain || [])].join("\n");
 }
 
 function initSystem() {
-    const startJob = path => e => busy(e.currentTarget, async () => {
-        msg($("sys-msg"), "");
-        await api(path, {});
-        loadSystem();
-    }).catch(() => {});
-    $("sys-check").addEventListener("click", startJob("/system/check"));
-    $("sys-upgrade").addEventListener("click", startJob("/system/upgrade"));
+    // "Aktualizuj" checks first (kioskd's upgrade job runs the check), then
+    // downloads only if there's still something newer.
+    $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
+    $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
     holdButton($("sys-switch"), () => api("/system/switch", { image: $("sys-image").value.trim() })
-        .then(loadSystem).catch(e => toast(e.message, true)));
+        .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
+        .catch(e => toast(e.message, true)));
     holdButton($("sys-rollback"), () => api("/system/rollback", {})
         .then(() => { toast("Poprzednia wersja uruchomi się po restarcie"); loadSystem(); }).catch(e => toast(e.message, true)));
     const power = action => () => api("/power", { action }).then(() => toast(action === "reboot" ? "Ponowne uruchamianie…" : "Wyłączanie…"))
@@ -476,6 +708,39 @@ function initSystem() {
     holdButton($("sys-reboot-now"), power("reboot"));
     holdButton($("pw-reboot"), power("reboot"));
     holdButton($("pw-off"), power("poweroff"));
+
+    $("sys-repo").addEventListener("input", () => { $("sys-repo-save").disabled = false; });
+    $("sys-repo-save").addEventListener("click", e => busy(e.currentTarget, async () => {
+        cfg = await api("/config", { releases_repo: $("sys-repo").value });
+        $("sys-repo").value = cfg.releases_repo;
+        $("sys-repo").blur();
+        toast(`Lista zmian z ${cfg.releases_repo}`);
+        $("upd-notes").dataset.key = "";
+        await loadNotes();
+    }).then(() => { $("sys-repo-save").disabled = true; }).catch(() => {}));
+
+    $("host-name").addEventListener("input", e => { $("host-save").disabled = e.target.value === hostSaved; });
+    $("host-save").addEventListener("click", e => busy(e.currentTarget, async () => {
+        const r = await api("/hostname", { hostname: $("host-name").value });
+        hostSaved = r.hostname;
+        $("host-name").value = r.hostname;
+        $("host-name").blur();
+        toast(`Nazwa hosta: ${r.hostname}. Router zobaczy ją przy następnym połączeniu.`);
+    }).then(() => { $("host-save").disabled = true; }).catch(() => {}));
+
+    $("tz-region").addEventListener("change", e => renderTz(e.target.value));
+    $("tz-city").addEventListener("change", e => {
+        const tz = e.target.value;
+        if (!tz) return;
+        api("/timezone", { timezone: tz }).then(r => {
+            tzCurrent = r.timezone;
+            $("dev-time").textContent = r.time;
+            renderTz();
+            toast(`Strefa czasowa: ${r.timezone}`);
+        }).catch(err => { toast(err.message, true); renderTz(); });
+    });
+
+    setInterval(() => { if (currentTab === "system" && !document.hidden) refreshDevice(); }, 5000);
 }
 
 async function initSettings() {
@@ -487,7 +752,6 @@ async function initSettings() {
     });
     initHmi();
     initWifi();
-    initHostname();
     initScreen();
     initSystem();
     showTab("hmi");
