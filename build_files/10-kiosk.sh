@@ -49,10 +49,21 @@ systemctl enable immutable-kiosk-cage.service
 systemctl set-default graphical.target
 
 # tty1 belongs to the kiosk: no login prompt there, ever -- not even when
-# cage is between restarts (logind would spawn autovt@tty1 on the VT).
-# Nobody can log in anyway (kiosk and root are locked); debugging goes
-# through systemd.debug_shell=1 (tty9).
-systemctl mask getty@tty1.service autovt@tty1.service
+# cage is between restarts. Nobody can log in anyway (kiosk and root are
+# locked); debugging goes through systemd.debug_shell=1 (tty9).
+# - getty@tty1: enabled by default (getty.target), the only getty started
+#   at boot. (logind's autovt@ getties are off: NAutoVTs=0 in logind.conf.d.)
+# - kmscon: Fedora 45's VT console (Changes/UseKmsconVTConsole) --
+#   kmsconvt@tty1 runs agetty on a pts (the "login: (pts/0 (tty1))" prompt)
+#   and holds DRM master on tty1, so cage never got the screen. Removed: the
+#   kernel console (fbcon) is all a kiosk needs, tty9's debug shell included.
+#   Its enablement symlinks (getty.target.wants/kmsconvt@tty1, autovt@ ->
+#   kmsconvt@) would dangle, so they go too.
+systemctl mask getty@tty1.service
+if rpm -q kmscon >/dev/null 2>&1; then
+    dnf5 -y remove kmscon
+fi
+find /etc/systemd /usr/lib/systemd -lname '*kmscon*' -print -delete
 
 # GRUB's menu entry and "Booting ..." line come from PRETTY_NAME (ostree
 # writes it into each deployment's BLS entry). NAME/ID stay Fedora: dnf,

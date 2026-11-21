@@ -6,8 +6,6 @@
 Description=Kiosk (cage + kiosk-shell) on tty1
 After=systemd-user-sessions.service dbus.socket systemd-logind.service immutable-kiosk-backend.service
 Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
-Conflicts=getty@tty1.service
-After=getty@tty1.service
 ConditionPathExists=/dev/tty0
 # Never give up: with the default limit (5 starts in 10 s) a few early
 # failures left the unit dead, and tty1 showed a login prompt instead.
