@@ -70,7 +70,10 @@ done
 # nobody reads on a panel. Licenses stay.
 find /usr/share/locale -mindepth 1 -maxdepth 1 -type d \
     ! -name 'pl' ! -name 'pl_*' ! -name 'en' ! -name 'en_*' -exec rm -rf {} +
-rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
+# Files only: the directories stay, because package scriptlets still link
+# into them (xorriso's alternatives -> /usr/share/man/man1/; with man1 gone
+# its %post failed and so did the installer image's dnf transaction).
+find /usr/share/doc /usr/share/man /usr/share/info -mindepth 1 ! -type d -delete
 # Future package installs (bootc usroverlay, derived images): same rules.
 mkdir -p /etc/rpm
 printf '%%_install_langs pl:pl_PL:en:en_US\n%%_excludedocs 1\n' > /etc/rpm/macros.image-language-conf
