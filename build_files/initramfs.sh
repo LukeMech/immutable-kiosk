@@ -35,6 +35,11 @@ OMIT=(
     # (an omit beats an add).
     clevis clevis-pin-file clevis-pin-null clevis-pin-sss clevis-pin-tang clevis-pin-tpm2
     qemu qemu-net biosdevname memstrack resume plymouth
+    # Cloud/VM/server bits fedora-bootc carries for other targets: Azure's
+    # agent, FIPS mode (needs fips=1 on the kernel command line anyway),
+    # virtiofs root, NVDIMM, and kernel-modules-extra's exotic drivers.
+    walinuxagent fips fips-crypto-policies openssl nss-softokn
+    virtiofs nvdimm kernel-modules-extra
 )
 
 # Must survive (when the stock initramfs had them): what finds, mounts and
@@ -112,4 +117,19 @@ done
 echo "i915 in stock initramfs: $(has_kmod /tmp/initramfs-stock.list i915 && echo yes || echo no)"
 ls -l "${STOCK}" "${IMG}"
 echo "kernel modules: stock $(grep -c '\.ko' /tmp/initramfs-stock.list) -> ours $(grep -c '\.ko' /tmp/initramfs-new.list)"
+# Where the rest of the size is (uncompressed bytes, from lsinitrd's listing):
+# per top-level area, then the 20 biggest files -- what to cut next.
+echo "--- uncompressed MiB by area:"
+awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ {
+        p = $NF
+        if (p ~ /^usr\/lib\/firmware\//) a = "firmware"
+        else if (p ~ /^usr\/lib\/modules\//) a = "kernel modules"
+        else if (p ~ /^usr\/lib(64)?\/[^\/]*\.so/ || p ~ /^usr\/lib(64)?\/.*\.so[.0-9]*$/) a = "libraries"
+        else if (p ~ /^usr\/(s?bin|libexec)\//) a = "programs"
+        else a = "other"
+        s[a] += $5
+     } END { for (a in s) printf "%8.1f  %s\n", s[a] / 1048576, a }' /tmp/initramfs-new.list | sort -rn
+echo "--- 20 biggest files:"
+awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ { printf "%8.1f MiB  %s\n", $5 / 1048576, $NF }' /tmp/initramfs-new.list |
+    sort -rn | head -20
 rm -f "${STOCK}" /tmp/initramfs-stock.list /tmp/initramfs-new.list
