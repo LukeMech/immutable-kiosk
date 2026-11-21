@@ -16,7 +16,7 @@ rotation = "landscape"
 name = "HP Pro Tablet 408 G1 (Intel Atom Z3736F, 32-bit UEFI)"
 variant = "x86"
 dmi_product = "HP Pro Tablet 408"
-rotation = "portrait"
+rotation = "landscape"
 # The firmware only boots EFI/BOOT/BOOTIA32.EFI: the disk image and the ISO
 # both get checked for it in build-media.yml.
 efi_ia32 = true

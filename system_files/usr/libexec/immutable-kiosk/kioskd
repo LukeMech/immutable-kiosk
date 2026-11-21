@@ -604,17 +604,30 @@ IMAGE_REF = re.compile(r"^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][
 # ---------------------------------------------------------------- installer
 
 def power_state():
-    ac, battery = None, None
+    """Charger plugged in (True/False/None = can't tell), battery %, battery status.
+
+    Tablets charge over USB: their charger shows up as a "USB*" supply, or
+    not at all -- then the battery's own status (Charging/Discharging) is
+    the only hint, so it counts too. Only "Mains" was checked before, and
+    the 408 showed "—" for the charger.
+    """
+    ac, battery, status = None, None, None
     for ps in Path("/sys/class/power_supply").glob("*"):
         try:
             kind = (ps / "type").read_text().strip()
-            if kind == "Mains":
-                ac = (ps / "online").read_text().strip() == "1" or bool(ac)
-            elif kind == "Battery":
+            if kind == "Battery":
                 battery = int((ps / "capacity").read_text().strip())
+                status = (ps / "status").read_text().strip()
+            elif kind == "Mains" or kind.startswith("USB") or kind == "Wireless":
+                online = (ps / "online").read_text().strip() == "1"
+                ac = online or bool(ac)
         except (OSError, ValueError):
             continue
-    return {"ac_online": ac, "battery": battery}
+    if status in ("Charging", "Full", "Not charging"):
+        ac = True  # some chargers never report online, the battery does
+    elif ac is None and status == "Discharging":
+        ac = False
+    return {"ac_online": ac, "battery": battery, "battery_status": status}
 
 
 def boot_medium():

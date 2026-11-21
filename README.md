@@ -31,7 +31,7 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
   Python + GTK4 + WebKitGTK): two separate web views, not an iframe (HMI
   servers forbid framing). Accepts the HMI's self-signed certificate for the
   configured HMI host only. Retries the HMI every few seconds while it's down.
-  Rotation through `wlr-randr` (portrait by default on the tablet).
+  Rotation through `wlr-randr` (landscape by default; per-device defaults in `images/devices.toml`).
 - **kioskd** ([`kioskd`](system_files/usr/libexec/immutable-kiosk/kioskd),
   Python stdlib only, root): serves the page and a JSON API on
   `127.0.0.1:8088` -- `nmcli` for Wi-Fi/IP, `bootc` for updates (progress

@@ -78,6 +78,22 @@ const fmtTime = t => t ? new Date(t).toLocaleString("pl-PL") : "—";
 /* ======================================================= SETTINGS */
 
 let cfg = null;
+
+// "Ładowarka podłączona · bateria 72% (ładowanie)" -- parts that are unknown
+// are left out instead of shown as "—".
+function powerText(p) {
+    const parts = [];
+    if (p.ac_online === true) parts.push("ładowarka podłączona");
+    else if (p.ac_online === false) parts.push("na baterii");
+    if (p.battery != null) {
+        const st = { Charging: "ładowanie", Full: "naładowana", "Not charging": "nie ładuje" }[p.battery_status];
+        parts.push(`bateria ${p.battery}%${st ? ` (${st})` : ""}`);
+    }
+    return parts.length ? parts.join(" · ") : "brak danych";
+}
+
+// Extra scroll room at the bottom only while the on-screen keyboard is up.
+window.addEventListener("kiosk-osk", e => document.body.classList.toggle("osk-open", e.detail.open));
 let currentTab = "hmi";
 
 function showTab(name) {
@@ -419,7 +435,7 @@ async function loadSystem() {
         <dt>Urządzenie</dt><dd>${esc(i.device.name || i.device.product || "—")}</dd>
         <dt>Producent</dt><dd>${esc(i.device.vendor || "—")}</dd>
         <dt>Nazwa hosta</dt><dd>${esc(i.hostname)}</dd>
-        <dt>Zasilanie</dt><dd>${i.power.ac_online ? "z sieci" : i.power.ac_online === false ? "z baterii" : "—"}${i.power.battery != null ? ` · bateria ${i.power.battery}%` : ""}</dd>
+        <dt>Zasilanie</dt><dd>${powerText(i.power)}</dd>
         <dt>Czas</dt><dd>${esc(i.time)}</dd>`;
 }
 

@@ -44,7 +44,10 @@ input { -webkit-user-select: text; user-select: text; }
 }
 .tabs button.on { background: var(--card); color: var(--text); box-shadow: inset 0 -3px 0 var(--accent); }
 
-main { padding: 16px; padding-bottom: 50vh; /* room for the on-screen keyboard */ max-width: 900px; margin: 0 auto; }
+main { padding: 16px; padding-bottom: 32px; max-width: 900px; margin: 0 auto; }
+/* Room to scroll a field above the on-screen keyboard -- only while it's up
+   (osk.js announces it), not as a permanent half-empty page. */
+body.osk-open main { padding-bottom: 50vh; }
 
 .card {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--r);

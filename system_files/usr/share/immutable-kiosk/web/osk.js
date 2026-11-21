@@ -66,7 +66,10 @@
     }
     .kb.top { top: 0; bottom: auto; border-top: 0; border-bottom: 1px solid #3a4655;
         box-shadow: 0 6px 24px rgba(0,0,0,.45); }
-    .kb.num { left: auto; width: min(420px, 100%); border-left: 1px solid #3a4655; }
+    .kb.num { left: 50%; right: auto; transform: translateX(-50%); width: min(560px, 100%);
+        border-left: 1px solid #3a4655; border-right: 1px solid #3a4655; border-radius: 14px 14px 0 0; }
+    .kb.num.top { border-radius: 0 0 14px 14px; }
+    .kb.num button { height: clamp(56px, 8.5vh, 76px); font-size: 26px; }
     .row { display: flex; gap: 6px; }
     button {
         all: unset; box-sizing: border-box; flex: 1 1 0; min-width: 0;
@@ -165,7 +168,14 @@
         layout = wantsNumpad(el) ? "num" : (layout === "num" ? "abc" : layout);
         render();
         kb.hidden = false;
+        announce(true);
         place();
+    }
+
+    // The page (Settings) adds room at the bottom only while the keyboard is
+    // up -- an event, not a class on <html>: this script also runs in HMI pages.
+    function announce(open) {
+        window.dispatchEvent(new CustomEvent("kiosk-osk", { detail: { open } }));
     }
 
     function place() {
@@ -182,10 +192,12 @@
     }
 
     function hide() {
+        const was = kb && !kb.hidden;
         if (kb) kb.hidden = true;
         target = null;
         shift = 0;
         pl = false;
+        if (was) announce(false);
     }
 
     function insert(text) {
@@ -310,6 +322,24 @@
             const a = document.activeElement;
             if (!editable(a)) hide();
         }, 120);
+    }, true);
+
+    // A tap anywhere else (a button, empty space) closes the keyboard. Not
+    // left to focusout alone: with touch, WebKitGTK often keeps focus in the
+    // field when a button is tapped, and the keyboard stayed up. The field
+    // is blurred after the tap's click went through, so the button still works.
+    document.addEventListener("pointerdown", e => {
+        if (!kb || kb.hidden) return;
+        const path = e.composedPath ? e.composedPath() : [e.target];
+        if (path.includes(host) || editable(path[0])) return;
+        // A <label> for a field moves focus into it: that's a field tap.
+        const label = path[0].closest && path[0].closest("label");
+        if (label && label.control && editable(label.control)) return;
+        const field = target;
+        setTimeout(() => {
+            if (document.activeElement === field && field) field.blur();
+            if (!editable(document.activeElement)) hide();
+        }, 0);
     }, true);
 
     // A field that is already focused but was tapped again (keyboard hidden
