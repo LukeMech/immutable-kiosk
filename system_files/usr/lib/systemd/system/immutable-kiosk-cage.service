@@ -28,7 +28,9 @@ TTYVHangup=yes
 TTYVTDisallocate=yes
 StandardInput=tty-fail
 StandardOutput=journal
-StandardError=journal
+# Also on the console: while cage runs it owns the screen, so this is only
+# seen when cage/kiosk-shell dies -- exactly when the error is needed.
+StandardError=journal+console
 
 [Install]
 WantedBy=graphical.target

@@ -29,6 +29,18 @@ find /usr/libexec/immutable-kiosk -name '__pycache__' -prune -exec rm -rf {} +
 # The kiosk account: no password, no sudo, no shell login -- it only runs
 # cage. Anything privileged goes through kioskd (root, localhost only).
 systemd-sysusers /usr/lib/sysusers.d/kiosk.conf
+# On Fedora bootc video/input/render live in /usr/lib/group (nss-altfiles),
+# which nothing can add members to -- sysusers' `m` lines silently did
+# nothing. Copy them into /etc/group first, then add the kiosk user. (logind
+# grants a running session the devices anyway; this keeps them reachable
+# when it doesn't, e.g. during a VT switch or for debugging as kiosk.)
+for g in video input render; do
+    if ! grep -q "^${g}:" /etc/group; then
+        grep "^${g}:" /usr/lib/group >> /etc/group
+    fi
+done
+usermod -aG video,input,render kiosk
+id kiosk | grep -q render
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/immutable-kiosk.conf
 passwd -l kiosk
 

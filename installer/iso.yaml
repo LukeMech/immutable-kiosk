@@ -18,7 +18,7 @@ grub2:
   timeout: 3
   entries:
     - name: "Instalator immutable-kiosk"
-      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=IMMKIOSK rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 systemd.tpm2_wait=0 quiet loglevel=3 vt.global_cursor_default=0"
+      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=IMMKIOSK rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 systemd.tpm2_wait=0"
       initrd: "/images/pxeboot/initrd.img"
     - name: "Instalator immutable-kiosk (podstawowa grafika)"
       linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=IMMKIOSK rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 systemd.tpm2_wait=0 nomodeset"

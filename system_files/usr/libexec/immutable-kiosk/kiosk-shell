@@ -20,14 +20,49 @@ only the Settings view registers.
 """
 
 import json
+import os
 import subprocess
 import sys
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import gi
 
+def log(*a):
+    print("kiosk-shell:", *a, file=sys.stderr, flush=True)
+
+
+def sandbox_works():
+    """Can bubblewrap create the namespaces WebKit's web-process sandbox needs?
+
+    If it can't, WebKitGTK doesn't fail gracefully: the UI process aborts
+    ("Connection: failed to receive credentials") as soon as the first view
+    starts its web process -- cage exits with it and systemd restarts the
+    pair every 2 s: a black screen with a blinking cursor.
+    """
+    try:
+        r = subprocess.run(
+            ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+             "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "true"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log("bwrap check failed:", e)
+        return False
+    if r.returncode != 0:
+        log("bwrap check failed:", r.stderr.strip())
+    return r.returncode == 0
+
+
+# Must be decided before WebKit is loaded. Without a sandbox the web pages
+# still run in their own processes, just not namespaced -- far better than a
+# kiosk that never comes up.
+if "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS" not in os.environ and not sandbox_works():
+    log("WebKit sandbox unavailable, starting without it")
+    os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
+
+import gi  # noqa: E402
+
+gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
 from gi.repository import Gdk, GLib, Gtk, WebKit  # noqa: E402
@@ -50,10 +85,6 @@ CORNERS = {
     "bottom-left": (Gtk.Align.START, Gtk.Align.END),
     "bottom-right": (Gtk.Align.END, Gtk.Align.END),
 }
-
-
-def log(*a):
-    print("kiosk-shell:", *a, file=sys.stderr, flush=True)
 
 
 def api_get(path, timeout=2):
@@ -234,7 +265,9 @@ class KioskShell(Gtk.Application):
         box = Gtk.Box(width_request=72, height_request=72)
         box.add_css_class("hotcorner")
         press = Gtk.GestureLongPress(touch_only=False)
-        press.set_delay_factor(4.0)  # ~2 s: no accidental trips during operation
+        # GTK's maximum (gtk-long-press-time x 2 = ~1 s); 4.0 was rejected
+        # with a Gtk-CRITICAL and silently left at the default ~0.5 s.
+        press.set_delay_factor(2.0)
         press.connect("begin", lambda *a: box.add_css_class("armed"))
         press.connect("end", lambda *a: box.remove_css_class("armed"))
         press.connect("cancelled", lambda *a: box.remove_css_class("armed"))
