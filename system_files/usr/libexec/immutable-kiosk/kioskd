@@ -673,6 +673,11 @@ def installer_state():
 
 CHUNK = 4 * 1024 * 1024
 SYNC_EVERY = 64 * 1024 * 1024
+LOG_EVERY = 512 * 1024 * 1024  # a progress line in "Szczegóły" every 512 MiB
+
+
+def _mmss(seconds):
+    return f"{int(seconds // 60)} min {int(seconds % 60)} s"
 
 
 def job_install(disk_path):
@@ -682,18 +687,26 @@ def job_install(disk_path):
             raise RuntimeError("Brak obrazu systemu na nośniku instalacyjnym")
         size = int(payload.get("size") or 0)
         expected = payload.get("sha256") or ""
+        job.add_log(f"Obraz: {payload.get('image', '?')} ({payload.get('version', '?')})")
+        job.add_log(f"Rozmiar: {size / 1e9:.2f} GB, spakowany {payload['compressed'] / 1e9:.2f} GB")
+        job.add_log(f"Dysk docelowy: {disk_path}")
 
         # Anything mounted from the target (an older install, auto-mounted) goes first.
         job.stage = "Przygotowanie dysku"
+        job.add_log(job.stage)
         mounted = run(["lsblk", "-nrpo", "NAME,MOUNTPOINT", disk_path], check=False)
         for line in mounted.splitlines():
             parts = line.split(maxsplit=1)
             if len(parts) == 2 and parts[1]:
+                job.add_log(f"  odmontowanie {parts[0]} ({parts[1]})")
                 run(["umount", "-l", parts[0]], check=False)
         # Old partition tables, the backup GPT at the end of the disk included.
-        run(["wipefs", "-a", disk_path], check=False)
+        for line in run(["wipefs", "-a", disk_path], check=False).splitlines():
+            job.add_log(f"  {line}")
 
         job.stage = "Kopiowanie systemu"
+        job.add_log(job.stage)
+        next_log = LOG_EVERY
         digest = hashlib.sha256()
         written = 0
         t0 = time.time()
@@ -719,8 +732,12 @@ def job_install(disk_path):
                     os.fdatasync(fd)
                     since_sync = 0
                     _progress(job, written, size, t0)
+                    if written >= next_log:
+                        job.add_log(f"  {job.detail}")
+                        next_log += LOG_EVERY
             os.fdatasync(fd)
             _progress(job, written, size, t0)
+            job.add_log(f"  zapisano {written / 1e9:.2f} GB w {_mmss(time.time() - t0)}")
         finally:
             os.close(fd)
         if dec.wait() != 0:
@@ -730,12 +747,17 @@ def job_install(disk_path):
         if expected and digest.hexdigest() != expected:
             raise RuntimeError("Suma kontrolna obrazu się nie zgadza -- nośnik instalacyjny jest uszkodzony")
 
+        job.add_log(f"  sha256 {digest.hexdigest()[:16]}… zgodna z obrazem" if expected
+                    else f"  sha256 {digest.hexdigest()[:16]}…")
+
         job.stage = "Weryfikacja zapisu"
+        job.add_log(job.stage)
         job.fraction = 0
         run(["blockdev", "--flushbufs", disk_path], check=False)
         check = hashlib.sha256()
         read = 0
         t0 = time.time()
+        next_log = LOG_EVERY
         fd = os.open(disk_path, os.O_RDONLY)
         try:
             os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
@@ -747,17 +769,25 @@ def job_install(disk_path):
                 read += len(buf)
                 if read % (64 * CHUNK) < CHUNK:
                     _progress(job, read, written, t0)
+                if read >= next_log:
+                    job.add_log(f"  {job.detail}")
+                    next_log += LOG_EVERY
         finally:
             os.close(fd)
         if check.hexdigest() != digest.hexdigest():
             raise RuntimeError("Weryfikacja nieudana: dane na dysku różnią się od obrazu. Spróbuj ponownie.")
+        job.add_log(f"  odczytano {read / 1e9:.2f} GB w {_mmss(time.time() - t0)}, dane zgodne")
 
         job.stage = "Kończenie"
+        job.add_log(job.stage)
         # The image is smaller than the eMMC: move the backup GPT to the real
         # end of the disk. The root partition itself grows on first boot.
-        run(["sgdisk", "-e", disk_path], check=False)
-        run(["blockdev", "--rereadpt", disk_path], check=False)
+        for cmd in (["sgdisk", "-e", disk_path], ["blockdev", "--rereadpt", disk_path]):
+            p = subprocess.run(cmd, capture_output=True, text=True)
+            for line in (p.stdout + p.stderr).splitlines():
+                job.add_log(f"  {line}")
         subprocess.run(["sync"])
+        job.add_log("Gotowe. Wyjmij pendrive i uruchom ponownie.")
         job.fraction = 1
         job.detail = "System zainstalowany. Wyjmij pendrive i uruchom ponownie."
     return target

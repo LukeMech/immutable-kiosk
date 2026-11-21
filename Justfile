@@ -135,6 +135,7 @@ build-raw $variant="x86" $target_image=("localhost/" + image_name + "-" + varian
         *.xz) xz -d "${RAW}"; RAW=${RAW%.xz} ;;
         *.zst) zstd -d --rm "${RAW}"; RAW=${RAW%.zst} ;;
     esac
+    sudo ./scripts/shrink-raw.sh "${RAW}"
     rm -rf output/efi && ./scripts/extract-efi.sh "${target_image}:${tag}" output/efi
     ./scripts/ensure-efi-ia32.sh "${RAW}" output/efi
     mv "${RAW}" dist/disk.raw

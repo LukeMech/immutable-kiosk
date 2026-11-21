@@ -4,7 +4,8 @@ name: Build installer ISOs
 # by hand from the Actions UI (artifacts only, unless publish + tag).
 #
 # Per device in images/devices.toml:
-#   1. raw disk image of the published system image (image-builder), checked
+#   1. raw disk image of the published system image (image-builder), shrunk
+#      from 10 GiB to its contents + 256 MiB (scripts/shrink-raw.sh), checked
 #      for 32-bit UEFI boot files (scripts/ensure-efi-ia32.sh);
 #   2. that image compressed into the installer payload (scripts/make-payload.sh);
 #   3. the installer container (installer/Containerfile: the system image +
@@ -87,7 +88,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y podman skopeo zstd mtools gdisk xorriso jq
+          sudo apt-get install -y podman skopeo zstd mtools gdisk xorriso jq btrfs-progs
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -128,6 +129,10 @@ jobs:
             *.xz) xz -d "${RAW}"; RAW=${RAW%.xz} ;;
             *.zst) zstd -d --rm "${RAW}"; RAW=${RAW%.zst} ;;
           esac
+
+          # 10 GiB -> what the root needs + 256 MiB: the installer writes and
+          # verifies every byte, the empty ones too.
+          sudo ./scripts/shrink-raw.sh "${RAW}"
 
           # The image's own EFI payload, the source for anything bootupd left out.
           sudo podman pull "${IMAGE}"
