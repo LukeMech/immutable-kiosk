@@ -172,7 +172,7 @@
       </div>
       <div class="card">
         <h2>Aktualizacja</h2>
-<div class="status" id="upd">
+        <div class="status" id="upd">
           <div class="status-icon" id="upd-icon"></div>
           <div class="status-text">
             <div class="status-title" id="upd-title">Wczytywanie…</div>
@@ -187,12 +187,10 @@
         </div>
         <div class="actions upd-actions">
           <button class="btn primary" id="sys-upgrade" disabled>Aktualizuj</button>
+          <button class="btn primary hold" data-hold="1500" id="sys-reboot-now" hidden>Przytrzymaj: uruchom ponownie teraz</button>
           <button class="btn icon" id="sys-check" aria-label="Sprawdź aktualizacje">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
           </button>
-        </div>
-        <div class="actions" id="sys-reboot-box" hidden>
-          <button class="btn primary hold" data-hold="1500" id="sys-reboot-now">Przytrzymaj: uruchom ponownie teraz</button>
         </div>
         <div class="notes" id="upd-notes" hidden></div>
       </div>

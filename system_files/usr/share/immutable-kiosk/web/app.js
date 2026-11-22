@@ -628,16 +628,19 @@ function renderUpdate() {
     const checking = running && (job.kind === "check" || job.stage === "Sprawdzanie aktualizacji");
     const working = running && !checking;  // downloading / deploying
     let state, title, sub = "";
-    if (!s) {
+    // A running job first: while bootc works, its status may be stale or
+    // briefly unavailable -- that's not a failure to show.
+    if (working) {
+        state = "busy";
+        title = job.kind === "switch" ? "Zmiana obrazu systemu…" : "Pobieranie aktualizacji…";
+        sub = job.kind === "upgrade" && s && s.update ? `Wersja ${versionName(s.update)}` : "";
+    } else if (checking) {
+        state = "busy"; title = "Sprawdzanie aktualizacji…";
+        sub = s && s.booted ? `Teraz działa ${versionName(s.booted)}` : "";
+    } else if (!s) {
         state = "busy"; title = "Wczytywanie…";
     } else if (!s.available) {
         state = "err"; title = "Aktualizacje są niedostępne"; sub = s.error || "";
-    } else if (working) {
-        state = "busy";
-        title = job.kind === "switch" ? "Zmiana obrazu systemu…" : "Pobieranie aktualizacji…";
-        sub = job.kind === "upgrade" && s.update ? `Wersja ${versionName(s.update)}` : "";
-    } else if (checking) {
-        state = "busy"; title = "Sprawdzanie aktualizacji…"; sub = `Teraz działa ${versionName(s.booted)}`;
     } else if (s.update) {
         state = "new"; title = `Dostępna aktualizacja: ${versionName(s.update)}`;
         sub = `Teraz działa ${versionName(s.booted)}`;
@@ -656,11 +659,14 @@ function renderUpdate() {
     // The bar only while there's progress to show -- a check is just a spinner.
     renderJob(working ? job : null, sysJobEls());
     const avail = !!(s && s.available);
+    // One row: [Aktualizuj | Uruchom ponownie] [↻]. Restart replaces
+    // "Aktualizuj" once a version waits for it and nothing newer is out.
+    const waiting = !running && avail && !!s.staged && !s.update;
     $("sys-upgrade").disabled = running || !(avail && s.update);
-    $("sys-upgrade").hidden = !!(avail && s.staged && !s.update);
+    $("sys-upgrade").hidden = waiting;
+    $("sys-reboot-now").hidden = !waiting;
     $("sys-check").disabled = running || !avail;
     $("sys-check").classList.toggle("spin", checking);
-    $("sys-reboot-box").hidden = running || !(avail && s.staged);
     $("sys-switch").disabled = running;
     $("sys-rollback").disabled = running || !(avail && s.rollback);
     const fb = s && s.fallback;

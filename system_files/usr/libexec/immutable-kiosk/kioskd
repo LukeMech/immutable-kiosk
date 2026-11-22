@@ -591,6 +591,9 @@ VERSION_SHA = re.compile(r"-([0-9a-f]{7,40})$")
 LAST_CHECK = {"time": None, "error": None}
 
 
+LAST_STATUS = {"value": None}  # last good bootc_status(), see r_system
+
+
 def bootc_status():
     try:
         st = json.loads(run(["bootc", "status", "--format=json"], timeout=30))
@@ -634,8 +637,10 @@ def bootc_status():
         update = None
     if update and staged and update["digest"] == staged["digest"]:
         update = None
-    return {"available": True, "booted": booted, "staged": staged, "rollback": rollback,
-            "update": update, "checked": LAST_CHECK}
+    st = {"available": True, "booted": booted, "staged": staged, "rollback": rollback,
+          "update": update, "checked": LAST_CHECK}
+    LAST_STATUS["value"] = st
+    return st
 
 
 def check_for_update(job):
@@ -1392,7 +1397,17 @@ def r_touch_set(body, q):
 
 
 def r_system(body, q):
-    st = bootc_status()
+    # While bootc upgrade/switch runs it holds the sysroot lock and `bootc
+    # status` waits for it -- 30 s, then "Aktualizacje są niedostępne" in
+    # the middle of a download. Answer from the last good status instead.
+    job = CURRENT_JOB
+    cached = LAST_STATUS["value"]
+    if job and job.state == "running" and job.kind != "install" and cached:
+        st = dict(cached, checked=LAST_CHECK, busy=True)
+    else:
+        st = bootc_status()
+        if not st.get("available") and cached:
+            st = dict(cached, checked=LAST_CHECK, stale=st.get("error"))
     # Left by boot-counter when a new version never came up and the previous
     # one was booted (and made the default again) automatically.
     try:
