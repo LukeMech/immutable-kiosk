@@ -136,7 +136,7 @@ function showTab(name) {
 
 // kiosk-shell calls these when Settings is shown / the HMI replaces it. The
 // page keeps running behind the HMI (document.hidden stays false there), so
-// polling checks settingsVisible -- no nmcli every 5 s under the HMI.
+// live updates check settingsVisible -- no nmcli under the HMI.
 let settingsVisible = true;
 window.kioskShown = () => {
     settingsVisible = true;
@@ -269,7 +269,10 @@ function renderWifiStatus() {
     setStatus("wifi-st", "warn", wifiIcon(0), "Nie połączono", w.networks.length ? "Wybierz sieć z listy poniżej." : "W pobliżu nie widać żadnej sieci.");
 }
 
-async function loadWifi(rescan) {
+// live: a change kioskd reported (initEvents) -- not while an action of this
+// page is still running (it reloads when it's done).
+async function loadWifi(rescan, live = false) {
+    if (live && wifiOverride && wifiOverride.state === "busy") return;
     if (rescan) wifiOverride = { state: "busy", icon: ICONS.busy, title: "Szukanie sieci…" };
     renderWifiStatus();
     let w;
@@ -285,6 +288,8 @@ async function loadWifi(rescan) {
     $("wifi-radio-box").hidden = !w.device;  // shown once the real state is known
     renderWifiStatus();
     const list = $("wifi-list");
+    // A password being typed in an opened network stays: the list waits.
+    if (live && [...list.querySelectorAll("input")].some(i => i.value || i === document.activeElement)) return;
     // The connected network is the status line above, not a row here.
     const others = w.networks.filter(n => !n.in_use);
     list.innerHTML = others.length ? "" : `<li class="empty">${w.enabled ? "Nie znaleziono innych sieci." : "Wi-Fi jest wyłączone."}</li>`;
@@ -426,8 +431,10 @@ function initWifi() {
 const statusHtml = (state, icon, title, sub) => `<div class="status ${state}"><div class="status-icon">${icon}</div>
     <div class="status-text"><div class="status-title">${esc(title)}</div><div class="status-sub">${esc(sub)}</div></div></div>`;
 
-async function loadNet() {
+async function loadNet(live = false) {
     const box = $("net-list");
+    // A card being edited (static address) isn't rebuilt under the finger.
+    if (live && box.querySelector(".card.dirty")) return;
     let n;
     const lone = (state, icon, title, sub) => `<div class="card"><h2>Połączenie</h2>${statusHtml(state, icon, title, sub)}</div>`;
     try { n = await api("/network"); }
@@ -481,13 +488,15 @@ async function loadNet() {
         seg(segEl, method, pick);
         pick(method);
         const save = el.querySelector(".save"), m = el.querySelector(".msg");
+        el.addEventListener("input", () => el.classList.add("dirty"));
+        segEl.addEventListener("click", () => el.classList.add("dirty"));
         save.addEventListener("click", () => busy(save, async () => {
             await api("/network", {
                 uuid: c.uuid, method, address: f("address").value, prefix: Number(f("prefix").value),
                 gateway: f("gateway").value, dns: [f("dns1").value, f("dns2").value],
             });
             msg(m, "Zastosowano. Połączenie jest odnawiane…", "ok");
-            setTimeout(loadNet, 4000);
+            el.classList.remove("dirty");  // NetworkManager's events bring the new state
         }).catch(e => msg(m, e.message, "err")));
         box.appendChild(el);
     }
@@ -1195,9 +1204,36 @@ function initSystem() {
         }).catch(err => { toast(err.message, true); renderTz(); });
     });
 
-    // The top bar (battery, clock) on every tab; the clock ticks locally in between.
-    setInterval(() => { if (settingsVisible && !document.hidden) refreshDevice(); }, 5000);
+    // The top bar's clock ticks locally; kioskd's events bring everything else.
     setInterval(renderClock, 1000);
+}
+
+/* Live updates: kioskd says what changed (GET /api/events, Server-Sent
+   Events) and only that part is reloaded -- no polling. The top bar always,
+   tab contents when their tab is open. A reconnect (kioskd restarted) may
+   have missed changes: everything visible is reloaded then. */
+function initEvents() {
+    const net = () => {
+        refreshDevice();
+        if (currentTab === "net") { loadWifi(false, true); loadNet(true); }
+    };
+    const LIVE = {
+        net, power: refreshDevice, clock: refreshDevice, device: refreshDevice,
+        splash: () => { if (currentTab === "screen") loadSplash(); },
+        config: () => api("/config").then(c => { cfg = c; if (currentTab === "screen") loadScreen(); }).catch(() => {}),
+    };
+    let opened = false;
+    const es = new EventSource("/api/events");
+    es.addEventListener("change", e => {
+        let topics = [];
+        try { topics = JSON.parse(e.data); } catch (_) { return; }
+        // Under the HMI nothing is reloaded: kioskShown does it on the way back.
+        if (settingsVisible) for (const t of topics) LIVE[t]?.();
+    });
+    es.addEventListener("open", () => {
+        if (opened) { net(); LIVE.config(); }
+        opened = true;
+    });
 }
 
 async function initSettings() {
@@ -1212,6 +1248,7 @@ async function initSettings() {
     initScreen();
     initSystem();
     refreshDevice();  // the top bar's battery and clock right away
+    initEvents();
     if (location.hash === "#recovery") openRecovery(); else showTab("hmi");
 }
 

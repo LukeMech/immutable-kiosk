@@ -15,6 +15,7 @@ other page (the HMI included) out:
 Python stdlib only, so nothing extra lands in the image.
 """
 
+import errno
 import ipaddress
 import json
 import os
@@ -515,6 +516,119 @@ def network_set(body):
     # (localhost), so it runs in the background and the page polls the result.
     threading.Thread(target=run, args=(["nmcli", "con", "up", uuid],),
                      kwargs={"check": False, "timeout": 60}, daemon=True).start()
+
+
+# ---------------------------------------------------------------- events
+#
+# The Settings page doesn't poll: GET /api/events (Server-Sent Events) says
+# what changed -- "net", "power", "clock", "device", "config", "splash" --
+# and the page reloads that part. Sources: NetworkManager's D-Bus signals
+# (state, addresses, the list of networks, signal), udev's power_supply
+# events plus a battery check, the kernel's "clock was set", and kioskd's
+# own changes.
+
+class Events:
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.seq = 0
+        self.recent = []  # (seq, topic)
+
+    def emit(self, topic):
+        with self.cond:
+            self.seq += 1
+            self.recent.append((self.seq, topic))
+            del self.recent[:-200]
+            self.cond.notify_all()
+
+    def wait(self, after, timeout):
+        """(newest seq, topics newer than `after`) -- empty after timeout."""
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq > after, timeout)
+            return self.seq, sorted({t for n, t in self.recent if n > after})
+
+
+EVENTS = Events()
+
+
+class Debounce:
+    """A burst of pokes -> one event, `delay` after the first."""
+
+    def __init__(self, topic, delay):
+        self.topic, self.delay = topic, delay
+        self.timer = None
+        self.lock = threading.Lock()
+
+    def poke(self):
+        with self.lock:
+            if self.timer is None:
+                self.timer = threading.Timer(self.delay, self.fire)
+                self.timer.daemon = True
+                self.timer.start()
+
+    def fire(self):
+        with self.lock:
+            self.timer = None
+        EVENTS.emit(self.topic)
+
+
+def watch_lines(cmd, debounce, name):
+    """Any output line of a monitor command pokes `debounce`; restarted if it exits."""
+    while True:
+        try:
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            for line in p.stdout:
+                if line.strip():
+                    debounce.poke()
+            p.wait()
+        except OSError as e:
+            print(f"kioskd: {name} watcher: {e}", flush=True)
+        time.sleep(3)
+
+
+def watch_power():
+    """Charger plugged in or out: udev, at once. The battery's percentage
+    doesn't always come with an event: checked every 30 s, an event only
+    when something changed."""
+    poke = Debounce("power", 0.5)
+    threading.Thread(target=watch_lines, daemon=True, name="udev-power", args=(
+        ["udevadm", "monitor", "--udev", "--subsystem-match=power_supply"], poke, "power")).start()
+    last = None
+    while True:
+        try:
+            now = power_state()
+        except Exception:  # noqa: BLE001 -- sysfs oddities: try again later
+            now = last
+        if last is not None and now != last:
+            poke.poke()
+        last = now
+        time.sleep(30)
+
+
+def watch_clock():
+    """The wall clock was set (NTP's first step, a manual change): the top
+    bar's clock is kioskd's, so it has to hear about it. timerfd with
+    TFD_TIMER_CANCEL_ON_SET -- the read fails with ECANCELED exactly then."""
+    if not hasattr(os, "timerfd_create"):
+        return
+    fd = os.timerfd_create(time.CLOCK_REALTIME)
+    while True:
+        os.timerfd_settime(fd, flags=os.TFD_TIMER_ABSTIME | os.TFD_TIMER_CANCEL_ON_SET,
+                           initial=time.time() + 30 * 86400)
+        try:
+            os.read(fd, 8)
+        except OSError as e:
+            if e.errno != errno.ECANCELED:
+                print(f"kioskd: clock watcher: {e}", flush=True)
+                return
+            EVENTS.emit("clock")
+
+
+def start_watchers():
+    net = Debounce("net", 1.0)
+    threading.Thread(target=watch_lines, daemon=True, name="nm", args=(
+        ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager")).start()
+    threading.Thread(target=watch_power, daemon=True, name="power").start()
+    threading.Thread(target=watch_clock, daemon=True, name="clock").start()
 
 
 # ---------------------------------------------------------------- jobs
@@ -1400,8 +1514,33 @@ class Handler(BaseHTTPRequestHandler):
         body = self.body() if method == "POST" else {}
         return route(body, query)
 
+    def serve_events(self):
+        """Server-Sent Events: "change" with the topics that changed, a
+        comment line every 25 s otherwise (a gone client shows up as a write
+        error, and ends this thread)."""
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        seq = EVENTS.seq
+        self.wfile.write(b"retry: 3000\n\n")
+        self.wfile.flush()
+        try:
+            while True:
+                seq, topics = EVENTS.wait(seq, 25)
+                chunk = (f"event: change\ndata: {json.dumps(topics)}\n\n" if topics else ": ping\n\n")
+                self.wfile.write(chunk.encode())
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
     def dispatch(self, method):
         try:
+            # No X-Kiosk header from EventSource: only topic names go out
+            # here, and the Host check still applies.
+            if method == "GET" and urlsplit(self.path).path == "/api/events":
+                self.guard()
+                return self.serve_events()
             if self.path.startswith("/api/"):
                 result = self.handle_api(method)
                 self.send_json(result if result is not None else {"ok": True})
@@ -1473,6 +1612,7 @@ def r_timezone_set(body, q):
         raise ApiError("Nieznana strefa czasowa")
     run(["timedatectl", "set-timezone", tz], timeout=20)
     time.tzset()
+    EVENTS.emit("device")
     return {"timezone": current_timezone(), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
@@ -1481,7 +1621,9 @@ def r_config_get(body, q):
 
 
 def r_config_set(body, q):
-    return save_config(body)
+    cfg = save_config(body)
+    EVENTS.emit("config")
+    return cfg
 
 
 def r_hmi_test(body, q):
@@ -1552,6 +1694,7 @@ def r_hostname_set(body, q):
     if not HOSTNAME.fullmatch(name):
         raise ApiError("Nazwa: 1-63 znaki, małe litery, cyfry i myślniki (nie na początku ani końcu)")
     run(["hostnamectl", "set-hostname", name])
+    EVENTS.emit("device")
     return {"hostname": socket.gethostname()}
 
 
@@ -1865,6 +2008,7 @@ def main():
     ThreadingHTTPServer.allow_reuse_address = True
     srv = ThreadingHTTPServer(LISTEN, Handler)
     srv.daemon_threads = True
+    start_watchers()
     # Re-apply the saved brightness: systemd-backlight only restores what it
     # saved at a clean shutdown, and a panel is often just switched off.
     saved = load_config().get("brightness")
