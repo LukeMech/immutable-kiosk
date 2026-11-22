@@ -12,7 +12,7 @@ Two WebKit views in a stack:
                 view and shows the installer instead.
 
 A second, recovery corner (opposite the Settings one) works over both views:
-held 3 s it opens Settings > System > "Przywracanie i zasilanie" -- the way
+held 3 s it opens Settings > System > "Odzyskiwanie" -- the way
 back to the previous version when an update broke the HMI, Settings' own
 navigation or the Settings corner.
 
@@ -316,6 +316,7 @@ class KioskShell(Gtk.Application):
         self.boot_reported = False
         self.ok_reported = False
         self.pending = None  # view to reveal once its first page is rendered
+        self.device_scale = 1.0  # GTK's scale for our window (display_check)
         # The HMI couldn't be reached at start (no network yet, server still
         # booting): Settings is shown instead, and the HMI replaces it the
         # moment it loads. Settings' top bar says what's being waited for.
@@ -398,6 +399,12 @@ class KioskShell(Gtk.Application):
             log(f"window scale {scale}, outputs {outputs}: output configuration again")
             apply_output(self.cfg)
             self.display_changed()  # and look once more
+        if scale > 0 and scale != self.device_scale:
+            # Whatever made GTK draw above 1 (the page came up ~2x too big),
+            # the pages keep their size: apply_scale divides WebKit's zoom by it.
+            log(f"window scale {scale}: WebKit zoom compensates")
+            self.device_scale = scale
+            self.apply_scale()
         info = {"gtk_scale": scale, "window": [self.win.get_width(), self.win.get_height()],
                 "outputs": outputs}
 
@@ -551,7 +558,7 @@ class KioskShell(Gtk.Application):
         return box
 
     def make_recovery_corner(self):
-        """Held RECOVERY_HOLD_MS: Settings > System > Przywracanie i zasilanie.
+        """Held RECOVERY_HOLD_MS: Settings > System > Odzyskiwanie.
         GestureLongPress can't wait longer than ~1 s, so a drag gesture plus
         our own timer; moving the finger away cancels."""
         box = Gtk.Box(width_request=72, height_request=72)
@@ -592,7 +599,7 @@ class KioskShell(Gtk.Application):
         """Settings' page with #recovery: it opens System and scrolls to the
         recovery card (a fragment change if the page is already there, a
         fresh load otherwise -- either way app.js handles it)."""
-        log("recovery corner held: Settings > System > Przywracanie i zasilanie")
+        log("recovery corner held: Settings > System > Odzyskiwanie")
         self.settings_loaded = True
         self.settings.load_uri(SETTINGS_URL + "#recovery")
         self.show("settings")
@@ -655,8 +662,10 @@ class KioskShell(Gtk.Application):
 
     def apply_scale(self):
         """Screen scaling = WebKit zoom: Settings (and its keyboard) at the
-        scale, the HMI at scale x its own zoom (the HMI tab's setting)."""
-        scale = screen_scale(self.cfg)
+        scale, the HMI at scale x its own zoom (the HMI tab's setting) --
+        both divided by the scale GTK really draws our window at, so a page
+        is the same size whatever the compositor's scale is."""
+        scale = screen_scale(self.cfg) / (self.device_scale or 1.0)
         self.settings.set_zoom_level(scale)
         if self.hmi:
             try:
