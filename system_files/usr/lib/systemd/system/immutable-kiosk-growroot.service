@@ -2,6 +2,9 @@
 Description=Grow the root filesystem to fill the physical disk
 # Not on the live installer ISO: there root is an overlay in RAM.
 ConditionPathExists=!/run/initramfs/live
+# Once grown, done for good (the disk doesn't get bigger): growpart, lsblk
+# and the resize cost ~1 s on every boot otherwise. grow-root.sh writes it.
+ConditionPathExists=!/var/lib/immutable-kiosk/root-grown
 
 [Service]
 Type=oneshot

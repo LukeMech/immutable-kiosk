@@ -7,8 +7,9 @@
 # Targets /var, not / -- confirmed / isn't a direct mount here (composefs+overlay root,
 # resize fails "not a btrfs filesystem"); /var is the real mount (also /sysroot, /etc).
 #
-# Safe on every boot: growpart's "NOCHANGE" exit isn't an error here, and
-# `btrfs filesystem resize max` is a no-op once already maxed.
+# Safe to run again: growpart's "NOCHANGE" exit isn't an error here, and
+# `btrfs filesystem resize max` is a no-op once already maxed. Runs until it
+# has succeeded once, then the stamp below keeps the unit from starting.
 
 set -euo pipefail
 
@@ -37,3 +38,6 @@ GROWPART_OUTPUT=$(growpart "${ROOT_DISK}" "${ROOT_PART_NUM}" 2>&1) || {
 }
 
 btrfs filesystem resize max /var
+
+mkdir -p /var/lib/immutable-kiosk
+echo "${ROOT_DISK} partition ${ROOT_PART_NUM}, $(date -Is)" > /var/lib/immutable-kiosk/root-grown
