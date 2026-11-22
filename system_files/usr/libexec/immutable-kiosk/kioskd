@@ -902,10 +902,15 @@ def bootc_status():
     staged = entry(s.get("staged"))
     rollback = entry(s.get("rollback"))
     update = booted.get("update") if booted else None
-    # Not an update if already booted or staged.
-    if update and booted and update["digest"] == booted["digest"]:
-        update = None
-    if update and staged and update["digest"] == staged["digest"]:
+    # bootc's cached check result is not an update if it's a version on the
+    # disk already: booted, staged, or the rollback one (after going back to
+    # the previous version that's the one left -- not offered again). Nor if
+    # it isn't newer than the staged one: the cache can predate the update.
+    for dep in (booted, staged, rollback):
+        if update and dep and update["digest"] == dep["digest"]:
+            update = None
+    if update and staged and update["timestamp"] and staged["timestamp"] \
+            and update["timestamp"] <= staged["timestamp"]:
         update = None
     # next_channel: where a staged switch goes.
     st = {"available": True, "booted": booted, "staged": staged, "rollback": rollback,
