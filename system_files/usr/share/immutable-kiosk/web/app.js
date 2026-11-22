@@ -553,6 +553,8 @@ async function loadSplash() {
 async function loadDisplay() {
     let d;
     try { d = await api("/display"); } catch (_) { return; }
+    lastDisplay = d;
+    renderPageMetrics();
     if (!d || !d.outputs) return;
     // Resolution: the built-in panel's modes (the first output: kiosk-shell
     // lists the panel first), "WxH@R" when one size comes in several rates.
@@ -574,10 +576,13 @@ async function loadDisplay() {
 
 // What the page itself sees: its size, the screen's per WebKit, the
 // viewport's scale. In landscape it should read 1280 wide at scale 1.
+let lastDisplay = null;  // kioskd's display report (loadDisplay)
 function renderPageMetrics() {
-    const vv = window.visualViewport;
+    const vv = window.visualViewport, d = lastDisplay;
+    const mon = d && d.monitor ? ` · GTK monitor ${d.monitor[0]}×${d.monitor[1]}` +
+        (d.monitor_mm ? ` (${d.monitor_mm[0]}×${d.monitor_mm[1]} mm)` : "") : "";
     $("page-metrics").textContent = `Page ${innerWidth}×${innerHeight} · screen ${screen.width}×${screen.height}` +
-        ` · viewport scale ${vv ? vv.scale.toFixed(2) : "?"} · DPR ${devicePixelRatio}`;
+        ` · viewport scale ${vv ? vv.scale.toFixed(2) : "?"} · DPR ${devicePixelRatio.toFixed(3)}${mon}`;
 }
 window.addEventListener("resize", () => { if (currentTab === "screen") renderPageMetrics(); });
 

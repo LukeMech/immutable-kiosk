@@ -1935,7 +1935,7 @@ def plymouth_quit():
 def r_display_set(body, q):
     plymouth_quit()
     DISPLAY_INFO.clear()
-    DISPLAY_INFO.update({k: body.get(k) for k in ("gtk_scale", "window", "monitor", "outputs")})
+    DISPLAY_INFO.update({k: body.get(k) for k in ("gtk_scale", "window", "monitor", "monitor_mm", "outputs")})
     DISPLAY_INFO["time"] = time.time()
     EVENTS.emit("display")
     return {"ok": True}

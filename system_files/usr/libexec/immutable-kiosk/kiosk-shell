@@ -421,7 +421,11 @@ class KioskShell(Gtk.Application):
         monitor = Gdk.Display.get_default().get_monitor_at_surface(surface)
         geo = monitor.get_geometry() if monitor else None
         info = {"gtk_scale": scale, "window": [self.win.get_width(), self.win.get_height()],
-                "monitor": [geo.width, geo.height] if geo else None, "outputs": outputs}
+                "monitor": [geo.width, geo.height] if geo else None,
+                # Diagnosis of the 1.97 pixel ratio: the panel's size in mm
+                # as GTK has it -- swapped twice for a rotated panel?
+                "monitor_mm": [monitor.get_width_mm(), monitor.get_height_mm()] if monitor else None,
+                "outputs": outputs}
 
         def report():
             try:
