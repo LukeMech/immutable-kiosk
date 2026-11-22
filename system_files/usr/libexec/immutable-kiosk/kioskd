@@ -585,6 +585,25 @@ def run_bootc_with_progress(job, args):
                             pass_fds=(w,))
     os.close(w)
 
+    # Download speed: bytes over the last ~5 s (one slow layer or a burst
+    # doesn't swing it), and what's left at that speed.
+    samples = []
+
+    def speed_text(done, total):
+        now = time.monotonic()
+        if samples and done < samples[-1][1]:
+            samples.clear()  # a new download task started from zero
+        samples.append((now, done))
+        while len(samples) > 2 and now - samples[0][0] > 5:
+            samples.pop(0)
+        t0, b0 = samples[0]
+        if now - t0 < 1 or done <= b0:
+            return ""
+        rate = (done - b0) / (now - t0)
+        left = (total - done) / rate
+        eta = f"{left / 60:.0f} min" if left >= 90 else f"{max(1, left):.0f} s"
+        return f" · {rate / 1e6:.1f} MB/s · zostało ok. {eta}".replace(".", ",")
+
     def read_progress():
         with os.fdopen(r, "r") as f:
             for line in f:
@@ -599,7 +618,8 @@ def run_bootc_with_progress(job, args):
                 job.stage = BOOTC_STAGES.get(ev.get("task"), ev.get("description") or ev.get("task") or "")
                 if t == "ProgressBytes" and ev.get("bytesTotal"):
                     job.fraction = ev["bytes"] / ev["bytesTotal"]
-                    job.detail = f"{ev['bytes'] / 1e6:.0f} / {ev['bytesTotal'] / 1e6:.0f} MB"
+                    job.detail = (f"{ev['bytes'] / 1e6:.0f} / {ev['bytesTotal'] / 1e6:.0f} MB"
+                                  + speed_text(ev["bytes"], ev["bytesTotal"]))
                 elif ev.get("stepsTotal"):
                     job.fraction = ev.get("steps", 0) / ev["stepsTotal"]
                     running = next((s.get("description") for s in ev.get("subtasks") or []
