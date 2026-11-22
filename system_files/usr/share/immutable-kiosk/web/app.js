@@ -955,13 +955,14 @@ function followSysJob() {
         const was = sysWasRunning;
         sysJob = job && UPDATE_JOBS.includes(job.kind) ? job : null;
         sysWasRunning = !!(sysJob && sysJob.state === "running");
-        renderUpdate();
         if (was && !sysWasRunning) {
             if (sysJob && sysJob.state === "failed" && sysJob.kind !== "check") toast(sysJob.detail || "Update failed", true);
             else if (sysJob && sysJob.kind === "upgrade" && sysJob.result && !sysJob.result.update && !sysJob.result.staged) toast("System is up to date");
+            // Rendered once the fresh status is in: the old one said "up to date".
             loadSystem();
-        } else if (!sysWasRunning) {
-            maybeAutoCheck();
+        } else {
+            renderUpdate();
+            if (!sysWasRunning) maybeAutoCheck();
         }
     });
 }
