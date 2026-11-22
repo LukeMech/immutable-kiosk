@@ -1,16 +1,12 @@
 name: Build container image
-# Same pipeline as immutable-sbc, minus its deps image (the x86 kiosk runs
-# Fedora's own kernel, nothing out-of-tree): build every variant, rechunk,
-# push, sign; then publish a release and hand over to build-media.yml for the
-# disk images and the installer ISO.
+# Build every variant, rechunk, push, sign, release; build-media.yml then
+# makes the disk images and installer ISO.
 #
-# Channels (what a kiosk follows -- Settings -> System -> Update channel):
-#   dev branch  -> :dev     + one rolling pre-release (v<fedora>.<commit>),
-#                             replaced by every build;
-#   main        -> :latest  + a release (stable, v<fedora>.<date>[.N]).
-# A main push whose tree is a pre-release's tree (dev merged into main) builds
-# nothing: promote.yml moves :latest to the image that was tested on dev and
-# turns that pre-release into the release. Other branches: testing-<branch>.
+# Channels (Settings -> System -> Update channel):
+#   dev branch  -> :dev     + one rolling pre-release (v<fedora>.<commit>);
+#   main        -> :latest  + a release (v<fedora>.<date>[.N]).
+# A main push with a pre-release's exact tree (dev merged) builds nothing:
+# promote.yml promotes the tested image. Other branches: testing-<branch>.
 on:
   pull_request:
     paths-ignore: &ignored
@@ -20,7 +16,7 @@ on:
       - '.gitattributes'
       - '.github/dependabot.yml'
   schedule:
-    - cron: '0 10 1,15 * *'  # ~every 2 weeks: catches Fedora updates in quiet periods
+    - cron: '0 10 1,15 * *'  # picks up Fedora updates in quiet periods
   push:
     # Dependabot's branch pushes get no SIGNING_SECRET; its PR run builds the change.
     branches-ignore:
@@ -53,9 +49,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # stable / dev / testing (other branches) / none (pull requests: never
-      # pushed), and the image tag it publishes. On main, a pre-release with
-      # this exact tree is promoted instead of rebuilt (see the header).
+      # stable / dev / testing / none (PRs, never pushed), plus its image tag.
       - name: Compute channel
         id: channel
         env:
@@ -72,9 +66,8 @@ jobs:
             CHANNEL=testing
             IMAGE_TAG="testing-$(printf '%s' "${{ github.ref_name }}" | tr -c 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z')"
           fi
-          # The newest release with this exact tree: a pre-release is promoted;
-          # one already promoted (on GitHub, before the merge) needs nothing.
-          # Not on schedule: that run exists to pick up Fedora's updates.
+          # Newest release with this tree: promote it if still a pre-release.
+          # Not on schedule (that run is for Fedora updates).
           SAME="" PROMOTE=""
           if [[ "${CHANNEL}" == "stable" && "${{ github.event_name }}" != "schedule" ]]; then
             TREE=$(git rev-parse 'HEAD^{tree}')
@@ -96,18 +89,14 @@ jobs:
             echo "promote_tag=${PROMOTE}"
           } >> "$GITHUB_OUTPUT"
 
-      # Release tag = Fedora version + date, .1/.2/... for a same-day repeat.
-      # Computed before the build, so the image carries it (label + os-release:
-      # Settings and the GRUB entry show it); release-meta tags with the same.
+      # v<fedora>.<date>[.N], computed before the build so the image carries it.
       - name: Compute release tag
         id: release-tag
         run: |
           set -euo pipefail
           FEDORA_VER=$(awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}' Containerfile)
           [[ -n "${FEDORA_VER}" ]] || { echo "error: no Fedora version in Containerfile" >&2; exit 1; }
-          # Off main: Fedora version + commit (v45.3f30f95) -- dates and
-          # their .1/.2 are stable's. promote.yml gives a promoted
-          # pre-release its dated tag.
+          # Off main: v<fedora>.<commit>; dated tags are stable's.
           if [[ "${{ steps.channel.outputs.channel }}" != "stable" ]]; then
             echo "tag=v${FEDORA_VER}.$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
             exit 0
@@ -196,13 +185,11 @@ jobs:
           set -euo pipefail
           NEW_IMAGE="${IMAGE_NAME}:${DEFAULT_TAG}"
           PKG_CHANGELOG="/tmp/package-changelog-${{ matrix.variant }}.md"
-          # Against the current stable release on both channels: a
-          # pre-release lists everything it would bring to stable.
+          # Diff against the current stable release on both channels.
           PREV_TAG=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           PREV_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
           if [[ -n "${PREV_TAG}" ]]; then
-            # Its version tag; builds from before the channels only have
-            # latest-<sha> (dev-<sha> since).
+            # Its version tag; older builds only have latest-/dev-<sha>.
             while IFS= read -r CANDIDATE_REF; do
               if podman pull --quiet "${CANDIDATE_REF}" >/dev/null 2>&1; then
                 PREV_IMAGE="${CANDIDATE_REF}"
@@ -246,8 +233,8 @@ jobs:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
         run: just tag-images "${IMAGE_NAME}" "${DEFAULT_TAG}" "${ALIAS_TAGS}"
 
-      # Push once, add the other tags with skopeo: every podman push makes a
-      # new digest, which left :latest unsigned in lm-server (see its history).
+      # Push once, then skopeo the other tags: each podman push makes a new
+      # digest, which would leave tags unsigned.
       - name: Push To GHCR
         if: needs.discover.outputs.channel != 'none' && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
         id: push-image
@@ -260,15 +247,13 @@ jobs:
           podman push --digestfile=/tmp/digestfile "${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${DEFAULT_TAG}"
           digest=$(< /tmp/digestfile)
           TAGS="${ALIAS_TAGS}"
-          # The version tag: what promote.yml moves :latest to, and the
-          # package diff's previous release.
+          # Version tag: promote.yml and the package diff rely on it.
           if [[ "${CHANNEL}" == "stable" || "${CHANNEL}" == "dev" ]]; then
             TAGS+=" ${RELEASE_TAG}"
           fi
           for tag in ${TAGS}; do
             [[ "${tag}" == "${DEFAULT_TAG}" ]] && continue
-            # Off main only <channel tag>-* (and the version): the bare
-            # date tags are stable's.
+            # Off main: only <channel tag>-* and the version tag.
             if [[ "${CHANNEL}" != "stable" && "${tag}" != "${DEFAULT_TAG}"-* && "${tag}" != "${RELEASE_TAG}" ]]; then
               continue
             fi
@@ -288,8 +273,7 @@ jobs:
           path: published.marker
           retention-days: 1
 
-      # Signed even for testing-* tags: a deployed system refuses unsigned
-      # ghcr.io/lukemech images, `bootc switch` to a test branch included.
+      # Sign testing-* too: devices refuse unsigned images, even on `bootc switch`.
       - name: Install Cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         if: steps.push-image.outcome == 'success'
@@ -385,9 +369,7 @@ jobs:
             echo "   Later, to get to Settings: hold the top-right corner of the screen for ~1 s (the corner is set under *Display*)."
             echo
           } >> changelog.md
-          # Since the current stable release (a pre-release: all it would
-          # add), grouped by the commits' types (feat:, fix: -- README's
-          # "Commit messages").
+          # Commits since the stable release, grouped by type (feat:, fix:).
           PREV_TAG=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           if [[ -n "${PREV_TAG}" ]]; then
             git log --no-merges --pretty='%h %s' "${PREV_TAG}..HEAD" > commits.txt
@@ -416,8 +398,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           TAG="${{ needs.discover.outputs.release_tag }}"
           if [[ "${{ needs.discover.outputs.channel }}" == "dev" ]]; then
-            # The same commit built again (a re-run, a dispatch): its
-            # pre-release is updated in place.
+            # A rebuilt commit updates its pre-release in place.
             git tag -f -a "${TAG}" -m "${TAG}"
             git push -f origin "${TAG}"
           else
@@ -434,8 +415,7 @@ jobs:
           prerelease: ${{ needs.discover.outputs.channel == 'dev' }}
           make_latest: ${{ needs.discover.outputs.channel == 'stable' && 'true' || 'false' }}
 
-      # One pre-release at a time: the one just published replaces the
-      # others (and their tags; their images stay in the registry).
+      # Only one pre-release (and tag) at a time; images stay in the registry.
       - name: Remove older pre-releases
         if: needs.discover.outputs.channel == 'dev'
         env:
@@ -459,7 +439,7 @@ jobs:
     with:
       publish: true
       tag: ${{ needs.release-meta.outputs.tag }}
-      # What the installed system then follows: the channel's tag.
+      # The tag the installed system then follows.
       image_tag: ${{ needs.discover.outputs.image_tag }}
     permissions:
       contents: write

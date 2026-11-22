@@ -46,10 +46,8 @@ build $variant="x86" $target_image=(image_name + "-" + variant) $tag=default_tag
         GIT_SHA=$(git rev-parse --short HEAD)
         LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ image_name }}/blob/${GIT_SHA}/Containerfile")
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
-        # The release tag CI computed up front (build.yml, discover) when there
-        # is one: "v45.20261122.1-778b844" -- what Settings shows. Local
-        # builds keep "latest.<date>-<sha>". A dev build's tag is the commit
-        # already ("v45.3f30f95"): not twice.
+        # CI's release tag if any (a dev tag already ends in the commit),
+        # else "latest.<date>-<sha>".
         if [[ -n "${RELEASE_TAG:-}" && "${RELEASE_TAG}" == *".${GIT_SHA}" ]]; then
             LABELS+=("--label" "org.opencontainers.image.version=${RELEASE_TAG}")
         elif [[ -n "${RELEASE_TAG:-}" ]]; then
@@ -65,8 +63,7 @@ build $variant="x86" $target_image=(image_name + "-" + variant) $tag=default_tag
     LABELS+=("--label" "org.opencontainers.image.title={{ image_name }}")
     LABELS+=("--label" "org.opencontainers.image.vendor={{ repo_organization }}")
 
-    # RELEASE_TAG/GIT_SHA also go into the image's os-release (10-kiosk.sh):
-    # the GRUB entry reads "immutable-kiosk v45.20261122.1-778b844".
+    # Also written into os-release (10-kiosk.sh), shown in GRUB entries.
     podman build --build-arg "VARIANT=${variant}" \
         --build-arg "RELEASE_TAG=${RELEASE_TAG:-}" --build-arg "GIT_SHA=${GIT_SHA}" \
         "${LABELS[@]}" \

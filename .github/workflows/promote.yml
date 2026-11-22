@@ -1,15 +1,9 @@
 name: Promote to stable
-# A dev pre-release becomes the stable release, without a rebuild: the exact
-# image that ran on the dev channel. For every variant :latest is moved to
-# the release's version tag (same digest -- the signature build.yml made for
-# it still holds), the pre-release becomes the latest release, and its ISOs
-# are made again from :latest (a dev ISO installs a kiosk that follows :dev).
-#
-# Runs when:
-#   - dev is merged into main (build.yml: main's tree is a pre-release's);
-#   - a pre-release is turned into a release on GitHub (uncheck
-#     "Set as a pre-release");
-#   - by hand, Actions -> Promote to stable (empty tag: the newest pre-release).
+# Promotes a dev pre-release to stable without a rebuild: :latest moves to
+# the same digest (so its signature still holds) and ISOs are rebuilt from
+# :latest (a dev ISO would follow :dev).
+# Runs on dev merged into main (via build.yml), on unchecking "Set as a
+# pre-release" on GitHub, or by hand (empty tag: newest pre-release).
 on:
   release:
     types: [released]
@@ -85,8 +79,7 @@ jobs:
           SHA=$(git rev-parse --short=7 "${TAG}^{commit}")
           for VARIANT in "${VARIANTS[@]}"; do
             REPO="${REGISTRY}/immutable-kiosk-${VARIANT}"
-            # Releases from before the channels have no version tag, only
-            # latest-<sha> (back to one of those: dispatch with its tag).
+            # Older releases only have <channel>-<sha> tags.
             DIGEST=""
             for REF in "${TAG}" "dev-${SHA}" "latest-${SHA}"; do
               DIGEST=$(skopeo inspect --format '{{.Digest}}' "docker://${REPO}:${REF}" 2>/dev/null) && break
@@ -102,10 +95,8 @@ jobs:
             echo "${REPO}:latest -> ${TAG} (${DIGEST})"
           done
 
-      # A dev pre-release is tagged v<fedora>.<commit>; a stable release
-      # v<fedora>.<date>[.N] (build.yml's rule): the release moves to a
-      # dated tag on the same commit, the images get it too, the old tag
-      # and the ISOs named after it go (media below makes them again).
+      # Retag v<fedora>.<commit> as v<fedora>.<date>[.N] (release and images);
+      # the old tag and its ISOs go (media rebuilds them).
       - name: Make it the latest release
         id: release
         env:
@@ -139,7 +130,7 @@ jobs:
               skopeo copy --all --preserve-digests "docker://${REPO}:latest" "docker://${REPO}:${NEW}"
             done
           fi
-          # Without build.yml's "> Wersja testowa..." lead.
+          # Drop build.yml's "> Testing build..." lead.
           gh release view "${TAG}" --json body --jq .body | sed '/^> /d' | sed '/./,$!d' > notes.md
           gh release edit "${TAG}" --tag "${NEW}" --prerelease=false --latest --title "${NEW}" --notes-file notes.md
           if [[ "${NEW}" != "${TAG}" ]]; then

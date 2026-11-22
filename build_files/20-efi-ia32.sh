@@ -1,27 +1,18 @@
 #!/bin/bash
-# 32-bit UEFI on a 64-bit CPU (Intel Bay Trail / Cherry Trail tablets, e.g.
-# HP Pro Tablet 408 G1): the firmware only runs EFI/BOOT/BOOTIA32.EFI, never
-# BOOTX64.EFI. Fedora still ships the ia32 shim and GRUB; GRUB ia32 then boots
-# the normal x86_64 kernel through the EFI handover protocol (Fedora builds
-# the kernel with CONFIG_EFI_MIXED=y).
+# 32-bit UEFI on a 64-bit CPU (Bay Trail / Cherry Trail tablets): the firmware
+# only runs EFI/BOOT/BOOTIA32.EFI. GRUB ia32 boots the x86_64 kernel via the
+# EFI handover protocol (CONFIG_EFI_MIXED=y).
 #
-# Where bootupd takes the ESP's contents from depends on the Fedora release:
-#   - newer: straight from the packages' own files under /usr/lib/efi/
-#     (<package>/<version>/EFI/...) -- installing the packages is enough;
-#   - older: from /usr/lib/bootupd/updates/, generated from /boot/efi when
-#     the base image was built, which then has to be generated again.
-# In a container build /boot/efi doesn't exist, so the packages' scriptlets
-# that copy into it fail harmlessly ("cannot create directory") -- expected.
-#
-# Verified after the fact in build-media.yml (scripts/ensure-efi-ia32.sh):
-# the disk image must contain EFI/BOOT/BOOTIA32.EFI; if bootupd ever leaves it
-# out, that script copies it in, so a release can't ship a tablet-unbootable image.
+# bootupd's ESP source depends on the release: newer ones read /usr/lib/efi/
+# straight from the packages; older ones /usr/lib/bootupd/updates/, which must
+# be regenerated. Scriptlets failing to copy into the missing /boot/efi are
+# harmless. build-media.yml checks the disk image again (ensure-efi-ia32.sh).
 
 set -ouex pipefail
 
 dnf install -y shim-ia32 grub2-efi-ia32
 
-# Where everything landed -- the log answers "which layout" at a glance.
+# Log where everything landed (which layout).
 rpm -ql shim-ia32 grub2-efi-ia32 | grep -i '\.efi$' || true
 find /usr/lib/efi /usr/lib/bootupd/updates -maxdepth 6 -iname '*.efi' 2>/dev/null || true
 

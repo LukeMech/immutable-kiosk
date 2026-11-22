@@ -1,11 +1,7 @@
 #!/bin/bash
 # make-payload.sh <disk.raw> <out-dir> <image-ref> <version>
-#
-# Turns a raw disk image into the installer's payload:
-#   <out-dir>/disk.raw.zst   what the installer streams onto the eMMC
-#   <out-dir>/payload.json   {image, version, size, sha256} -- size and
-#                            sha256 of the *uncompressed* image: the progress
-#                            bar's 100% and what the written disk must hash to.
+# Installer payload: disk.raw.zst plus payload.json, whose size/sha256 are of
+# the *uncompressed* image (progress total, post-write verification).
 set -euo pipefail
 
 RAW=${1:?usage: $0 <disk.raw> <out-dir> <image-ref> <version>}

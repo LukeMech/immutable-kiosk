@@ -1,12 +1,7 @@
 #!/bin/bash
 # extract-efi.sh <image-ref> <out-dir>
-#
-# Copies the EFI files bootupd installs from out of a built image into one
-# tree, <out-dir>/BOOT/..., <out-dir>/fedora/... (the layout of an ESP's EFI/
-# directory) -- the source ensure-efi-ia32.sh fills gaps from. Handles both
-# layouts (see build_files/20-efi-ia32.sh): the packages' own
-# /usr/lib/efi/<pkg>/<ver>/EFI/ trees and bootupd's /usr/lib/bootupd/updates/EFI/.
-#
+# Copies an image's bootupd EFI files into one ESP-style EFI/ tree for
+# ensure-efi-ia32.sh; handles both layouts (see 20-efi-ia32.sh).
 # Run with the podman that holds the image (sudo in CI).
 set -euo pipefail
 

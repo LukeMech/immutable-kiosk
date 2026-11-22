@@ -1,31 +1,17 @@
-# The installer ISO's live system: the kiosk image itself, booted from the
-# USB stick, with two differences --
-#   * mode "installer": kiosk-shell shows only the installer page (same
-#     kioskd, same on-screen keyboard), never an HMI;
-#   * the payload: a ready-made disk image of the kiosk system
-#     (dist/payload/disk.raw.zst + payload.json, made by build-media.yml or
-#     `just build-raw`), which the installer writes onto the internal eMMC
-#     with a real byte-for-byte progress bar and a read-back verification.
-#
-# image-builder's bootc-generic-iso turns this container into the ISO
-# (build-media.yml / `just build-iso`), the same tool lm-server's installer
-# uses -- there with Anaconda inside, here with our own page.
+# The installer ISO's live system: the kiosk image in mode "installer"
+# (kiosk-shell shows only the installer page) plus the payload, a ready-made
+# disk image (dist/payload/) written to the eMMC and verified by read-back.
+# image-builder's bootc-generic-iso turns it into the ISO.
 #
 # Built from the repo root: podman build -f installer/Containerfile .
 ARG BASE_IMAGE=ghcr.io/lukemech/immutable-kiosk-x86:latest
 FROM ${BASE_IMAGE}
 
-# Live boot from the ISO (dracut's dmsquash-live), the ISO bootloaders for
-# both 64- and 32-bit UEFI, and what image-builder needs to assemble the ISO
-# (it runs its stages inside this image: xorrisofs, mksquashfs, implantisomd5),
-# plus mtools for scripts/iso-add-ia32.sh, which build-media.yml / `just
-# build-iso` also run in this image to add the ia32 files image-builder skips.
-# bootc images ship no /boot/efi, but the ISO build takes its EFI files from
-# there, so it's filled here. Since Fedora 45 the packages keep their files in
-# /usr/lib/efi/<pkg>/<ver>/EFI/ and only their %posttrans scriptlets copy them
-# to /boot/efi/EFI/{BOOT,fedora} -- without creating those directories. So:
-# create them, reinstall (scriptlets copy), then copy every package tree
-# (and bootupd's, for the older layout) over anything a scriptlet missed.
+# Live boot, x64/ia32 ISO bootloaders, and the tools image-builder runs inside
+# this image (plus mtools for iso-add-ia32.sh).
+# The ISO build takes EFI files from /boot/efi, which bootc images lack, and
+# the scriptlets that copy there don't create the directories: create them,
+# reinstall, then copy the package trees over anything missed.
 RUN dnf install -y \
         dracut-live \
         grub2-efi-x64-cdboot \
@@ -51,10 +37,8 @@ RUN mkdir -p /usr/lib/immutable-kiosk \
 # ISO volume label and boot menu (read by image-builder).
 COPY installer/iso.yaml /usr/lib/image-builder/bootc/iso.yaml
 
-# Initramfs that can find its root on the ISO: the system image's own recipe
-# (images/<variant>/initramfs.sh from the repo -- the slim one)
-# plus dmsquash-live. A variant without one: fedora-bootc's stock initramfs
-# plus dmsquash-live.
+# Initramfs that finds its root on the ISO: the variant's initramfs.sh (or
+# a stock one) plus dmsquash-live.
 ARG VARIANT=x86
 RUN --mount=type=bind,source=images,target=/ctx/images \
     if [ -f "/ctx/images/${VARIANT}/initramfs.sh" ]; then \

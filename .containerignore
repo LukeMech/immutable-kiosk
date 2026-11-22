@@ -1,5 +1,5 @@
-# Build context hygiene: CI and `just build-*` leave multi-GB files around.
-# dist/payload/ must stay visible -- installer/Containerfile COPYs it.
+# Keep multi-GB build outputs out of the context. dist/payload/ must stay
+# (installer/Containerfile COPYs it).
 .git
 output
 release

@@ -1,7 +1,6 @@
 #!/bin/bash
-#
-# Prints name<TAB>epoch:version-release per package, sorted by name -- gpg-pubkey entries
-# filtered out (rpm's per-key pseudo-package; a key rotation would look like a "change").
+# name<TAB>epoch:version-release per package, sorted; gpg-pubkey pseudo-packages
+# dropped (a key rotation isn't a package change).
 #
 # Usage: list-packages.sh <image-ref>
 

@@ -1,24 +1,13 @@
 name: Build installer ISOs
 
-# Called by build.yml after a release is published (attaches to it), by
-# promote.yml (the promoted release's ISOs again, from :latest), or run by
-# hand from the Actions UI (artifacts only, unless publish + tag).
+# Called by build.yml and promote.yml (attaches to the release), or by hand
+# (artifacts only, unless publish + tag). The installed system follows
+# image_tag, so a dev ISO installs a dev-channel kiosk.
 #
-# The image comes from image_tag (latest = stable, dev), and an installed
-# system keeps following that tag: a dev pre-release's ISO installs a kiosk
-# on the dev channel.
-#
-# Per device in images/devices.toml:
-#   1. raw disk image of the published system image (image-builder), shrunk
-#      from 10 GiB to its contents + 256 MiB (scripts/shrink-raw.sh), checked
-#      for 32-bit UEFI boot files (scripts/ensure-efi-ia32.sh);
-#   2. that image compressed into the installer payload (scripts/make-payload.sh);
-#   3. the installer container (installer/Containerfile: the system image +
-#      installer mode + payload) -> bootable ISO (image-builder bootc-generic-iso);
-#   4. ia32 shim/GRUB added to the ISO where the device needs 32-bit UEFI
-#      (scripts/iso-add-ia32.sh -- image-builder only adds x64);
-#   5. ISO checked (scripts/check-iso.sh), split if >= 2 GiB, attached.
-# Only the ISO is released; the raw disk image exists only as its payload.
+# Per device in images/devices.toml: raw disk image (shrunk, ia32 EFI files
+# ensured) -> installer payload -> installer container -> ISO (+ ia32 boot
+# files if needed) -> checked, split if >= 2 GiB, attached. Only the ISO is
+# released.
 on:
   workflow_dispatch:
     inputs:
@@ -85,8 +74,7 @@ jobs:
       matrix:
         device: ${{ fromJson(needs.discover.outputs.devices) }}
       fail-fast: false
-    # Not 26.04: osbuild can't mount the container storage there
-    # (lm-server's build-iso.yml, same pin).
+    # Not 26.04: osbuild can't mount the container storage there.
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -136,11 +124,10 @@ jobs:
             *.zst) zstd -d --rm "${RAW}"; RAW=${RAW%.zst} ;;
           esac
 
-          # 10 GiB -> what the root needs + 256 MiB: the installer writes and
-          # verifies every byte, the empty ones too.
+          # The installer writes and verifies every byte, empty ones too.
           sudo ./scripts/shrink-raw.sh "${RAW}"
 
-          # The image's own EFI payload, the source for anything bootupd left out.
+          # Source for any EFI files bootupd left out.
           sudo podman pull "${IMAGE}"
           sudo ./scripts/extract-efi.sh "${IMAGE}" efi
           sudo chown -R "$(id -u):$(id -g)" efi
@@ -155,9 +142,8 @@ jobs:
           rm -f disk.raw
           mkdir -p release
 
-      # image-builder-action always pulls bootc_ref, and a localhost/ image
-      # can't be pulled: the installer goes into a registry that only lives on
-      # this runner for this job (as in lm-server's build-iso.yml).
+      # image-builder-action always pulls bootc_ref, and localhost/ images
+      # can't be pulled: use a throwaway local registry.
       - name: Start a local registry
         run: |
           set -euxo pipefail
@@ -209,9 +195,8 @@ jobs:
           set -euo pipefail
           cd release
           sha256sum "${ISO_NAME}" > "${ISO_NAME}.sha256"
-          # GitHub release assets are capped at 2 GiB. Parts are named
-          # <iso>.001, .002, ...: 7-Zip / NanaZip open .001 as one split file
-          # and extract the whole ISO; `cat`/`copy /b` join them too.
+          # Release assets are capped at 2 GiB. <iso>.001, .002...: 7-Zip opens
+          # .001 as one split file; `cat`/`copy /b` join them too.
           if (( $(stat -c %s "${ISO_NAME}") >= 2147483648 )); then
             split -b 2000M -d -a 3 --numeric-suffixes=1 "${ISO_NAME}" "${ISO_NAME}." && rm -f "${ISO_NAME}"
           fi
@@ -225,9 +210,8 @@ jobs:
           path: release/
           retention-days: 3
 
-      # gh, not action-gh-release: that one rewrites the release itself too
-      # (pre-release flag, "latest"); this only adds files, --clobber
-      # replaces the same names (promote.yml's ISOs from :latest).
+      # gh, not action-gh-release, which would also rewrite the release's
+      # pre-release/latest flags; --clobber replaces same-named files.
       - name: Attach to release
         if: inputs.publish == true
         env:

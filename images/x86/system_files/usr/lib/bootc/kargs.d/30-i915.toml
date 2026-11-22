@@ -1,13 +1,8 @@
-# i915 is in the x86 initramfs (Plymouth needs the real GPU driver: simpledrm
-# has no panel orientation). Two things keep that from costing anything:
-# - driver_async_probe=i915: its ~3 s probe runs in the background, so udev's
-#   coldplug -- and dracut-initqueue's `udevadm settle` with it -- doesn't
-#   wait for it and the root is mounted as soon as the eMMC is there (before,
-#   root found at 6.7 s, mounted at 10.2 s right after the GPU);
-# - i915.fastboot=1: take over the mode the firmware set instead of a full
-#   modeset, which blanked the panel once mid-boot. (The per-chip default
-#   already covers newer generations; explicit here for Bay Trail.)
-# - plymouth.use-simpledrm=0: no splash on simpledrm, which has no panel
-#   orientation -- it came up sideways for its first seconds; Plymouth waits
-#   for i915 instead (also UseSimpledrm=0 in plymouthd.conf, 15-plymouth.sh).
+# i915 is in the x86 initramfs for the splash; these keep it cheap:
+# - driver_async_probe=i915: its ~3 s probe doesn't hold up `udevadm settle`
+#   and the root mount;
+# - i915.fastboot=1: reuse the firmware's mode, no mid-boot blank (needed
+#   explicitly on Bay Trail);
+# - plymouth.use-simpledrm=0: simpledrm has no panel orientation, so wait for
+#   i915 (also UseSimpledrm=0 in plymouthd.conf).
 kargs = ["driver_async_probe=i915", "i915.fastboot=1", "plymouth.use-simpledrm=0"]

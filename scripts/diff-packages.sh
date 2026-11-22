@@ -1,14 +1,8 @@
 #!/bin/bash
-#
-# Changelog's package-changes section: rpm -qa diff between <previous-image-ref> and
-# <new-image-ref>, into added/removed/updated, or "No package changes."/"Initial build".
-#
-# Runs pre-push in build.yml's build_push job -- a schedule run also greps the output
-# for "No package changes." to decide whether it found anything new to publish.
-#
-# Also writes the raw rows to <output.tsv> (see render-package-changes.sh for the
-# format) for merge-changelogs.sh to find changes shared by every image -- only when
-# there's a previous image to diff against; no TSV means "Initial build".
+# Changelog package section: rpm -qa diff of two images (added/removed/updated).
+# Scheduled builds grep the output for "No package changes." to skip publishing.
+# <output.tsv> (rows for merge-changelogs.sh) is written only when there's a
+# previous image; no TSV means "Initial build".
 #
 # Usage: diff-packages.sh <previous-image-ref> <new-image-ref> <output.md> <output.tsv>
 
@@ -39,7 +33,7 @@ fi
 "${SCRIPT_DIR}/list-packages.sh" "${NEW_IMAGE}" >"${NEW_PKGS}"
 
 if [[ "${HAVE_PREV}" -eq 1 ]]; then
-    # name<TAB>previous<TAB>new ('-' if a side lacks it), tagged with its bucket.
+    # join: name, prev, new ('-' if missing); prefixed with its bucket.
     : >"${OUTPUT_TSV}"
     while IFS=$'\t' read -r name prev new; do
         if [[ "${prev}" == "${new}" ]]; then

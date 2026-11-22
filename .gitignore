@@ -6,7 +6,7 @@ previous.manifest.json
 changelog.md
 output.env
 
-# Disk/container images -- build artifacts, never committed
+# Disk/container images
 *.raw
 *.qcow2
 *.iso
@@ -15,7 +15,7 @@ output.env
 *.xz
 *.sha256
 
-# cosign private key material -- only the .pub belongs in this repo
+# cosign private key (only the .pub is committed)
 cosign.key
 
 # Python

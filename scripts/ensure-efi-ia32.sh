@@ -1,18 +1,9 @@
 #!/bin/bash
 # ensure-efi-ia32.sh <disk.raw> <efi-dir>
-#
-# Makes sure a disk image boots on 32-bit UEFI: its ESP must hold
-# EFI/BOOT/BOOTIA32.EFI (the only file such firmware runs from a disk without
-# an NVRAM entry -- and dd'ing an image never creates one) plus the ia32 shim
-# and GRUB next to the x64 ones in EFI/fedora/.
-#
-# bootupd normally installs all of it (build_files/20-efi-ia32.sh adds the
-# packages and regenerates its metadata). If a bootupd change ever leaves the
-# ia32 files out, they're copied in here from <efi-dir> -- the image's own
-# /usr/lib/bootupd/updates/EFI, extracted by the caller -- so no release can
-# ship an image the tablet can't boot. Either way the ESP is listed in the log.
-#
-# Needs: sfdisk (util-linux), mtools, jq.
+# The ESP must hold EFI/BOOT/BOOTIA32.EFI (all 32-bit firmware runs without an
+# NVRAM entry, which dd never creates) plus the ia32 shim/GRUB in EFI/fedora/.
+# bootupd normally installs them; any it left out are copied from <efi-dir>
+# (extract-efi.sh output). Needs: sfdisk, mtools, jq.
 set -euo pipefail
 
 IMG=${1:?usage: $0 <disk.raw> <efi-dir>}

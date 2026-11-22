@@ -1,18 +1,13 @@
-# A device (what build-media.yml matrixes over) is one physical model: which
-# variant it runs, plus the few runtime defaults that differ per model.
+# One physical model (build-media.yml's matrix): its variant plus per-model
+# runtime defaults. Build-time only; the build generates from it:
+#   - default-rotation.json (12-default-rotation.py): kioskd substring-matches
+#     dmi_product against DMI product_name; used until set in Settings.
+#     Unknown hardware gets [default]'s.
+#   - the panel-orientation kernel argument (20-panel-orientation.py).
+# name is for humans only.
 #
-# Build-time only -- not in the image. From it the build generates:
-#   - /usr/lib/immutable-kiosk/default-rotation.json (build_files/
-#     12-default-rotation.py): dmi_product -> rotation for the variant's
-#     devices; kioskd matches dmi_product against /sys/class/dmi/id/
-#     product_name (substring) and uses it until a rotation is set in
-#     Settings. Unknown hardware gets [default]'s.
-#   - the panel-orientation kernel argument (images/<variant>/build_files/
-#     20-panel-orientation.py).
-# name is for people reading this file; Settings shows what DMI reports.
-#
-# rotation: "portrait" | "landscape" (picked from the panel's native mode at
-# runtime), or a fixed wlr-randr transform: "normal" | "90" | "180" | "270".
+# rotation: "portrait" | "landscape" (from the panel's native mode), or a
+# wlr-randr transform: "normal" | "90" | "180" | "270".
 
 [default]
 rotation = "landscape"
@@ -22,14 +17,10 @@ name = "HP Pro Tablet 408 G1 (Intel Atom Z3736F, 32-bit UEFI)"
 variant = "x86"
 dmi_product = "HP Pro Tablet 408"
 rotation = "landscape"
-# The firmware only boots EFI/BOOT/BOOTIA32.EFI: the disk image and the ISO
-# both get checked for it in build-media.yml.
+# Firmware only boots EFI/BOOT/BOOTIA32.EFI (checked in build-media.yml).
 efi_ia32 = true
-# Boot splash (Plymouth) and kernel console orientation: the panel is a
-# portrait 800x1280 one mounted sideways, its top on the left. (right_side_up
-# showed everything upside down on the tablet.) Becomes the kernel argument
-# video=DSI-1:panel_orientation=left_side_up for this variant
-# (images/x86/build_files/20-panel-orientation.py). Values: normal,
+# Splash/console orientation (video=<connector>:panel_orientation=...): a
+# portrait 800x1280 panel mounted sideways, top on the left. Values: normal,
 # upside_down, left_side_up, right_side_up.
 panel_connector = "DSI-1"
 panel_orientation = "left_side_up"

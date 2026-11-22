@@ -1,15 +1,8 @@
 #!/bin/bash
 # check-iso.sh <installer.iso> <iso.yaml>
-#
-# 1. The root squashfs is where iso.yaml's kernel line says it is
-#    (rd.live.dir/rd.live.squashimg) -- otherwise the ISO boots into a dracut
-#    emergency shell. Hard failure.
-# 2. The ISO boots on 32-bit UEFI: BOOTIA32.EFI in its EFI boot image.
-#    Exit 2 when missing, so the caller can decide (build-media.yml fails
-#    for devices with efi_ia32, ignores it for the rest). scripts/iso-add-ia32.sh
-#    adds the files image-builder leaves out.
-#
-# Needs: xorriso, mtools.
+# Checks the ISO against iso.yaml (label, kernel/initrd, root squashfs, GRUB
+# timeout): exit 1 on mismatch. Missing BOOTIA32.EFI exits 2 so the caller
+# decides per device (efi_ia32). Needs: xorriso, mtools.
 set -euo pipefail
 
 ISO=${1:?usage: $0 <iso> <iso.yaml>}
@@ -18,8 +11,8 @@ WORK=$(mktemp -d)
 trap 'rm -rf "${WORK}"' EXIT
 export MTOOLS_SKIP_CHECK=1
 
-# Volume label: the one on the ISO, the one every boot entry looks for, and
-# short enough to survive Rufus "ISO mode" (FAT32 labels: 11 characters).
+# Must match every boot entry's CDLABEL and fit FAT32's 11 characters
+# (Rufus "ISO mode" truncates longer ones).
 LABEL=$(xorriso -indev "${ISO}" -pvd_info 2>/dev/null | sed -n 's/^Volume Id *: *//p' | head -1)
 echo "== volume label: ${LABEL}"
 if ((${#LABEL} > 11)); then
@@ -64,8 +57,8 @@ if ! grep -qx "${WANT}" "${WORK}/files"; then
 fi
 echo "root squashfs: ${WANT} -- OK"
 
-# GRUB menu timeout: iso.yaml's grub2.timeout must reach every grub.cfg
-# (an image-builder too old for the key silently keeps osbuild's 60 s).
+# iso.yaml's grub2.timeout must reach every grub.cfg (an old image-builder
+# silently keeps 60 s).
 WANT_T=$(sed -n 's/^ *timeout: *\([0-9]*\).*/\1/p' "${YAML}" | head -1)
 if [[ -n "${WANT_T}" ]]; then
     for cfg in /EFI/BOOT/grub.cfg /boot/grub2/grub.cfg; do

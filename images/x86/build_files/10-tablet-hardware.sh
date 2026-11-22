@@ -1,9 +1,6 @@
 #!/bin/bash
 # x86 tablets / panel PCs: Wi-Fi firmware and thermal management.
-#
-# Bay Trail tablets (HP Pro Tablet 408 G1 among them) mostly use SDIO Wi-Fi
-# (Realtek RTL8723BS -> rtlwifi/rtl8723bs_nic.bin in realtek-firmware;
-# some revisions Broadcom -> brcmfmac). Both drivers are in Fedora's kernel.
+# Bay Trail tablets mostly use SDIO Wi-Fi: Realtek RTL8723BS, some Broadcom.
 
 set -ouex pipefail
 
@@ -13,6 +10,5 @@ dnf install -y \
     intel-gpu-firmware \
     thermald
 
-# thermald keeps a fanless Atom from throttling itself into lag (or worse)
-# when the panel sits in a warm cabinet.
+# Keeps a fanless Atom in a warm cabinet from throttling into lag.
 systemctl enable thermald.service
