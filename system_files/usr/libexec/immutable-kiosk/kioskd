@@ -777,7 +777,7 @@ def start_job(kind, title, target, steps=()):
 # counts there) that bootc's own stages move along.
 BOOTC_STEPS = [("pull", "Pobieranie"), ("local", "Przygotowanie lokalne")]
 UPGRADE_STEPS = [("check", "Sprawdzenie nowej wersji")] + BOOTC_STEPS
-LOCAL_EXPECT_S = 60  # about what "local" takes on the Atom
+LOCAL_EXPECT_S = 90  # about what "local" takes on the Atom: ~60 s writing, ~30 s bootc's stages
 # bootc's stages, by subtask id or description.
 BOOTC_STAGES = {"merging": "Scalanie obrazu", "deploying": "Wdrażanie nowej wersji",
                 "bound_images": "Pobieranie powiązanych obrazów", "bound images": "Pobieranie powiązanych obrazów",
@@ -860,8 +860,8 @@ def run_bootc_with_progress(job, args):
                     steps, total = ev.get("steps") or 0, ev.get("stepsTotal") or 0
                     running = next((s for s in ev.get("subtasks") or [] if not s.get("completed")), None)
                     job.step("local", stage_name(running) if running else None)
-                    # The write before the stages counts as a third of it.
-                    job.pace("local", 1 / 3 + (2 / 3) * (steps / total if total else 0), LOCAL_EXPECT_S)
+                    # The write before the stages is two thirds of it (~60 of ~90 s).
+                    job.pace("local", 2 / 3 + (1 / 3) * (steps / total if total else 0), LOCAL_EXPECT_S)
 
     t = threading.Thread(target=read_progress, daemon=True)
     t.start()
