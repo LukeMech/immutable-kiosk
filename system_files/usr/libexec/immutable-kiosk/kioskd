@@ -632,6 +632,10 @@ def start_watchers():
 
 
 # ---------------------------------------------------------------- jobs
+#
+# A running job's progress goes out as "job" events (at most ~3 a second):
+# the page fetches GET /api/job then, instead of every 0.7 s.
+JOB_CHANGED = Debounce("job", 0.3)
 
 class Job:
     """One long-running operation at a time (update, switch, install)."""
@@ -673,6 +677,7 @@ class Job:
             st["detail"] = detail
         st["fraction"] = fraction
         self.stage, self.detail, self.fraction = st["label"], st["detail"], fraction
+        JOB_CHANGED.poke()
 
     def end_steps(self, error=None):
         now = time.time()
@@ -683,12 +688,14 @@ class Job:
                     st["detail"] = error
             elif st["state"] == "pending" and not error:
                 st["state"] = "skipped"
+        JOB_CHANGED.poke()
 
     def add_log(self, line):
         line = line.rstrip()
         if line:
             self.log.append(line)
             del self.log[:-200]
+            JOB_CHANGED.poke()
 
     def as_dict(self):
         return {k: getattr(self, k) for k in
@@ -707,6 +714,7 @@ def start_job(kind, title, target, steps=()):
             raise ApiError(f"Trwa już: {CURRENT_JOB.title}", HTTPStatus.CONFLICT)
         job = Job(kind, title, steps)
         CURRENT_JOB = job
+    EVENTS.emit("job")
 
     def wrapper():
         try:
@@ -721,6 +729,7 @@ def start_job(kind, title, target, steps=()):
             job.add_log(f"BŁĄD: {e}")
         finally:
             job.finished = time.time()
+            EVENTS.emit("job")
 
     threading.Thread(target=wrapper, daemon=True).start()
     return job

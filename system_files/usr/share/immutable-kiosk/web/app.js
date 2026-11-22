@@ -646,14 +646,21 @@ function renderJob(job, { box, stage, bar, detail }) {
     detail.textContent = job.detail || "";
 }
 
+// The running job: fetched when kioskd says it changed ("job" event, see
+// initEvents); polled every 0.7 s only without the event stream (the
+// installer, or while it reconnects).
+let jobTick = null, liveConnected = false;
 function pollJob(onUpdate) {
     clearTimeout(pollTimer);
     const tick = async () => {
+        clearTimeout(pollTimer);
         let job = null;
         try { job = (await api("/job")).job; } catch (_) { /* kioskd restarting */ }
+        if (job) job.at = performance.now();  // for the active step's clock
         onUpdate(job);
-        if (job && job.state === "running") pollTimer = setTimeout(tick, 700);
+        if (job && job.state === "running" && !liveConnected) pollTimer = setTimeout(tick, 700);
     };
+    jobTick = tick;
     tick();
 }
 
@@ -682,7 +689,9 @@ function renderSteps(job, el) {
             li.querySelector(".dot").innerHTML = STEP_ICONS[s.state] || "";
         }
         li.querySelector(".sl").textContent = s.label;
-        const took = s.state === "active" ? job.now - s.started : s.took;
+        // The active step's time runs on between kioskd's events.
+        const took = s.state === "active"
+            ? job.now - s.started + (job.at ? (performance.now() - job.at) / 1000 : 0) : s.took;
         li.querySelector(".st").textContent = s.state === "skipped" ? "pominięto"
             : took != null && s.state !== "pending" ? fmtDur(took) : "";
         const bar = li.querySelector(".progress");
@@ -1240,6 +1249,13 @@ function initSystem() {
 
     // The top bar's clock ticks locally; kioskd's events bring everything else.
     setInterval(renderClock, 1000);
+    // So does a running update step's time.
+    setInterval(() => {
+        if (sysJob && sysJob.state === "running") {
+            renderSteps(sysJob.kind === "rollback" ? null : sysJob, $("job-steps"));
+            renderSteps(sysJob.kind === "rollback" ? sysJob : null, $("rb-steps"));
+        }
+    }, 1000);
 }
 
 /* Live updates: kioskd says what changed (GET /api/events, Server-Sent
@@ -1255,19 +1271,25 @@ function initEvents() {
         net, power: refreshDevice, clock: refreshDevice, device: refreshDevice,
         splash: () => { if (currentTab === "screen") loadSplash(); },
         config: () => api("/config").then(c => { cfg = c; if (currentTab === "screen") loadScreen(); }).catch(() => {}),
+        job: () => jobTick?.(),
     };
     let opened = false;
     const es = new EventSource("/api/events");
     es.addEventListener("change", e => {
         let topics = [];
         try { topics = JSON.parse(e.data); } catch (_) { return; }
-        // Under the HMI nothing is reloaded: kioskShown does it on the way back.
-        if (settingsVisible) for (const t of topics) LIVE[t]?.();
+        // Under the HMI nothing is reloaded: kioskShown does it on the way
+        // back. A job is followed anyway (its end matters, e.g. a restart).
+        for (const t of topics) if (settingsVisible || t === "job") LIVE[t]?.();
     });
     es.addEventListener("open", () => {
+        liveConnected = true;
         if (opened) { net(); LIVE.config(); }
+        LIVE.job();  // anything missed while away
         opened = true;
     });
+    // EventSource reconnects by itself; meanwhile a running job is polled.
+    es.addEventListener("error", () => { liveConnected = false; LIVE.job(); });
 }
 
 async function initSettings() {
