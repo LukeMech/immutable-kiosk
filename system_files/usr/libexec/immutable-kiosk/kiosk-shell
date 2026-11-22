@@ -404,6 +404,11 @@ class KioskShell(Gtk.Application):
 
     def display_check(self):
         self.display_pending = False
+        if hasattr(self, "settings"):
+            # A rotation or a new output can change WebKit's pixel ratio.
+            for view, name in ((self.settings, "settings"), (self.hmi, "hmi")):
+                if view is not None and view.get_mapped():
+                    self.check_ratio(view, name)
         surface = self.win.get_surface()
         scale = surface.get_scale() if hasattr(surface, "get_scale") else float(surface.get_scale_factor())
         outputs = wlr_state()
@@ -705,7 +710,9 @@ class KioskShell(Gtk.Application):
 
     def apply_scale(self):
         """Screen scaling = WebKit zoom: Settings (and its keyboard) at the
-        scale, the HMI at scale x its own zoom (the HMI tab's setting)."""
+        scale, the HMI at scale x its own zoom (the HMI tab's setting) --
+        both divided by the pixel ratio WebKit gives the page on its own
+        (see check_ratio)."""
         if not hasattr(self, "settings"):
             return  # before setup(): it applies the scale itself
         scale = screen_scale(self.cfg)
@@ -713,17 +720,68 @@ class KioskShell(Gtk.Application):
             zoom = float(self.cfg.get("zoom", 1.0))
         except (TypeError, ValueError):
             zoom = 1.0
-        self.set_zoom(self.settings, scale, "settings")
+        ratio = getattr(self, "ratio", {})
+        self.set_zoom(self.settings, scale / ratio.get("settings", 1.0), "settings")
         if self.hmi:
-            self.set_zoom(self.hmi, scale * zoom, "hmi")
+            self.set_zoom(self.hmi, scale * zoom / ratio.get("hmi", 1.0), "hmi")
+
+    def base_zoom(self, name):
+        """A view's zoom before any pixel-ratio correction (apply_scale)."""
+        scale = screen_scale(self.cfg)
+        if name == "settings":
+            return scale
+        try:
+            return scale * float(self.cfg.get("zoom", 1.0))
+        except (TypeError, ValueError):
+            return scale
+
+    def check_ratio(self, view, name):
+        """WebKit's own pixel ratio for the page. On the 408 in landscape,
+        after a fresh start, WebKit settles on devicePixelRatio 1.97 by
+        itself -- the panel's ~189 dpi over 96 -- with GTK, the window and
+        the compositor all at scale 1: every page laid out ~650 px wide and
+        drawn twice the size ("right for a moment, then big"). Portrait
+        and main had 1. Cancelled through the zoom, so 1 CSS px is 1 screen
+        px again in any orientation.
+
+        Measured at the view's base zoom (whatever WebKit folds into the
+        ratio, the base is known). Once a ratio other than 1 is found and
+        cancelled, that window size is done -- a rotation measures again,
+        nothing else can loop it; while it reads 1 (WebKit may not have
+        settled yet), later checks still look."""
+        size = (self.win.get_width(), self.win.get_height())
+        if not hasattr(self, "ratio"):
+            self.ratio, self.ratio_size = {}, {}
+        if self.ratio_size.get(name) == size:
+            return
+        base = self.base_zoom(name)
+        if abs(view.get_zoom_level() - base) > 0.001:
+            view.set_zoom_level(base)
+
+        def done(v, res):
+            try:
+                dpr = float(v.evaluate_javascript_finish(res).to_double())
+            except Exception as e:  # noqa: BLE001 -- a page that's going away
+                log(f"pixel ratio ({name}): {e}")
+                dpr = 0
+            own = round(dpr / base, 3) if dpr > 0 and dpr != float("inf") else 1.0
+            own = own if 0.5 <= own <= 4 else 1.0
+            if abs(own - 1.0) > 0.01:
+                log(f"pixel ratio ({name}, {size[0]}x{size[1]}): WebKit's own {own}, zoom compensates")
+                self.ratio_size[name] = size
+            self.ratio[name] = own
+            self.apply_scale()
+
+        def measure():
+            view.evaluate_javascript("window.devicePixelRatio", -1, None, None, None, done)
+            return GLib.SOURCE_REMOVE
+        GLib.timeout_add(250, measure)
 
     @staticmethod
     def set_zoom(view, level, name):
         """WebKit's zoom, only on a view that's on the screen, and only
-        when it's to change. Set on a view not yet shown it came out
-        garbled: in landscape the pages were drawn ~2x too big
-        (devicePixelRatio 1.97 at 100 %, measured on the 408) a moment
-        after the first page. 1.0 is WebKit's own default -- left alone."""
+        when it's to change: set on a view not yet shown it came out
+        garbled. 1.0 is WebKit's own default -- left alone."""
         if abs(view.get_zoom_level() - level) < 0.001:
             return
         if not view.get_mapped():
@@ -834,6 +892,11 @@ class KioskShell(Gtk.Application):
         boot-counter this boot is good (automatic rollback)."""
         if event == WebKit.LoadEvent.FINISHED and view is self.settings:
             self.tell_settings_waiting()  # a (re)loaded page starts without it
+        if event == WebKit.LoadEvent.FINISHED:
+            # WebKit sets its pixel ratio a moment after the first layout.
+            name = "settings" if view is self.settings else "hmi"
+            for delay in (1200, 4000):
+                GLib.timeout_add(delay, lambda v=view, n=name: (self.check_ratio(v, n), False)[1])
         if event == WebKit.LoadEvent.FINISHED and self.pending == ("hmi" if view is self.hmi else "settings"):
             self.reveal()
         if event == WebKit.LoadEvent.FINISHED and not self.ok_reported:
