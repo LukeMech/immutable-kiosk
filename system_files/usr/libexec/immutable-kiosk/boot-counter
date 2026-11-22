@@ -252,6 +252,17 @@ def cmd_write(path):
     return 0
 
 
+def cmd_write_boot(path):
+    """`write-boot FILE`: stdin into a file under /boot, read-only /boot or
+    not (kioskd: the boot entries' kernel arguments)."""
+    p = Path(path).resolve()
+    if BOOT not in p.parents:
+        print(f"not under {BOOT}: {p}", file=sys.stderr)
+        return 2
+    write_boot_file(p, sys.stdin.buffer.read())
+    return 0
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -259,6 +270,8 @@ def main():
     cmd = sys.argv[1]
     if cmd == "_write":
         return cmd_write(sys.argv[2])
+    if cmd == "write-boot":
+        return cmd_write_boot(sys.argv[2])
     return {"setup": cmd_setup, "arm": cmd_arm, "watchdog": cmd_watchdog, "ok": cmd_ok}[cmd]()
 
 

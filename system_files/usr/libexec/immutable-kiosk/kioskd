@@ -1747,9 +1747,12 @@ CAGE_UNIT = "immutable-kiosk-cage.service"
 # The boot splash (plymouth, from the initramfs) knows the screen's rotation
 # only from the kernel: video=<connector>:panel_orientation=... . The image
 # sets it per device (images/x86 kargs.d, from devices.toml); a rotation
-# picked in Settings rewrites it in the boot entries, so from the next start
-# the splash is turned like the kiosk. bootc upgrade keeps it: it applies
-# only what changed in the image's kargs.d. Which orientation is which
+# picked in Settings rewrites it in the boot entries' options lines, so from
+# the next start the splash is turned like the kiosk. ostree reads a
+# deployment's kernel arguments back from those entries, and bootc upgrade
+# applies only what changed in the image's kargs.d: the choice stays.
+# (Not `ostree admin kargs edit-in-place`: it can only append, and the
+# kernel takes the first video=<connector> it finds.) Which orientation is which
 # transform: the HP Pro Tablet 408's left_side_up is the kiosk's "90".
 PANEL_ORIENTATIONS = {"normal": "normal", "90": "left_side_up",
                       "180": "upside_down", "270": "right_side_up"}
@@ -1785,13 +1788,24 @@ def set_splash_orientation(output, transform):
             return
         splash_state(state="working", orientation=orientation, error=None)
         try:
-            for old in sorted(present - {want}):
-                run(["ostree", "admin", "kargs", "edit-in-place", f"--delete-if-present={old}"], timeout=120)
-            run(["ostree", "admin", "kargs", "edit-in-place", f"--append-if-missing={want}"], timeout=120)
+            for entry in sorted(BLS_ENTRIES.glob("*.conf")):
+                text = entry.read_text()
+                lines = []
+                for line in text.splitlines():
+                    if line.startswith("options "):
+                        args = [a for a in line.split()[1:] if not a.startswith(prefix)] + [want]
+                        line = "options " + " ".join(args)
+                    lines.append(line)
+                new = "\n".join(lines) + "\n"
+                if new != text:
+                    p = subprocess.run([BOOT_COUNTER, "write-boot", str(entry.resolve())], input=new.encode(),
+                                       capture_output=True, timeout=60)
+                    if p.returncode != 0:
+                        raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
             print(f"kioskd: boot splash orientation: {want} (was {', '.join(sorted(present)) or 'unset'})",
                   flush=True)
             splash_state(state="done")
-        except ApiError as e:
+        except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot splash orientation {want}: {e}", flush=True)
             splash_state(state="failed", error=str(e))
 
