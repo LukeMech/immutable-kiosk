@@ -8,7 +8,7 @@
     --field: #0d1218;
     --text: #e6edf3;
     --muted: #9aa7b4;
-    --accent: #2f81f7;
+    --accent: #2f81f7;          /* Ekran > Kolor akcentu sets it (app.js ACCENTS) */
     --ok: #3fb950;
     --warn: #d29922;
     --bad: #f85149;
@@ -111,7 +111,7 @@ div.inline { margin-top: 6px; }
     all: unset; flex: 1 1 auto; min-height: 56px; padding: 0 16px; border-radius: 12px;
     border: 2px solid var(--line); text-align: center; display: grid; place-items: center; font-weight: 600;
 }
-.seg button.on { border-color: var(--accent); background: rgba(47,129,247,.15); }
+.seg button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .chip {
@@ -139,7 +139,7 @@ div.inline { margin-top: 6px; }
 .list .item { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 6px 4px; }
 .list .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .list .item .sub { color: var(--muted); font-size: 15px; font-weight: 400; }
-.list .item.open { background: rgba(47,129,247,.06); border-radius: 12px 12px 0 0; }
+.list .item.open { background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: 12px 12px 0 0; }
 .list .item::after { content: "▸"; color: var(--muted); flex: none; transition: transform .15s; }
 .list .item.static::after { content: none; }
 .list .item.open::after { transform: rotate(90deg); }
@@ -152,10 +152,10 @@ div.inline { margin-top: 6px; }
 }
 .ico svg { width: 24px; height: 24px; }
 .ico.ok { background: rgba(63,185,80,.15); color: var(--ok); }
-.ico.new { background: rgba(47,129,247,.18); color: var(--accent); }
+.ico.new { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 .badge { flex: none; font-size: 14px; padding: 4px 10px; border-radius: 10px; background: #273241; color: var(--muted); }
 .badge.ok { background: rgba(63,185,80,.18); color: #7ee787; }
-.badge.new { background: rgba(47,129,247,.18); color: #a5c8ff; }
+.badge.new { background: color-mix(in srgb, var(--accent) 18%, transparent); color: color-mix(in srgb, var(--accent) 45%, white); }
 
 /* Boot timing: one bar from power-on to HMI, split into phases. */
 .bootbar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--field); margin-top: 16px; }
@@ -193,7 +193,7 @@ div.inline { margin-top: 6px; }
 .list.pick .item { border: 2px solid var(--line); border-radius: 12px; margin-top: 10px; padding: 12px 16px; }
 .list.pick li { border: 0; }
 .list.pick .item::after { content: none; }
-.list.pick .item.on { border-color: var(--accent); background: rgba(47,129,247,.12); }
+.list.pick .item.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .list.pick .item.off { opacity: .45; }
 
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; font-size: 16px; }
@@ -219,7 +219,7 @@ div.inline { margin-top: 6px; }
 .status > .btn { flex: none; }
 .status > .btn + .btn { margin-left: -4px; }
 .status.ok .status-icon, .status.ready .status-icon { background: rgba(63,185,80,.15); color: var(--ok); }
-.status.new .status-icon { background: rgba(47,129,247,.18); color: var(--accent); }
+.status.new .status-icon { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 .status.warn .status-icon { background: rgba(210,153,34,.16); color: var(--warn); }
 .status.err .status-icon { background: rgba(248,81,73,.15); color: var(--bad); }
 .status.busy .status-icon svg { animation: spin 1s linear infinite; }
@@ -319,7 +319,7 @@ div.inline { margin-top: 6px; }
 /* Arrived via the recovery corner: the card lights up for a moment. */
 .card.flash { animation: flash 2.6s ease-out; }
 @keyframes flash {
-    0%, 45% { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,129,247,.45); }
+    0%, 45% { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
     100% { border-color: var(--line); box-shadow: none; }
 }
 
@@ -328,3 +328,14 @@ div.inline { margin-top: 6px; }
 .netbar svg { flex: none; width: 22px; height: 22px; color: var(--ok); }
 .netbar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 720px) { .netbar span { display: none; } }
+
+/* Ekran > Kolor akcentu: one round swatch per colour, the chosen one ringed. */
+.swatches { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
+.swatches button {
+    all: unset; box-sizing: border-box; width: 56px; height: 56px; border-radius: 50%;
+    background: var(--sw); display: grid; place-items: center; color: #fff;
+    box-shadow: 0 0 0 2px var(--card), 0 0 0 4px transparent;
+}
+.swatches button svg { width: 26px; height: 26px; opacity: 0; }
+.swatches button.on { box-shadow: 0 0 0 3px var(--card), 0 0 0 6px var(--sw); }
+.swatches button.on svg { opacity: 1; }

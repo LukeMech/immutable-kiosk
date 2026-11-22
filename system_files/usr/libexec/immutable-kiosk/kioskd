@@ -64,6 +64,8 @@ DEFAULT_CONFIG = {
     "retry_seconds": 10,
     # Where the invisible "hold ~2 s for Settings" spot sits on top of the HMI.
     "settings_corner": "top-right",
+    # Settings' accent colour (Ekran > Kolor akcentu), one of ACCENTS.
+    "accent": "blue",
     # Backlight in percent, applied by kioskd at start and on change. None =
     # never touched (systemd-backlight's restored value stays).
     "brightness": None,
@@ -72,6 +74,9 @@ DEFAULT_CONFIG = {
     # point it at its own fork.
     "releases_repo": "LukeMech/immutable-kiosk",
 }
+
+# Names only; the colours live in app.js (ACCENTS).
+ACCENTS = ("blue", "teal", "green", "purple", "pink", "orange", "graphite")
 
 GITHUB_REPO = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 
@@ -259,6 +264,10 @@ def save_config(update):
         if not GITHUB_REPO.match(repo):
             raise ApiError("Repozytorium w postaci właściciel/nazwa, np. LukeMech/immutable-kiosk")
         cfg["releases_repo"] = repo
+    if "accent" in update:
+        if update["accent"] not in ACCENTS:
+            raise ApiError("Nieznany kolor akcentu")
+        cfg["accent"] = update["accent"]
     if "settings_corner" in update:
         if update["settings_corner"] not in CORNERS:
             raise ApiError("Niepoprawny róg ekranu")

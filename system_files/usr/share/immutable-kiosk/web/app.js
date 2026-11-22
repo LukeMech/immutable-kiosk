@@ -459,7 +459,27 @@ async function saveCfg(part) {
     return cfg;
 }
 
+/* Accent colour (Ekran > Kolor akcentu): kioskd keeps the name, the page
+   sets --accent (everything accent-tinted derives from it with color-mix)
+   and --ik-accent for the on-screen keyboard. Each works with white text. */
+const ACCENTS = {
+    blue: ["Niebieski", "#2f81f7"], teal: ["Morski", "#17a2b8"], green: ["Zielony", "#2da44e"],
+    purple: ["Fioletowy", "#8957e5"], pink: ["Różowy", "#d6409f"], orange: ["Pomarańczowy", "#e16f24"],
+    graphite: ["Grafitowy", "#6e7681"],
+};
+function applyAccent(name) {
+    const hex = (ACCENTS[name] || ACCENTS.blue)[1];
+    document.documentElement.style.setProperty("--accent", hex);
+    document.documentElement.style.setProperty("--ik-accent", hex);
+}
+function renderAccent() {
+    const cur = ACCENTS[cfg.accent] ? cfg.accent : "blue";
+    $("accent").innerHTML = Object.entries(ACCENTS).map(([k, [label, hex]]) =>
+        `<button data-v="${k}" class="${k === cur ? "on" : ""}" style="--sw:${hex}" aria-label="${esc(label)}" title="${esc(label)}">${ICONS.ok}</button>`).join("");
+}
+
 function loadScreen() {
+    renderAccent();
     const names = { portrait: "pion", landscape: "poziom", normal: "0°", 90: "90°", 180: "180°", 270: "270°" };
     seg($("rot"), cfg.rotation || "", v => saveCfg({ rotation: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
     $("rot-hint").textContent = `Teraz: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
@@ -500,6 +520,15 @@ function openRecovery() {
 window.addEventListener("hashchange", () => { if (location.hash === "#recovery") openRecovery(); });
 
 function initScreen() {
+    // Applied at once, saved after; on failure back to what's saved.
+    $("accent").addEventListener("click", e => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        applyAccent(b.dataset.v);
+        $("accent").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+        api("/config", { accent: b.dataset.v }).then(c => { cfg = c; })
+            .catch(err => { toast(err.message, true); applyAccent(cfg.accent); renderAccent(); });
+    });
     // Whole-screen scaling in 10% steps (WebKit zoom in kiosk-shell: sharp at
     // any value).
     const scaleStep = d => saveCfg({ scale: Math.min(2, Math.max(1, Math.round(((cfg.scale || 1) + d) * 10) / 10)) })
@@ -1124,5 +1153,6 @@ async function initInstaller() {
         try { cfg = await api("/config"); break; }
         catch (_) { await new Promise(r => setTimeout(r, Math.min(500 * (i + 1), 3000))); }
     }
+    applyAccent(cfg.accent);
     if (cfg.mode === "installer") initInstaller(); else initSettings();
 })();

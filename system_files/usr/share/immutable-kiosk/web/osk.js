@@ -82,8 +82,8 @@
         position: relative; cursor: default;
     }
     button.fn { background: #222b36; font-size: 19px; color: #b9c5d1; }
-    button.on { background: #2f81f7; color: #fff; }
-    button.lock { background: #1f6feb; color: #fff; box-shadow: inset 0 -3px 0 #fff; }
+    button.on { background: var(--ik-accent, #2f81f7); color: #fff; }
+    button.lock { background: var(--ik-accent, #1f6feb); color: #fff; box-shadow: inset 0 -3px 0 #fff; }
     button.down { filter: brightness(1.45); }
     button.enter { background: #238636; color: #fff; }
     button sup { position: absolute; top: 4px; right: 7px; font-size: 13px; color: #8fb8ff; }
