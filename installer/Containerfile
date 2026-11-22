@@ -52,7 +52,7 @@ RUN mkdir -p /usr/lib/immutable-kiosk \
 COPY installer/iso.yaml /usr/lib/image-builder/bootc/iso.yaml
 
 # Initramfs that can find its root on the ISO: the system image's own recipe
-# (images/<variant>/initramfs.sh from the repo -- slim, i915 for early KMS)
+# (images/<variant>/initramfs.sh from the repo -- the slim one)
 # plus dmsquash-live. A variant without one: fedora-bootc's stock initramfs
 # plus dmsquash-live.
 ARG VARIANT=x86

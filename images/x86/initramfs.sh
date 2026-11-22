@@ -7,34 +7,39 @@
 # a Bay Trail's firmware from a slow eMMC, and an Atom unpacks it, on every
 # boot.
 #
-# Two changes, both as command-line options ON TOP of the image's own dracut
-# config (/usr/lib/dracut/dracut.conf.d -- ostree/bootc modules, compression,
+# Size is boot time twice over: GRUB reads the whole file through the
+# tablet's firmware (~8 MB/s from the eMMC -- 77 MB took ~10 s), then the
+# Atom unpacks it. On top of the image's own dracut config
+# (/usr/lib/dracut/dracut.conf.d -- ostree/bootc modules, compression,
 # hostonly=no):
-#   --omit:        dracut modules for storage/network stacks never used here;
-#   --add-drivers: i915 (early KMS) -- the GPU is up before switch-root
-#                  instead of whenever udev loads it from the real root, so
-#                  cage doesn't sit in its wait-for-/dev/dri loop.
-#                  Plus drivers/pwm: on Bay Trail/Cherry Trail the panel
-#                  backlight is a PWM (LPSS pwm-lpss-platform or the PMIC's
-#                  pwm-crc) that i915 looks up once, at probe. Without the
-#                  PWM driver there, i915 registers no intel_backlight and
-#                  Settings' brightness slider is gone/dead. (dracut's own
-#                  drm module adds =drivers/pwm for the same reason; we don't
-#                  use drm -- it drags in every GPU driver and its firmware.)
-#                  softdep in /usr/lib/modprobe.d/i915-backlight.conf makes
-#                  sure the PWM driver is bound before i915 probes.
+#   --omit:         dracut modules for storage/network stacks never used
+#                   here, plus hwdb (udev's 12 MB hardware database -- only
+#                   input devices use it, nothing that finds the root) and
+#                   i18n (console keymaps and fonts);
+#   --omit-drivers: i915 -- no early KMS. With i915 in here, its ~3 s probe
+#                   ran inside udev's coldplug and dracut-initqueue's
+#                   `udevadm settle` waited for it: the root was found at
+#                   6.7 s but mounted only at 10.2 s, after the GPU. From the
+#                   real root it loads in parallel with everything else, long
+#                   before cage starts; the backlight PWM ordering it needs
+#                   is the softdep in /usr/lib/modprobe.d/i915-backlight.conf,
+#                   which applies there too. Also xfs: the root is btrfs;
+#   --no-early-microcode: dracut's generic early cpio carries every Intel
+#                   CPU's microcode (16 MB, uncompressed). Ours carries only
+#                   the Atom families this image is for (early_microcode).
 #
 # Panel PCs with other storage (SATA, NVMe, USB) still boot: kernel driver
 # selection (dracut's kernel-modules, hostonly=no) isn't touched.
 #
 # A bad initramfs can't brick a device: the previous deployment keeps its own,
-# selectable in the GRUB menu (05_timeout.cfg) -- but the checks below are
-# what keep one from shipping.
+# and one that can't mount the root reboots (rd.emergency=reboot) until GRUB
+# falls back to it (boot-counter) -- but the checks below are what keep one
+# from shipping.
 #
 # Usage: initramfs.sh [extra dracut module...]
 # build.sh runs it bare; the installer image (installer/Containerfile) runs it
 # from the repo with `dmsquash-live`, so the live ISO boots the system's own
-# slim initramfs (i915 included) plus what finding a root on the ISO takes.
+# slim initramfs plus what finding a root on the ISO takes.
 
 set -ouex pipefail
 
@@ -55,7 +60,15 @@ OMIT=(
     # virtiofs root, NVDIMM, and kernel-modules-extra's exotic drivers.
     walinuxagent fips fips-crypto-policies openssl nss-softokn
     virtiofs nvdimm kernel-modules-extra
+    hwdb i18n
 )
+
+# Microcode loaded at the very start of boot: Bay Trail (06-37), Cherry
+# Trail / Braswell (06-4c), Apollo Lake (06-5c) and Gemini Lake (06-7a) --
+# the Atom tablets and panel PCs this image is for. Other CPUs keep the
+# microcode their firmware loaded.
+UCODE_GLOBS=(06-37-* 06-4c-* 06-5c-* 06-7a-*)
+UCODE_DIR=/usr/lib/firmware/intel-ucode
 
 # Must survive (when the stock initramfs had them): what finds, mounts and
 # switches to the ostree/composefs root on btrfs.
@@ -100,11 +113,34 @@ if [[ ${#EXTRA[@]} -gt 0 ]]; then
     ADD=(--add " ${EXTRA[*]} ")
 fi
 DRACUT_NO_XATTR=1 dracut --force --zstd --reproducible --no-hostonly \
+    --no-early-microcode \
     --omit " ${OMIT[*]} " \
-    --add-drivers " i915 =drivers/pwm " \
-    --install /usr/lib/modprobe.d/i915-backlight.conf \
+    --omit-drivers " i915 xfs " \
     "${ADD[@]}" \
     "${IMG}" "${KVER}"
+
+# Our early cpio: uncompressed, in front of the compressed main archive,
+# with kernel/x86/microcode/GenuineIntel.bin -- the layout dracut's own has.
+early_microcode() {
+    local work g files=()
+    shopt -s nullglob
+    for g in "${UCODE_GLOBS[@]}"; do files+=("${UCODE_DIR}"/${g}); done
+    shopt -u nullglob
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "warning: no Atom microcode under ${UCODE_DIR}: initramfs without early microcode" >&2
+        return 0
+    fi
+    command -v cpio >/dev/null || dnf5 install -y cpio
+    work=$(mktemp -d)
+    mkdir -p "${work}/kernel/x86/microcode"
+    cat "${files[@]}" > "${work}/kernel/x86/microcode/GenuineIntel.bin"
+    echo "early microcode: ${#files[@]} files, $(stat -c %s "${work}/kernel/x86/microcode/GenuineIntel.bin") bytes"
+    (cd "${work}" && find kernel | LC_ALL=C sort | cpio -o -H newc --reproducible --quiet) > "${work}/early.cpio"
+    cat "${work}/early.cpio" "${IMG}" > "${work}/initramfs.img"
+    cp "${work}/initramfs.img" "${IMG}"
+    rm -rf "${work}"
+}
+early_microcode
 
 STOCK_MODS=$(dracut_modules "${STOCK}")
 NEW_MODS=$(dracut_modules "${IMG}")
@@ -134,15 +170,22 @@ for k in overlay erofs btrfs; do
         exit 1
     fi
 done
-# Bay Trail eMMC (sdhci-acpi + mmc_block), early KMS and the backlight PWM
-# i915 needs at probe: always required.
-for k in mmc_block 'sdhci[-_]acpi' i915 'pwm[-_]lpss[-_]platform'; do
+# Bay Trail eMMC (sdhci-acpi + mmc_block): always required.
+for k in mmc_block 'sdhci[-_]acpi'; do
     has_kmod /tmp/initramfs-new.list "${k}" || { echo "error: kernel module '${k}' missing from the initramfs" >&2; exit 1; }
 done
-grep -q 'usr/lib/modprobe.d/i915-backlight.conf' /tmp/initramfs-new.list ||
-    { echo "error: i915-backlight.conf (PWM before i915) missing from the initramfs" >&2; exit 1; }
-
-echo "i915 in stock initramfs: $(has_kmod /tmp/initramfs-stock.list i915 && echo yes || echo no)"
+# i915 loads from the real root (see the top); in here it would hold up the
+# root mount again.
+if grep -Eq '/i915\.ko' /tmp/initramfs-new.list; then
+    echo "error: i915 is in the initramfs (early KMS delays the root mount)" >&2
+    exit 1
+fi
+# (No pipe into grep -q here: SIGPIPE + pipefail, see has_kmod.)
+if grep -aq 'kernel/x86/microcode/GenuineIntel.bin' "${IMG}"; then
+    echo "early microcode: present"
+else
+    echo "early microcode: none"
+fi
 ls -l "${STOCK}" "${IMG}"
 echo "kernel modules: stock $(grep -c '\.ko' /tmp/initramfs-stock.list) -> ours $(grep -c '\.ko' /tmp/initramfs-new.list)"
 # Where the rest of the size is (uncompressed bytes, from lsinitrd's listing):
@@ -157,6 +200,15 @@ awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ {
         else a = "other"
         s[a] += $5
      } END { for (a in s) printf "%8.1f  %s\n", s[a] / 1048576, a }' /tmp/initramfs-new.list | sort -rn
+echo "--- kernel modules: compressed MiB, count, directory (top 15):"
+awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ && $NF ~ /\/kernel\/.*\.ko/ {
+        n = split($NF, p, "/"); d = ""
+        for (i = 1; i < n; i++) if (p[i] == "kernel") { d = p[i + 1] "/" p[i + 2]; break }
+        s[d] += $5; c[d]++
+     } END { for (d in s) printf "%8.2f  %4d  %s\n", s[d] / 1048576, c[d], d }' /tmp/initramfs-new.list |
+    sort -rn > /tmp/initramfs-moddirs.list
+head -15 /tmp/initramfs-moddirs.list
+rm -f /tmp/initramfs-moddirs.list
 echo "--- 20 biggest files:"
 # Through a file, not `sort | head`: head exits after 20 lines, sort dies of
 # SIGPIPE, and pipefail fails the build (exit 141).
