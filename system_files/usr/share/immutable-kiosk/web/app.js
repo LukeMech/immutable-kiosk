@@ -435,7 +435,7 @@ async function loadNet() {
     if (!n.connections.length) {
         // Nothing connected: the Wi-Fi card above already says so.
         box.innerHTML = `<div class="card"><h2>Adres IP</h2>` + statusHtml("off", ICONS.ethernet, "Brak połączenia",
-            "Połącz się z siecią Wi-Fi powyżej albo podłącz kabel (adapter USB-Ethernet).") + `</div>`;
+            "Połącz się z siecią Wi-Fi poniżej albo podłącz kabel (adapter USB-Ethernet).") + `</div>`;
         return;
     }
     box.innerHTML = "";
