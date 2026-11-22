@@ -1103,10 +1103,23 @@ const secs = (v, d = 1) => v.toLocaleString(LOCALE(), { minimumFractionDigits: d
 let bootLoaded = false;
 async function loadBoot() {
     // First load reads the journal (slow): spinner. Later ones hit kioskd's cache.
-    if (!bootLoaded) setStatus("boot-st", "busy", ICONS.busy, "Loading boot time…", "Reading this boot's journal");
+    if (!bootLoaded) {
+        setStatus("boot-st", "busy", ICONS.busy, "Loading boot time…", "Reading this boot's journal");
+        // The bar runs a loading animation until the phases are in.
+        $("boot-bar").innerHTML = "";
+        $("boot-bar").classList.add("loading");
+        $("boot-bar").hidden = false;
+        $("boot-legend").hidden = true;
+    }
     let b;
     try { b = await api("/boot"); bootLoaded = true; }
-    catch (e) { setStatus("boot-st", "err", ICONS.err, "No boot data", e.message); return; }
+    catch (e) {
+        $("boot-bar").classList.remove("loading");
+        $("boot-bar").hidden = true;
+        setStatus("boot-st", "err", ICONS.err, "No boot data", e.message);
+        return;
+    }
+    $("boot-bar").classList.remove("loading");
     const ph = Object.fromEntries((b.phases || []).map(p => [p.name, p.sec]));
     const before = (ph.firmware || 0) + (ph.loader || 0);   // UEFI + GRUB
     const kernelToDone = (ph.kernel || 0) + (ph.initrd || 0) + (ph.userspace || 0);
