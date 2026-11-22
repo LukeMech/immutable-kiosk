@@ -903,6 +903,8 @@ function renderUpdate() {
         `Automatycznie: jeśli nowa wersja ${AUTO_TRIES} razy z rzędu nie pokaże kiosku (albo zawiesi się na 10 min), ` +
         "system sam uruchomi poprzednią i zostanie przy niej.",
         GRUB_HINT,
+        "Ustawienia domyślne: adres HMI, ekran, rogi, kolor i dane logowania HMI wracają do początkowych; " +
+        "sieci Wi-Fi, adresy IP, nazwa urządzenia i strefa czasowa zostają.",
         `Skrót do tej karty: przytrzymaj ${RECOVERY_HOLD_S} s róg ${CORNER_NAMES[recoveryCorner()]}, w HMI albo w ustawieniach.`,
     ].join(" ");
     renderNotes();
@@ -1209,6 +1211,10 @@ function initSystem() {
         .catch(e => toast(e.message, true));
     holdButton($("sys-reboot-now"), power("reboot"));
     holdButton($("pw-reboot"), power("reboot"));
+    // kioskd restarts the kiosk a second later: it comes up like a new one.
+    holdButton($("pw-reset"), () => api("/settings/reset", {})
+        .then(() => toast("Ustawienia domyślne przywrócone — kiosk uruchamia się od nowa"))
+        .catch(e => toast(e.message, true)));
     holdButton($("pw-off"), power("poweroff"));
 
     $("sys-repo").addEventListener("input", () => { $("sys-repo-save").disabled = false; });

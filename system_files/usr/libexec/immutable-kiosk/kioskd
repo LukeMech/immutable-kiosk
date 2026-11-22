@@ -1999,6 +1999,32 @@ def r_system_rollback(body, q):
     return start_job("rollback", "Przywracanie poprzedniej wersji", job_rollback, ROLLBACK_STEPS).as_dict()
 
 
+def r_settings_reset(body, q):
+    """Settings back to the defaults: kioskd's config (HMI address, screen,
+    corners, accent...) and the HMI's browser data (its login, cookies,
+    cache). The network (Wi-Fi, IP addresses), host name and time zone stay
+    -- a kiosk reset over the network must stay reachable. cage restarts, so
+    the kiosk comes up as after an installation: Settings first, no HMI."""
+    import pwd
+    import shutil
+    try:
+        CONFIG_FILE.unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        home = Path(pwd.getpwnam("kiosk").pw_dir)
+    except KeyError:
+        home = None
+    if home:
+        for d in (home / ".local/share/immutable-kiosk/hmi", home / ".cache/immutable-kiosk/hmi"):
+            shutil.rmtree(d, ignore_errors=True)
+    print("kioskd: settings reset to the defaults, restarting the kiosk", flush=True)
+    EVENTS.emit("config")
+    # After the reply: the request comes from inside cage.
+    threading.Timer(1.0, subprocess.run, args=(["systemctl", "restart", CAGE_UNIT],)).start()
+    return {"ok": True}
+
+
 def r_power(body, q):
     action = body.get("action")
     if action not in ("reboot", "poweroff"):
@@ -2060,6 +2086,7 @@ ROUTES = {
     ("POST", "/api/system/channel"): r_system_channel,
     ("POST", "/api/system/rollback"): r_system_rollback,
     ("POST", "/api/power"): r_power,
+    ("POST", "/api/settings/reset"): r_settings_reset,
     ("GET", "/api/job"): r_job,
     ("GET", "/api/splash"): r_splash,
     ("GET", "/api/installer"): r_installer,
