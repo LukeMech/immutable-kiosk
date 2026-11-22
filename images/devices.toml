@@ -20,3 +20,11 @@ rotation = "landscape"
 # The firmware only boots EFI/BOOT/BOOTIA32.EFI: the disk image and the ISO
 # both get checked for it in build-media.yml.
 efi_ia32 = true
+# Boot splash (Plymouth) and kernel console orientation: the panel is a
+# portrait 800x1280 one mounted sideways, its top on the right (the kiosk
+# rotates it with wlr-randr transform 90 for "landscape"). Becomes the kernel
+# argument video=DSI-1:panel_orientation=right_side_up for this variant
+# (images/x86/build_files/20-panel-orientation.sh). Values: normal,
+# upside_down, left_side_up, right_side_up.
+panel_connector = "DSI-1"
+panel_orientation = "right_side_up"
