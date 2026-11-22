@@ -1,0 +1,16 @@
+# Compressed swap in RAM (zram) -- what zram-generator used to set up, but
+# not as a swap.target member: every tmpfs mount is ordered after
+# swap.target, /run/user/<uid> included, so the kiosk's login session (and
+# with it the screen, black after the boot splash) waited for the zram
+# device. Here the swap comes up alongside the boot and nothing waits for it.
+[Unit]
+Description=Compressed swap in RAM (zram)
+ConditionPathExists=!/dev/zram0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/immutable-kiosk/zram-swap
+
+[Install]
+WantedBy=multi-user.target

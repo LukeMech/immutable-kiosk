@@ -9,7 +9,6 @@ dnf install -y \
     NetworkManager \
     NetworkManager-wifi \
     wpa_supplicant \
-    zram-generator \
     cloud-utils-growpart \
     btrfs-progs \
     gdisk \
@@ -17,6 +16,7 @@ dnf install -y \
     jq
 
 systemctl enable NetworkManager.service
+systemctl enable immutable-kiosk-zram.service
 
 # Root grows to fill the disk on first boot (disk images are built small; see
 # immutable-sbc, where this service comes from).
@@ -83,9 +83,14 @@ done
 # symlink to /dev/null in /etc/systemd/*-generators:
 # - podman's quadlet (a 2.4 MB Go binary, run as system AND user generator):
 #   no .container/.volume units here;
-# - kdump-dep-generator.sh: no kdump; rpc-pipefs-generator: no NFS.
+# - kdump-dep-generator.sh: no kdump; rpc-pipefs-generator: no NFS;
+# - zram-generator (if the base brings it): its dev-zram0.swap sits in
+#   swap.target, which every tmpfs mount waits for -- /run/user/<kiosk> too,
+#   so the kiosk's session, and the screen, waited for the zram device (~19 s
+#   in on the Atom). immutable-kiosk-zram.service sets the same swap up
+#   alongside the boot instead.
 mkdir -p /etc/systemd/system-generators /etc/systemd/user-generators
-for g in podman-system-generator kdump-dep-generator.sh rpc-pipefs-generator; do
+for g in podman-system-generator kdump-dep-generator.sh rpc-pipefs-generator zram-generator; do
     if [[ -e /usr/lib/systemd/system-generators/${g} ]]; then
         ln -sf /dev/null "/etc/systemd/system-generators/${g}"
     fi
