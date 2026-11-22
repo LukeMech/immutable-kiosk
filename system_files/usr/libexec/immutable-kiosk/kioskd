@@ -1212,6 +1212,9 @@ def critical_chain(unit):
         if not m or "." not in m.group(1):
             continue
         name, at, took = m.groups()
+        # Slices and sockets are always there and never what's slow.
+        if name.endswith((".slice", ".socket")):
+            continue
         chain.append({"unit": name, "at": base + parse_span(at) if at else None,
                       "took": parse_span(took) if took else None})
     return chain
