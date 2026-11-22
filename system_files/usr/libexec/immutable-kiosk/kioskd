@@ -1815,8 +1815,11 @@ def set_splash_orientation(output, transform):
     orientation = PANEL_ORIENTATIONS.get(transform)
     if not orientation or not re.fullmatch(r"[A-Za-z]+-[A-Za-z0-9-]+", output or ""):
         return
-    prefix = f"video={output}:panel_orientation="
-    want = prefix + orientation
+    # The panel's connector, and simpledrm's ("Unknown-1": the firmware's
+    # framebuffer, which the splash uses until i915 is up).
+    prefixes = tuple(f"video={c}:panel_orientation=" for c in (output, "Unknown-1"))
+    wants = [p + orientation for p in prefixes]
+    want = wants[0]
     with _splash_lock:
         present = set()
         for entry in BLS_ENTRIES.glob("*.conf"):
@@ -1826,8 +1829,8 @@ def set_splash_orientation(output, transform):
                 continue
             for line in lines:
                 if line.startswith("options "):
-                    present.update(a for a in line.split()[1:] if a.startswith(prefix))
-        if present == {want}:
+                    present.update(a for a in line.split()[1:] if a.startswith(prefixes))
+        if present == set(wants):
             return
         splash_state(state="working", orientation=orientation, error=None)
         try:
@@ -1836,7 +1839,7 @@ def set_splash_orientation(output, transform):
                 lines = []
                 for line in text.splitlines():
                     if line.startswith("options "):
-                        args = [a for a in line.split()[1:] if not a.startswith(prefix)] + [want]
+                        args = [a for a in line.split()[1:] if not a.startswith(prefixes)] + wants
                         line = "options " + " ".join(args)
                     lines.append(line)
                 new = "\n".join(lines) + "\n"
@@ -2004,7 +2007,7 @@ def boot_orientation():
             if line.startswith("options "):
                 for a in line.split()[1:]:
                     m = re.fullmatch(r"video=([A-Za-z]+-[A-Za-z0-9-]+):panel_orientation=([a-z_]+)", a)
-                    if m:
+                    if m and m.group(1) != "Unknown-1":   # simpledrm's: the same orientation
                         return m.group(1), m.group(2)
     return None, "normal"
 
