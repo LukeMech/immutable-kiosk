@@ -339,3 +339,6 @@ div.inline { margin-top: 6px; }
 .swatches button svg { width: 26px; height: 26px; opacity: 0; }
 .swatches button.on { box-shadow: 0 0 0 3px var(--card), 0 0 0 6px var(--sw); }
 .swatches button.on svg { opacity: 1; }
+
+/* A switch waiting for its change to take effect (Wi-Fi radio). */
+.switch input:disabled { opacity: .5; }

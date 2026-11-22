@@ -302,12 +302,24 @@ async function loadWifi(rescan) {
         ex.className = "expand";
         ex.hidden = openSsid !== n.ssid;
         item.classList.toggle("open", !ex.hidden);
-        ex.innerHTML = (n.security ? `<label>Hasło${n.saved ? " (puste = zapisane)" : ""}
+        // A saved network connects with what NetworkManager remembers -- no
+        // password field unless "Inne hasło" asks for one.
+        const remembered = n.saved && n.security;
+        ex.innerHTML = (remembered ? '<p class="hint">Zapisana — połączy się z zapamiętanym hasłem.</p>' : "") +
+            (n.security ? `<label class="pw"${remembered ? " hidden" : ""}>Hasło
                 <input type="password" autocomplete="off"></label>` : "") +
-            `<div class="actions"><button class="btn primary">Połącz</button></div>`;
-        const btn = ex.querySelector("button");
+            `<div class="actions"><button class="btn primary go">Połącz</button>` +
+            (remembered ? '<button class="btn other">Inne hasło</button>' : "") + `</div>`;
+        const btn = ex.querySelector(".go");
+        ex.querySelector(".other")?.addEventListener("click", e => {
+            ex.querySelector(".pw").hidden = false;
+            ex.querySelector(".hint").hidden = true;
+            e.currentTarget.hidden = true;
+            ex.querySelector("input").focus();
+        });
         btn.addEventListener("click", () => busy(btn, async () => {
-            const pass = ex.querySelector("input")?.value || "";
+            const pw = ex.querySelector(".pw");
+            const pass = pw && !pw.hidden ? pw.querySelector("input").value : "";
             wifiOverride = { state: "busy", icon: ICONS.busy, title: `Łączenie z ${n.ssid}…`, sub: "To może potrwać do minuty." };
             renderWifiStatus();
             try {
@@ -328,7 +340,9 @@ async function loadWifi(rescan) {
             });
             ex.hidden = !ex.hidden;
             item.classList.toggle("open", !ex.hidden);
-            if (!ex.hidden) ex.querySelector("input")?.focus();
+            // The keyboard only when there's a password to type.
+            const pw = ex.querySelector(".pw");
+            if (!ex.hidden && pw && !pw.hidden) pw.querySelector("input").focus();
         });
         li.appendChild(ex);
     }
@@ -339,8 +353,24 @@ async function loadWifi(rescan) {
         li.innerHTML = `<div class="item static">
             <span class="ico${s.active ? " ok" : ""}">${wifiIcon(s.active ? 3 : 0)}</span>
             <div class="name">${esc(s.ssid)}${s.active ? '<div class="sub">aktywna</div>' : ""}</div>
+            ${s.active ? "" : '<button class="btn primary go">Połącz</button>'}
             <button class="btn danger hold" data-hold="1000">Zapomnij</button></div>`;
-        const b = li.querySelector("button");
+        // Saved: connects with the remembered password, nothing to type.
+        const go = li.querySelector(".go");
+        go?.addEventListener("click", () => busy(go, async () => {
+            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Łączenie z ${s.ssid}…`, sub: "To może potrwać do minuty." };
+            renderWifiStatus();
+            try {
+                await api("/wifi/connect", { ssid: s.ssid, password: "" });
+                wifiOverride = null;
+            } catch (e) {
+                wifiOverride = { state: "err", icon: ICONS.err, title: `Nie udało się połączyć z ${s.ssid}`, sub: e.message };
+                renderWifiStatus();
+                throw e;
+            }
+            await loadWifi(false);
+        }).catch(() => {}));
+        const b = li.querySelector(".hold");
         holdButton(b, () => busy(b, async () => {
             await api("/wifi/forget", { uuid: s.uuid });
             toast(`Usunięto ${s.ssid}`);
@@ -367,10 +397,21 @@ function initWifi() {
                 renderWifiStatus();
             });
     });
+    // nmcli takes a few seconds to switch the radio: say so at once, and
+    // keep the switch still until it has.
     $("wifi-radio").addEventListener("change", e => {
-        wifiOverride = null;
-        api("/wifi/radio", { enabled: e.target.checked })
-            .then(() => loadWifi(e.target.checked)).catch(err => toast(err.message, true));
+        const sw = e.target, on = sw.checked;
+        sw.disabled = true;
+        wifiOverride = { state: "busy", icon: ICONS.busy, title: on ? "Włączanie Wi-Fi…" : "Wyłączanie Wi-Fi…" };
+        renderWifiStatus();
+        api("/wifi/radio", { enabled: on })
+            .then(() => { wifiOverride = null; return loadWifi(on); })
+            .catch(err => {
+                sw.checked = !on;
+                wifiOverride = { state: "err", icon: ICONS.err, title: on ? "Nie udało się włączyć Wi-Fi" : "Nie udało się wyłączyć Wi-Fi", sub: err.message };
+                renderWifiStatus();
+            })
+            .finally(() => { sw.disabled = false; });
     });
     $("hid-connect").addEventListener("click", e => busy(e.currentTarget, async () => {
         const ssid = $("hid-ssid").value.trim();
