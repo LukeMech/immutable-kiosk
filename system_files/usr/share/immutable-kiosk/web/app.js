@@ -448,7 +448,31 @@ function loadScreen() {
         $("bright-val").textContent = b + "%";
     }
     seg($("corner"), cfg.settings_corner, v => saveCfg({ settings_corner: v }).then(loadScreen).catch(e => toast(e.message, true)));
+    $("corner-hint").textContent = `Awaryjnie: przytrzymanie przez ${RECOVERY_HOLD_S} s przeciwległego rogu ` +
+        `(${CORNER_NAMES[recoveryCorner()]}) — w HMI i w ustawieniach — otwiera System → Przywracanie i zasilanie.`;
 }
+
+/* Recovery corner (kiosk-shell): the corner opposite the Settings one, held
+   RECOVERY_HOLD_S over the HMI or Settings, opens the page with #recovery. */
+const RECOVERY_HOLD_S = 3;
+const CORNER_NAMES = { "top-left": "↖ lewy górny", "top-right": "↗ prawy górny", "bottom-left": "↙ lewy dolny", "bottom-right": "↘ prawy dolny" };
+const recoveryCorner = () => ({ "top-left": "bottom-right", "top-right": "bottom-left", "bottom-left": "top-right", "bottom-right": "top-left" })[(cfg && cfg.settings_corner) || "top-right"];
+
+function openRecovery() {
+    history.replaceState(null, "", location.pathname + location.search);  // the next #recovery is a change again
+    showTab("system");
+    const card = $("recovery-card");
+    const go = () => window.scrollTo({
+        top: card.getBoundingClientRect().top + window.scrollY - document.querySelector("#settings .top").offsetHeight - 12,
+        behavior: "smooth",
+    });
+    go();
+    setTimeout(go, 900);  // System's cards above fill in asynchronously and push it down
+    card.classList.remove("flash");
+    void card.offsetWidth;  // restart the animation
+    card.classList.add("flash");
+}
+window.addEventListener("hashchange", () => { if (location.hash === "#recovery") openRecovery(); });
 
 function initScreen() {
     // Whole-screen scaling in 10% steps (WebKit zoom in kiosk-shell: sharp at
@@ -628,6 +652,14 @@ function renderUpdate() {
     $("sys-reboot-box").hidden = running || !(avail && s.staged);
     $("sys-switch").disabled = running;
     $("sys-rollback").disabled = running || !(avail && s.rollback);
+    if (!s) setStatus("rb-st", "busy", ICONS.busy, "Wczytywanie…");
+    else if (!avail) setStatus("rb-st", "err", ICONS.err, "Przywracanie niedostępne", s.error || "");
+    else if (s.rollback) setStatus("rb-st", "", ICONS.ready, `Poprzednia wersja: ${versionName(s.rollback)}`,
+        `Teraz działa ${versionName(s.booted)}. Przywrócenie włączy poprzednią po restarcie.`);
+    else setStatus("rb-st", "off", ICONS.ready, "Brak poprzedniej wersji", `Teraz działa ${versionName(s.booted)} — nie ma do czego wrócić.`);
+    $("rb-hint").textContent = "Gdy system nie uruchamia się wcale: podłącz klawiaturę USB i w menu GRUB " +
+        `(pierwsze sekundy startu) wybierz drugą pozycję strzałkami i Enterem. Skrót do tej karty: przytrzymaj ${RECOVERY_HOLD_S} s róg ` +
+        `${CORNER_NAMES[recoveryCorner()]}, w HMI albo w ustawieniach.`;
     renderNotes();
 }
 
@@ -888,7 +920,7 @@ async function initSettings() {
     initWifi();
     initScreen();
     initSystem();
-    showTab("hmi");
+    if (location.hash === "#recovery") openRecovery(); else showTab("hmi");
 }
 
 /* ======================================================= INSTALLER */

@@ -293,3 +293,10 @@ div.inline { margin-top: 6px; }
 @media (max-width: 520px) {
     .grid2 { grid-template-columns: 1fr; }
 }
+
+/* Arrived via the recovery corner: the card lights up for a moment. */
+.card.flash { animation: flash 2.6s ease-out; }
+@keyframes flash {
+    0%, 45% { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,129,247,.45); }
+    100% { border-color: var(--line); box-shadow: none; }
+}

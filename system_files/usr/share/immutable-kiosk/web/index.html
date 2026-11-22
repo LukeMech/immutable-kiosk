@@ -160,6 +160,7 @@
           <button data-v="bottom-left">↙ Lewy dolny</button>
           <button data-v="bottom-right">↘ Prawy dolny</button>
         </div>
+        <p class="hint" id="corner-hint" style="margin:14px 0 0"></p>
       </div>
     </section>
 
@@ -210,8 +211,7 @@
         <p class="hint" style="margin-top:8px">Stąd pochodzą opisy wersji („Co nowego”) — z wydań (releases) tego repozytorium.</p>
       </div>
       <div class="card">
-        <h2>Przywracanie i zasilanie</h2>
-        <div class="actions col">
+        <h2>Urządzenie</h2>
         <div class="status" id="dev-st">
           <div class="status-icon" id="dev-st-icon"></div>
           <div class="status-text">
@@ -219,13 +219,6 @@
             <div class="status-sub" id="dev-st-sub"></div>
           </div>
         </div>
-          <button class="btn hold" data-hold="1500" id="sys-rollback">Przytrzymaj: przywróć poprzednią wersję</button>
-          <button class="btn hold" data-hold="1500" id="pw-reboot">Przytrzymaj: uruchom ponownie</button>
-          <button class="btn danger hold" data-hold="2000" id="pw-off">Przytrzymaj: wyłącz</button>
-        </div>
-      </div>
-      <div class="card">
-        <h2>Urządzenie</h2>
         <dl class="kv" id="dev-info">
           <dt>Czas</dt><dd id="dev-time">—</dd>
           <dt>Strefa czasowa</dt>
@@ -261,6 +254,22 @@
           <ul class="slow" id="boot-slow"></ul>
         </div>
         <details class="log"><summary>Szczegóły (systemd-analyze)</summary><pre id="boot-detail"></pre></details>
+      </div>
+      <div class="card" id="recovery-card">
+        <h2>Przywracanie i zasilanie</h2>
+        <div class="status" id="rb-st">
+          <div class="status-icon" id="rb-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="rb-st-title">Wczytywanie…</div>
+            <div class="status-sub" id="rb-st-sub"></div>
+          </div>
+        </div>
+        <div class="actions col">
+          <button class="btn hold" data-hold="1500" id="sys-rollback">Przytrzymaj: przywróć poprzednią wersję</button>
+          <button class="btn hold" data-hold="1500" id="pw-reboot">Przytrzymaj: uruchom ponownie</button>
+          <button class="btn danger hold" data-hold="2000" id="pw-off">Przytrzymaj: wyłącz</button>
+        </div>
+        <p class="hint" id="rb-hint" style="margin:14px 0 0"></p>
       </div>
     </section>
   </main>
