@@ -10,7 +10,7 @@ by the kernel, so devices with other panels are unaffected.
 
 import tomllib
 
-DEVICES = "/usr/share/immutable-kiosk/devices.toml"
+DEVICES = "/ctx/images/devices.toml"   # the build context; not in the image
 OUT = "/usr/lib/bootc/kargs.d/31-panel-orientation.toml"
 VARIANT = "x86"
 ORIENTATIONS = {"normal", "upside_down", "left_side_up", "right_side_up"}

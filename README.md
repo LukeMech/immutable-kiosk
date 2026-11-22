@@ -93,7 +93,7 @@ immutable-sbc / lm-server).
 |---|---|
 | `Containerfile`, `build_files/` | the system image: Fedora bootc 45, numbered hooks as in immutable-sbc. `05-base` network/zram/growroot, `10-kiosk` cage + WebKit + services, `20-efi-ia32` 32-bit UEFI boot (shim/GRUB ia32 + bootupd metadata) |
 | `images/variants.toml`, `images/<variant>/` | OS variants (`x86` today: tablet Wi-Fi firmware, thermald, and `initramfs.sh`, run last: a slimmer initramfs without network/LVM/RAID/LUKS/cloud stacks, early KMS or other CPUs' microcode) |
-| `images/devices.toml` | physical devices: variant, DMI match, default rotation, whether it needs 32-bit UEFI; shipped into the image for runtime defaults |
+| `images/devices.toml` | physical devices: variant, DMI match, default rotation, panel orientation, whether it needs 32-bit UEFI; build-time only (the build derives the default-rotation table and kernel arguments from it) |
 | `system_files/` | copied onto `/`: kioskd, kiosk-shell, the web page, systemd units, signature policy |
 | `installer/` | the installer image (FROM the system image + payload + installer mode) and the ISO boot menu |
 | `scripts/` | `ensure-efi-ia32.sh` (disk image boots on 32-bit UEFI), `iso-add-ia32.sh` (installer ISO boots on 32-bit UEFI), `shrink-raw.sh` (10 GiB disk image → its contents + 256 MiB), `check-iso.sh`, `make-payload.sh`; changelog helpers from immutable-sbc |

@@ -23,7 +23,6 @@ import socket
 import subprocess
 import threading
 import time
-import tomllib
 import hashlib
 import urllib.request
 import mimetypes
@@ -37,7 +36,9 @@ ALLOWED_HOSTS = {"127.0.0.1:8088", "localhost:8088"}
 WEB_ROOT = Path("/usr/share/immutable-kiosk/web")
 STATE_DIR = Path("/var/lib/immutable-kiosk")
 CONFIG_FILE = STATE_DIR / "config.json"
-DEVICES_FILE = Path("/usr/share/immutable-kiosk/devices.toml")
+# Default rotation per device model, generated at build time from
+# images/devices.toml (build_files/12-default-rotation.py).
+DEFAULT_ROTATION_FILE = Path("/usr/lib/immutable-kiosk/default-rotation.json")
 MODE_FILE = Path("/usr/lib/immutable-kiosk/mode")
 PAYLOAD_DIR = Path("/usr/share/immutable-kiosk/payload")
 LIVE_MOUNT = Path("/run/initramfs/live")
@@ -47,7 +48,7 @@ ROTATIONS = ("portrait", "landscape", "normal", "90", "180", "270")
 DEFAULT_CONFIG = {
     # TwinCAT HMI Server (TF2000) listens on 1010 (HTTP) / 1020 (HTTPS) by default.
     "hmi": {"scheme": "https", "host": "", "port": 1020, "path": "/"},
-    # None = the device's default from devices.toml.
+    # None = this device model's default (default_rotation()).
     "rotation": None,
     # Our on-screen keyboard injected into the HMI page as well (TwinCAT HMI's
     # login page has no keyboard of its own).
@@ -123,19 +124,18 @@ def read_dmi(field):
         return ""
 
 
-def device():
-    """The [device] table of devices.toml matching this machine's DMI product name."""
+def default_rotation():
+    """This model's rotation until one is set in Settings: the entry whose
+    dmi_product is in this machine's DMI product name, else the default."""
     try:
-        devices = tomllib.loads(DEVICES_FILE.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        devices = {}
-    default = devices.get("default", {})
-    product = read_dmi("product_name")
-    for key, dev in devices.items():
-        match = dev.get("dmi_product")
-        if key != "default" and match and match.lower() in product.lower():
-            return key, {**default, **dev}
-    return None, {**default, "name": product or "nieznane urządzenie"}
+        table = json.loads(DEFAULT_ROTATION_FILE.read_text())
+    except (OSError, ValueError):
+        table = {}
+    product = read_dmi("product_name").lower()
+    for dev in table.get("devices", []):
+        if dev.get("dmi_product") and dev["dmi_product"].lower() in product and dev.get("rotation") in ROTATIONS:
+            return dev["rotation"]
+    return table.get("default") if table.get("default") in ROTATIONS else "landscape"
 
 
 def load_config():
@@ -192,8 +192,7 @@ def brightness_set(percent):
 
 def effective_config():
     cfg = load_config()
-    _, dev = device()
-    cfg["rotation_effective"] = cfg["rotation"] or dev.get("rotation", "landscape")
+    cfg["rotation_effective"] = cfg["rotation"] or default_rotation()
     cfg["brightness_now"] = brightness_get()
     cfg["hmi_url"] = hmi_url(cfg["hmi"])
     cfg["mode"] = mode()
@@ -1292,13 +1291,12 @@ def current_timezone():
 
 
 def r_info(body, q):
-    key, dev = device()
     time.tzset()  # glibc re-reads /etc/localtime if the time zone was changed
     return {
         "mode": mode(),
         "hostname": socket.gethostname(),
-        "device": {"key": key, "name": dev.get("name", ""), "product": read_dmi("product_name"),
-                   "vendor": read_dmi("sys_vendor")},
+        # What the hardware says about itself (DMI).
+        "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor")},
         "power": power_state(),
         "net": net_brief(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),

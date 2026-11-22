@@ -845,7 +845,7 @@ async function refreshDevice() {
     const i = await api("/info").catch(() => null);
     if (!i) return;
     renderBar(i);
-    $("dev-model").textContent = i.device.name || i.device.product || "—";
+    $("dev-model").textContent = i.device.product || "—";
     $("dev-vendor").textContent = i.device.vendor || "—";
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {

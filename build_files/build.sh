@@ -14,9 +14,6 @@ if [[ -d "${VARIANT_DIR}/system_files" ]]; then
     cp -avf "${VARIANT_DIR}/system_files"/. /
 fi
 
-# Device table, read at runtime by kiosk-shell (default rotation per model).
-install -Dm0644 /ctx/images/devices.toml /usr/share/immutable-kiosk/devices.toml
-
 # Hooks: NN-name.sh (bash) or NN-name.py (python3), in one sorted order --
 # a .py hook can sit between two .sh ones. python3 comes with 10-kiosk.sh,
 # so shared .py hooks need a number above 10 (variant hooks run after all

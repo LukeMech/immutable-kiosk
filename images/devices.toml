@@ -1,10 +1,15 @@
 # A device (what build-media.yml matrixes over) is one physical model: which
 # variant it runs, plus the few runtime defaults that differ per model.
 #
-# Shipped read-only into every image as /usr/share/immutable-kiosk/devices.toml.
-# kiosk-shell finds the running device by matching `dmi_product` against
-# /sys/class/dmi/id/product_name (substring) and uses its defaults until the
-# user changes them in Settings. Unknown hardware gets the [default] values.
+# Build-time only -- not in the image. From it the build generates:
+#   - /usr/lib/immutable-kiosk/default-rotation.json (build_files/
+#     12-default-rotation.py): dmi_product -> rotation for the variant's
+#     devices; kioskd matches dmi_product against /sys/class/dmi/id/
+#     product_name (substring) and uses it until a rotation is set in
+#     Settings. Unknown hardware gets [default]'s.
+#   - the panel-orientation kernel argument (images/<variant>/build_files/
+#     20-panel-orientation.py).
+# name is for people reading this file; Settings shows what DMI reports.
 #
 # rotation: "portrait" | "landscape" (picked from the panel's native mode at
 # runtime), or a fixed wlr-randr transform: "normal" | "90" | "180" | "270".
