@@ -14,9 +14,9 @@ Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 # The boot splash hands the screen over to cage the way GDM does it:
 # plymouth-quit (the generic "stop the splash" at multi-user) is replaced by
 # `plymouth deactivate` right before cage starts -- plymouth lets go of the
-# GPU but its last frame stays on the screen through the login session and
-# cage's start, until cage's first frame (kiosk-splash, see ExecStart, right
-# after it). kioskd sends `plymouth quit --retain-splash` once the kiosk has
+# GPU but its last frame (the animation's rest pose, see ExecStartPre)
+# stays on the screen through the login session and cage's start, until
+# cage's first frame (kiosk-splash, see ExecStart, right after it). kioskd sends `plymouth quit --retain-splash` once the kiosk has
 # drawn. (quit here took ~2 s and left the screen black from then on.)
 After=plymouth-start.service plymouth-quit.service
 Conflicts=plymouth-quit.service
@@ -36,9 +36,12 @@ WorkingDirectory=/var/home/kiosk
 # a card whose driver isn't simple-framebuffer; after that, start anyway and
 # let Restart= retry. ($$: systemd expands $ itself.)
 ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do for c in /sys/class/drm/card[0-9]; do d=$$(readlink -f "$$c/device/driver"); [ -n "$$d" ] && [ "$${d##*/}" != simple-framebuffer ] && exit 0; done; sleep 0.5; done; echo "no GPU (only a firmware framebuffer) after 30 s" >&2'
-# DRM master released for cage, the splash's last frame kept. "+": as root
-# (the rest of the unit runs as kiosk); "-": no splash running is fine.
-ExecStartPre=-+/usr/bin/plymouth deactivate
+# "handover": the splash eases its animation into its dimmed rest pose
+# (0.6 s, the theme's script), then lets go of the GPU with that still on
+# the screen -- what kiosk-splash wakes up from: a pause that looks meant.
+# "+": as root (the rest of the unit runs as kiosk); "-": no splash
+# running is fine.
+ExecStartPre=-+/bin/sh -c '/usr/bin/plymouth update --status=handover && sleep 0.7; /usr/bin/plymouth deactivate'
 PAMName=immutable-kiosk
 Environment=XDG_SESSION_TYPE=wayland
 # -d: no client-side decorations. kiosk-session: the last rotation, then

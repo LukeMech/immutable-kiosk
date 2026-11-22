@@ -102,14 +102,12 @@ OSK_JS = Path("/usr/share/immutable-kiosk/web/osk.js")
 DATA = Path(GLib.get_user_data_dir()) / "immutable-kiosk"
 CACHE = Path(GLib.get_user_cache_dir()) / "immutable-kiosk"
 
-# The boot splash's spinner (build_files/16-plymouth-images.py): the kiosk's
-# start-up screen is the splash's picture, so the hand-over looks continuous.
-SPLASH_RING = Path("/usr/share/plymouth/themes/immutable-kiosk/ring.png")
-
+# Until the first page is up the window is see-through ("splashing"):
+# kiosk-splash's animation, under it, carries on -- even while WebKit's
+# loading keeps this process busy.
 CSS = b"""
 window, stack { background: #10151c; }
-.splash image { animation: ik-turn 1.1s linear infinite; }
-@keyframes ik-turn { from { -gtk-icon-transform: rotate(0turn); } to { -gtk-icon-transform: rotate(1turn); } }
+window.splashing, window.splashing stack, window.splashing .splash { background: transparent; }
 .hotcorner { background: transparent; }
 .hotcorner.armed { background: radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%); }
 .hotcorner.recovery.armed { background: radial-gradient(circle, rgba(248,81,73,0.45) 0%, rgba(248,81,73,0) 70%); }
@@ -325,11 +323,9 @@ class KioskShell(Gtk.Application):
     # -- setup
     def do_activate(self):
         """kiosk-splash (started before us by kiosk-session) is on screen and
-        turning while all of this runs: GTK, the rotation, WebKit and its
-        views. Only then the window maps over it, showing the same picture
-        (same background, same turning ring) until the first page is
-        rendered -- and now the main loop is free, so the ring keeps turning
-        while the page loads."""
+        animating while all of this runs: GTK, the rotation, WebKit and its
+        views. Then the window maps over it -- see-through, so the
+        animation stays in sight -- until the first page is rendered."""
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
@@ -351,14 +347,9 @@ class KioskShell(Gtk.Application):
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=200)
         self.overlay = Gtk.Overlay(child=self.stack)
         self.win.set_child(self.overlay)
+        self.win.add_css_class("splashing")
         splash = Gtk.Box(halign=Gtk.Align.FILL, valign=Gtk.Align.FILL)
         splash.add_css_class("splash")
-        if SPLASH_RING.exists():
-            ring = Gtk.Image.new_from_file(str(SPLASH_RING))
-            ring.set_pixel_size(112)
-            ring.set_hexpand(True)
-            ring.set_vexpand(True)
-            splash.append(ring)
         self.stack.add_named(splash, "splash")
         self.setup()
         self.win.fullscreen()
@@ -504,8 +495,20 @@ class KioskShell(Gtk.Application):
             name, self.pending = self.pending, None
             self.show(name)
             milestone("kiosk-shell: pierwsza strona")
-            end_splash()
         return GLib.SOURCE_REMOVE
+
+    def splash_over(self):
+        """The first view is in: once the stack's crossfade from the see-through
+        start-up page is done, the window turns opaque and kiosk-splash goes."""
+        if not self.win.has_css_class("splashing") or getattr(self, "splash_ending", False):
+            return
+        self.splash_ending = True
+
+        def finish():
+            self.win.remove_css_class("splashing")
+            end_splash()
+            return GLib.SOURCE_REMOVE
+        GLib.timeout_add(self.stack.get_transition_duration() + 150, finish)
 
     def wait_for_config(self):
         # kioskd starts first (unit ordering), but give it a moment on a slow eMMC.
@@ -638,6 +641,7 @@ class KioskShell(Gtk.Application):
         if name == "settings":
             self.ensure_settings()
         self.stack.set_visible_child_name(name)
+        self.splash_over()
         if self.hmi:
             self.hotcorner.set_visible(name == "hmi")
         # Settings' page keeps running behind the HMI: tell it when it's on

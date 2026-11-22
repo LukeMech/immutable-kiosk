@@ -4,17 +4,17 @@
 cage clears the screen the moment it takes it over from the boot splash,
 and kiosk-shell (Python + GTK + WebKit) needs seconds on an Atom before its
 first frame: that used to be ~10 s of black. This client is first on screen
-instead (kiosk-session starts it right before kiosk-shell): the kiosk's
-background with the boot splash's ring turning in the middle -- the picture
-kiosk-shell's own start-up screen shows too, so when kiosk-shell's window
-maps over it nothing seems to change. kiosk-shell ends it (SIGTERM) once
-its first page is rendered.
+instead (kiosk-session starts it right before kiosk-shell): the boot
+splash's animation, "orbit", carried on. It wakes up from the dimmed rest
+pose the boot splash settled into at the hand-over (out of black, then
+brightening), then loops. kiosk-shell's window stays see-through over it
+until the first page is rendered, then ends it (SIGTERM).
 
 The Wayland protocol by hand, standard library only (no pywayland, no GTK:
 importing those would cost the time this is here to hide): wl_shm buffers,
 an xdg_toplevel cage shows fullscreen, frame callbacks for the animation.
-The frames come pre-drawn (build_files/16-plymouth-images.py): one row copy
-per line of the ring, no drawing here. The rotation is cage's: kiosk-session
+The frames come pre-drawn (build_files/16-plymouth-images.py, from the same
+shapes as the boot splash's images): one row copy per line, no drawing. The rotation is cage's: kiosk-session
 applies the last one before this starts.
 """
 
@@ -27,9 +27,9 @@ import sys
 import time
 import zlib
 
-FRAMES = "/usr/share/immutable-kiosk/splash-ring.bin"
-BG = bytes((0x1c, 0x15, 0x10, 0xff))      # #10151c as XRGB8888 (B, G, R, X)
-TURN_S = 1.1                              # one turn, as kiosk-shell's CSS
+FRAMES = "/usr/share/immutable-kiosk/splash-orbit.bin"
+BG = bytes((0, 0, 0, 0xff))               # black, as the boot splash
+INTRO_FPS = 50                            # the intro frames' rate
 GIVE_UP_S = 180                           # kiosk-shell never ended it
 XRGB8888 = 1
 
@@ -44,15 +44,16 @@ def milestone(label):
 
 
 def load_frames():
+    """(size, intro frames, loop frames, loop period in s, the frames)."""
     with open(FRAMES, "rb") as f:
         data = f.read()
-    if data[:4] != b"IKSR":
-        raise ValueError("not a splash-ring file")
-    size, count = struct.unpack_from("<HH", data, 4)
-    frames = zlib.decompress(data[8:])
-    if len(frames) != size * size * 4 * count:
-        raise ValueError("truncated splash-ring file")
-    return size, count, frames
+    if data[:4] != b"IKS2":
+        raise ValueError("not a splash-orbit file")
+    size, intro, loop, period_ms = struct.unpack_from("<HHHH", data, 4)
+    frames = zlib.decompress(data[12:])
+    if len(frames) != size * size * 4 * (intro + loop):
+        raise ValueError("truncated splash-orbit file")
+    return size, intro, loop, period_ms / 1000, frames
 
 
 def pack(fmt, args):
@@ -92,7 +93,7 @@ class Reader:
 
 class Splash:
     def __init__(self):
-        self.size, self.count, self.frames = load_frames()
+        self.size, self.intro, self.loop, self.period, self.frames = load_frames()
         name = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
         path = name if name.startswith("/") else os.path.join(os.environ["XDG_RUNTIME_DIR"], name)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -110,7 +111,7 @@ class Splash:
         self.pool = self.fd = self.mm = None
         self.cur = 0
         self.frame_cb = None
-        self.t0 = time.monotonic()
+        self.t0 = None  # the first frame drawn: the intro starts then
 
     # -- wire
     def new(self, handler=None):
@@ -264,7 +265,14 @@ class Splash:
                 self.req(self.surface, 6)
                 return
         s, w = self.size, self.width
-        k = int((time.monotonic() - self.t0) / TURN_S * self.count) % self.count
+        now = time.monotonic()
+        if self.t0 is None:
+            self.t0 = now
+        el = now - self.t0
+        if el < self.intro / INTRO_FPS:
+            k = int(el * INTRO_FPS)
+        else:
+            k = self.intro + int((el - self.intro / INTRO_FPS) / self.period * self.loop) % self.loop
         x0, y0 = max(0, (w - s) // 2), max(0, (self.height - s) // 2)
         base = idx * w * self.height * 4 + (y0 * w + x0) * 4
         src = k * s * s * 4

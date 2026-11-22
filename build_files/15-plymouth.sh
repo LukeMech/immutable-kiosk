@@ -1,11 +1,11 @@
 #!/bin/bash
 # Boot splash: Plymouth with our own theme and nothing else -- the "script"
-# plugin running immutable-kiosk.script: the whole screen in the Settings
-# background colour, a ring with a fading comet tail turning in the middle
-# over a slowly breathing glow. Images are drawn by 16-plymouth-images.py.
-# The same on shutdown and reboot. kiosk-shell opens on the same picture
-# (cage takes over with `plymouth quit --retain-splash`), so the hand-over to
-# the kiosk shows no black screen.
+# plugin running immutable-kiosk.script, "orbit" (see the script below).
+# Images are drawn by 16-plymouth-images.py, which draws kiosk-splash's
+# frames too. The same on shutdown and reboot. The hand-over to the kiosk:
+# the script settles into a dimmed rest pose on "handover", cage's unit
+# deactivates plymouth (that still stays up), kiosk-splash wakes up from
+# the same picture.
 #
 # Orientation: Plymouth rotates by the panel's DRM "panel orientation", which
 # the x86 variant sets per device from devices.toml (video=<connector>:
@@ -42,44 +42,98 @@ ScriptFile=${THEME}/immutable-kiosk.script
 EOF
 
 # Plymouth script: Window/Sprite/Image API, called 50 times a second.
+# The animation ("orbit") and its images: 16-plymouth-images.py, which
+# also draws kiosk-splash's frames from the same shapes and the same
+# formulas as here -- keep the two in step.
 cat > "${THEME}/immutable-kiosk.script" <<'EOF'
-# immutable-kiosk boot splash (build_files/15-plymouth.sh).
-# Background: the Settings UI's #10151c over the whole screen -- it also
-# covers the firmware's logo, which the firmware draws in the panel's native
-# (portrait) orientation.
-Window.SetBackgroundTopColor(0.063, 0.082, 0.110);
-Window.SetBackgroundBottomColor(0.063, 0.082, 0.110);
+# immutable-kiosk boot splash, "orbit" (build_files/15-plymouth.sh).
+# Black (it also covers the firmware's logo, drawn in the panel's native
+# portrait orientation): an accent glow breathing, a core with two faint
+# tracks, an outer arc turning clockwise with a gentle surge, an inner one
+# twice as fast the other way. One loop = 80 refreshes (1.6 s).
+#
+# `plymouth update --status=handover` (cage's unit, before `plymouth
+# deactivate`): the arcs ease back into the rest pose -- outer at the top,
+# inner at the bottom -- and everything dims to 35 %, over 0.6 s. That
+# still is what stays on the screen while the kiosk starts; kiosk-splash
+# wakes up from the same picture.
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
 
-ring = Image("ring.png");
 glow = Image("glow.png");
+base = Image("base.png");
+outer = Image("outer.png");
+inner = Image("inner.png");
 
 cx = Window.GetX() + Window.GetWidth() / 2;
 cy = Window.GetY() + Window.GetHeight() / 2;
+pi = 3.14159265;
 
-glow_sprite = Sprite(glow);
-glow_sprite.SetPosition(cx - glow.GetWidth() / 2, cy - glow.GetHeight() / 2, 0);
-glow_sprite.SetOpacity(0);
-ring_sprite = Sprite();
-ring_sprite.SetOpacity(0);
+glow_s = Sprite(glow);
+glow_s.SetPosition(cx - glow.GetWidth() / 2, cy - glow.GetHeight() / 2, 0);
+base_s = Sprite(base);
+base_s.SetPosition(cx - base.GetWidth() / 2, cy - base.GetHeight() / 2, 1);
+outer_s = Sprite();
+inner_s = Sprite();
+glow_s.SetOpacity(0);
+base_s.SetOpacity(0);
 
 t = 0;
+handover = -1;
+ao = 0; ai = pi; br = 1; level = 0;
+
+fun status_callback (status)
+{
+    if (status == "handover" && handover < 0)
+    {
+        handover = t;
+        ao_h = ao; ai_h = ai; br_h = br; level_h = level;
+        # The next rest angle in each arc's own direction.
+        m = ao_h / (2 * pi);
+        f = m - Math.Int(m);
+        if (f < 0) f = f + 1;
+        ao_to = ao_h + (1 - f) * 2 * pi;
+        m = (ai_h - pi) / (2 * pi);
+        f = m - Math.Int(m);
+        if (f < 0) f = f + 1;
+        ai_to = ai_h - f * 2 * pi;
+    }
+}
+Plymouth.SetUpdateStatusFunction(status_callback);
+
 fun refresh_callback ()
 {
     t = t + 1;
-    # One turn per ~1.1 s, with a gentle surge every second turn.
-    angle = t * 0.115 + Math.Sin(t * 0.0571) * 0.6;
-    rotated = ring.Rotate(angle);
-    ring_sprite.SetImage(rotated);
-    ring_sprite.SetPosition(cx - rotated.GetWidth() / 2, cy - rotated.GetHeight() / 2, 1);
-    # Fade in over the first half second, then the glow breathes.
-    fade = Math.Min(t / 25, 1);
-    ring_sprite.SetOpacity(fade);
-    glow_sprite.SetOpacity(fade * (0.55 + 0.45 * Math.Sin(t * 0.0628)));
+    if (handover < 0)
+    {
+        p = t / 80;
+        ao = 2 * pi * (p + 0.06 * Math.Sin(2 * pi * p));
+        ai = pi - 4 * pi * p;
+        br = 0.65 + 0.35 * Math.Cos(2 * pi * p);
+        level = Math.Min(t / 25, 1);
+    }
+    else
+    {
+        u = Math.Min((t - handover) / 30, 1);
+        e = 1 - (1 - u) * (1 - u) * (1 - u);
+        ao = ao_h + (ao_to - ao_h) * e;
+        ai = ai_h + (ai_to - ai_h) * e;
+        br = br_h + (1 - br_h) * e;
+        level = level_h + (0.35 - level_h) * e;
+    }
+    o = outer.Rotate(ao);
+    outer_s.SetImage(o);
+    outer_s.SetPosition(cx - o.GetWidth() / 2, cy - o.GetHeight() / 2, 2);
+    i = inner.Rotate(ai);
+    inner_s.SetImage(i);
+    inner_s.SetPosition(cx - i.GetWidth() / 2, cy - i.GetHeight() / 2, 3);
+    outer_s.SetOpacity(level);
+    inner_s.SetOpacity(level);
+    base_s.SetOpacity(level);
+    glow_s.SetOpacity(level * br);
 }
 Plymouth.SetRefreshFunction(refresh_callback);
 EOF
-
-# Images (ring.png, glow.png): 16-plymouth-images.py, next.
 
 # No splash delay; wait longer than Fedora's 8 s for the GPU before falling
 # back to text (i915 is probed asynchronously and on the Atom comes up
