@@ -28,10 +28,12 @@ Type=simple
 User=kiosk
 WorkingDirectory=/var/home/kiosk
 # i915 on Bay Trail can come up after this unit starts (slower still from a
-# USB stick over OTG): cage then finds no GPU and exits. Wait up to 30 s
-# for a DRM card first; after that, start anyway and let Restart= retry.
-# ($$: systemd expands $ itself.)
-ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do ls /dev/dri/card* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo "no /dev/dri/card* after 30 s" >&2'
+# USB stick over OTG): cage then finds no GPU and exits -- or, now that the
+# kiosk starts early, finds the firmware's framebuffer (simpledrm, also a
+# /dev/dri/card*) in the GPU's place, with its own mode. Wait up to 30 s for
+# a card whose driver isn't simple-framebuffer; after that, start anyway and
+# let Restart= retry. ($$: systemd expands $ itself.)
+ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do for c in /sys/class/drm/card[0-9]; do d=$$(readlink -f "$$c/device/driver"); [ -n "$$d" ] && [ "$${d##*/}" != simple-framebuffer ] && exit 0; done; sleep 0.5; done; echo "no GPU (only a firmware framebuffer) after 30 s" >&2'
 # Splash off, last frame kept, DRM master released for cage. "+": as root
 # (the rest of the unit runs as kiosk); "-": no splash running is fine.
 ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
