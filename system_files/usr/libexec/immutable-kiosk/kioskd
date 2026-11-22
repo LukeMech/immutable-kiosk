@@ -766,22 +766,131 @@ def changelog():
 HMI_SHOWN = {"at": None}
 
 
-def boot_timing():
-    out = {"hmi_shown": HMI_SHOWN["at"], "uptime": time.monotonic()}
+def parse_span(s):
+    """systemd time span ("1min 2.345s", "801ms", "3.758s") -> seconds."""
+    units = {"min": 60, "s": 1, "ms": 1e-3, "us": 1e-6, "µs": 1e-6, "h": 3600}
+    return sum(float(v) * units[u] for v, u in re.findall(r"([\d.]+)\s*(min|ms|us|µs|s|h)\b", s))
+
+
+# PID 1's structured job messages (sd-messages.h).
+MSG_STARTING = "7d4958e842da4a758f6c1cdc7b36dcc5"   # "Starting X..." / "Mounting X..."
+MSG_STARTED = "39f53479d3a045ac8e11786248231fbf"    # "Started/Finished/Mounted X", "Reached target X"
+MSG_FAILED = "be02cf6855d2428ba40df7e9d022f03d"
+
+# Points on the way from kernel to HMI worth showing, in boot order.
+BOOT_MILESTONES = {
+    "initrd-root-device.target": "initrd: dysk systemowy znaleziony",
+    "initrd-root-fs.target": "initrd: system plików zamontowany",
+    "initrd.target": "initrd: gotowy do przełączenia",
+    "local-fs.target": "Systemy plików zamontowane",
+    "sysinit.target": "Inicjalizacja systemu (sysinit)",
+    "basic.target": "Usługi podstawowe (basic)",
+    "network.target": "NetworkManager uruchomiony",
+    "immutable-kiosk-backend.service": "kioskd uruchomiony",
+    "immutable-kiosk-cage.service": "Kiosk (cage) uruchomiony",
+    "graphical.target": "Start zakończony (graphical)",
+}
+KERNEL_MILESTONES = [
+    (re.compile(r"^Run /init as init process"), "Start initramfs"),
+    (re.compile(r"^mmcblk\d+: mmc\d+:"), "eMMC wykryty"),
+    (re.compile(r"Initialized i915 "), "GPU gotowe (i915)"),
+]
+BOOT_CACHE = {}
+
+
+def boot_journal():
+    """Timeline and slowest units of this boot, initrd included, from the
+    journal: systemd-analyze blame only sees the real root's manager and is
+    dominated by .device units, whose "time" is just when udev got to them."""
     try:
-        line = run(["systemd-analyze", "time", "--no-pager"], timeout=20).splitlines()[0]
-        # "Startup finished in 3.2s (firmware) + 1.1s (loader) + ... = 25.4s"
-        out["phases"] = [{"name": n, "time": t} for t, n in re.findall(r"([\d.]+(?:min|ms|s|us)(?: [\d.]+(?:ms|s|us))*) \((\w+)\)", line)]
-        m = re.search(r"= (.+)$", line)
-        out["total"] = m.group(1).strip() if m else ""
-    except (ApiError, IndexError) as e:
-        out["error"] = str(e)  # "Bootup is not yet finished" until graphical.target
-    try:
-        out["blame"] = [ln.strip() for ln in run(["systemd-analyze", "blame", "--no-pager"], timeout=20).splitlines()[:15]]
-        out["chain"] = run(["systemd-analyze", "critical-chain", "--no-pager", "immutable-kiosk-cage.service"],
-                           timeout=20).rstrip().splitlines()
+        out = run(["journalctl", "-b", "-o", "json", "--no-pager",
+                   "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT",
+                   "_PID=1", "+", "_TRANSPORT=kernel"], timeout=30)
     except ApiError as e:
-        out.setdefault("error", str(e))
+        return {"journal_error": str(e)}
+    switch = None
+    starting, units, marks, failed = {}, [], [], []
+    seen = set()
+    for line in out.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        msg = e.get("MESSAGE")
+        if not isinstance(msg, str):
+            continue
+        # Kernel lines arrive late (journald reads the ring buffer when it
+        # starts): their own timestamp is the one that counts.
+        ts = e.get("_SOURCE_MONOTONIC_TIMESTAMP") or e.get("__MONOTONIC_TIMESTAMP")
+        try:
+            t = int(ts) / 1e6
+        except (TypeError, ValueError):
+            continue
+        if e.get("_TRANSPORT") == "kernel":
+            for rx, label in KERNEL_MILESTONES:
+                if label not in seen and rx.search(msg):
+                    seen.add(label)
+                    marks.append({"t": t, "label": label})
+            continue
+        if msg.startswith("Switching root") and switch is None:
+            switch = t
+            marks.append({"t": t, "label": "Przełączenie na system (switch-root)"})
+            continue
+        unit, mid = e.get("UNIT") or "", e.get("MESSAGE_ID")
+        if not unit:
+            continue
+        if mid == MSG_STARTING:
+            starting[unit] = t
+        elif mid == MSG_STARTED:
+            t0 = starting.pop(unit, None)
+            if t0 is not None and not unit.endswith((".device", ".target", ".slice", ".scope")):
+                units.append({"unit": unit, "start": t0, "dur": t - t0})
+            # The initrd reaches local-fs/sysinit/basic too: before
+            # switch-root only initrd-* count, after it only the rest.
+            if (unit in BOOT_MILESTONES and unit not in seen
+                    and unit.startswith("initrd") == (switch is None)):
+                seen.add(unit)
+                marks.append({"t": t, "label": BOOT_MILESTONES[unit]})
+        elif mid == MSG_FAILED:
+            failed.append(unit)
+    for u in units:
+        u["phase"] = "initrd" if switch is not None and u["start"] < switch else "system"
+    units.sort(key=lambda u: -u["dur"])
+    marks.sort(key=lambda m: m["t"])
+    return {"switch_root": switch, "milestones": marks, "slowest": units[:15],
+            "failed": sorted(set(failed))}
+
+
+def boot_timing():
+    if "done" in BOOT_CACHE:
+        out = dict(BOOT_CACHE["done"])
+    else:
+        out = {}
+        try:
+            line = run(["systemd-analyze", "time", "--no-pager"], timeout=20).splitlines()[0]
+            # "Startup finished in 3.2s (firmware) + 1.1s (loader) + ... = 25.4s"
+            out["phases"] = [{"name": n, "time": t, "sec": parse_span(t)}
+                             for t, n in re.findall(r"([\d.]+(?:min|ms|s|us)(?: [\d.]+(?:ms|s|us))*) \((\w+)\)", line)]
+            m = re.search(r"= (.+)$", line)
+            out["total"] = m.group(1).strip() if m else ""
+        except (ApiError, IndexError) as e:
+            out["error"] = str(e)  # "Bootup is not yet finished" until graphical.target
+        try:
+            # Services, mounts, sockets -- not .device units (see boot_journal).
+            blame = run(["systemd-analyze", "blame", "--no-pager"], timeout=20).splitlines()
+            out["blame"] = [ln.strip() for ln in blame if not ln.strip().endswith((".device", ".slice"))][:15]
+            out["chain"] = run(["systemd-analyze", "critical-chain", "--no-pager", "immutable-kiosk-cage.service"],
+                               timeout=20).rstrip().splitlines()
+            out["chain_sysinit"] = run(["systemd-analyze", "critical-chain", "--no-pager", "sysinit.target"],
+                                       timeout=20).rstrip().splitlines()
+        except ApiError as e:
+            out.setdefault("error", str(e))
+        out.update(boot_journal())
+        # Nothing about this boot changes once it has finished.
+        if out.get("total") and "journal_error" not in out:
+            BOOT_CACHE["done"] = dict(out)
+    out["hmi_shown"] = HMI_SHOWN["at"]
+    out["uptime"] = time.monotonic()
     return out
 
 

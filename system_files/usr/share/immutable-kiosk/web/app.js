@@ -770,19 +770,61 @@ function renderTz(region) {
             `<option value="${esc(z)}"${z === chosen ? " selected" : ""}>${esc(tzSplit(z)[1].replace(/_/g, " ").replace(/\//g, " / "))}</option>`).join("");
 }
 
-const BOOT_PHASES = { firmware: "Firmware (UEFI)", loader: "Bootloader (GRUB)", kernel: "Jądro", initrd: "initramfs", userspace: "Usługi systemu" };
+const BOOT_PHASES = {
+    firmware: ["Firmware (UEFI)", "#6e7681"], loader: ["Bootloader (GRUB)", "#d29922"], kernel: ["Jądro", "#db6d28"],
+    initrd: ["initramfs", "#a371f7"], userspace: ["Usługi systemu", "#2f81f7"], hmi: ["Do pokazania HMI", "#3fb950"],
+};
+const secs = (v, d = 1) => v.toLocaleString("pl-PL", { minimumFractionDigits: d, maximumFractionDigits: d }) + " s";
+
 async function loadBoot() {
     let b;
-    try { b = await api("/boot"); } catch (_) { return; }
-    const sec = v => v.toLocaleString("pl-PL", { maximumFractionDigits: 1 }) + " s";
-    const rows = [];
-    if (b.hmi_shown != null) rows.push(["HMI widoczne", `${sec(b.hmi_shown)} od startu jądra`]);
-    for (const p of b.phases || []) rows.push([BOOT_PHASES[p.name] || p.name, p.time]);
-    if (b.total) rows.push(["System gotowy po", b.total]);
-    if (!rows.length) rows.push(["Stan", b.error || "brak danych"]);
-    $("boot-info").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
-    $("boot-detail").textContent = ["Najdłużej startujące usługi:", ...(b.blame || []), "",
-        "Łańcuch startu kiosku (@ = kiedy ruszyła, + = ile trwała):", ...(b.chain || [])].join("\n");
+    try { b = await api("/boot"); }
+    catch (e) { setStatus("boot-st", "err", ICONS.err, "Brak danych o starcie", e.message); return; }
+    const ph = Object.fromEntries((b.phases || []).map(p => [p.name, p.sec]));
+    const before = (ph.firmware || 0) + (ph.loader || 0);   // before the kernel's clock starts
+    const kernelToDone = (ph.kernel || 0) + (ph.initrd || 0) + (ph.userspace || 0);
+    // Bar: the phases systemd measured, then whatever the HMI took after
+    // graphical.target (first paint is reported by kiosk-shell).
+    const segs = Object.keys(BOOT_PHASES).filter(k => ph[k] != null).map(k => [k, ph[k]]);
+    if (b.hmi_shown != null && b.hmi_shown > kernelToDone) segs.push(["hmi", b.hmi_shown - kernelToDone]);
+    const total = segs.reduce((a, [, v]) => a + v, 0);
+    if (b.hmi_shown != null) {
+        setStatus("boot-st", "", ICONS.clock, `HMI po ${secs(before + b.hmi_shown)} od włączenia`,
+                  `${secs(b.hmi_shown)} od startu jądra` + (b.total ? ` · system gotowy po ${b.total}` : ""));
+    } else if (b.total) {
+        setStatus("boot-st", "", ICONS.clock, `System gotowy po ${b.total}`, "HMI jeszcze się nie wyświetliło");
+    } else {
+        setStatus("boot-st", "busy", ICONS.busy, "Start jeszcze trwa", b.error || "");
+    }
+    $("boot-bar").hidden = $("boot-legend").hidden = !total;
+    $("boot-bar").innerHTML = segs.map(([k, v]) =>
+        `<i style="flex:${v} 1 0;background:${BOOT_PHASES[k][1]}"></i>`).join("");
+    $("boot-legend").innerHTML = segs.map(([k, v]) =>
+        `<div><i style="background:${BOOT_PHASES[k][1]}"></i>${esc(BOOT_PHASES[k][0])}<b>${secs(v)}</b></div>`).join("");
+
+    // Timeline (seconds since the kernel started) and the slowest units.
+    const marks = [...(b.milestones || [])];
+    if (b.hmi_shown != null) marks.push({ t: b.hmi_shown, label: "HMI widoczne", hmi: true });
+    marks.sort((x, y) => x.t - y.t);
+    const KEY = /switch-root|sysinit|graphical|cage/;
+    $("boot-timeline").innerHTML = marks.map(m =>
+        `<li class="${m.hmi ? "hmi" : KEY.test(m.label) ? "key" : ""}"><span class="t">${secs(m.t)}</span><span class="dot"></span><span class="l">${esc(m.label)}</span></li>`).join("");
+    const slow = b.slowest || [];
+    const max = Math.max(...slow.map(u => u.dur), 0.001);
+    $("boot-slow").innerHTML = slow.map(u =>
+        `<li class="${u.phase}"><span class="d">${secs(u.dur)}</span><span class="u">${esc(u.unit)}</span>` +
+        `<span class="badge${u.phase === "initrd" ? " new" : ""}">${u.phase === "initrd" ? "initramfs" : `@${secs(u.start)}`}</span>` +
+        `<span class="meter"><i style="width:${(u.dur / max * 100).toFixed(1)}%"></i></span></li>`).join("");
+    $("boot-more").hidden = !marks.length && !slow.length;
+
+    const sect = (title, lines) => lines && lines.length ? [title, ...lines, ""] : [];
+    $("boot-detail").textContent = [
+        ...sect("Nieudane jednostki:", b.failed),
+        ...sect("systemd-analyze blame (bez urządzeń):", b.blame),
+        ...sect("Łańcuch do kiosku (@ = kiedy ruszyła, + = ile trwała):", b.chain),
+        ...sect("Łańcuch do sysinit.target:", b.chain_sysinit),
+        ...(b.journal_error ? [`journalctl: ${b.journal_error}`] : []),
+    ].join("\n").trim() || "brak danych";
 }
 
 function initSystem() {
