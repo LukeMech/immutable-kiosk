@@ -811,7 +811,7 @@ const fmtDate = t => t ? new Date(t).toLocaleDateString(LOCALE(), { day: "numeri
    only -- nothing on a kiosk opens them). */
 const MD_HEADINGS = {
     "Package changes": "Zmiany pakietów", "Updated": "Zaktualizowane", "Added": "Dodane",
-    "Removed": "Usunięte", "Commits": "Zmiany", "Initial build": "Pierwsze wydanie",
+    "Removed": "Usunięte", "Commits": "Zmiany", "Features": "Nowe funkcje", "Fixes": "Poprawki", "Other changes": "Inne zmiany", "Initial build": "Pierwsze wydanie",
     "Notes": "Uwagi", "All images": "Wszystkie obrazy",
     // table headers
     "Package": "Pakiet", "Previous": "Było", "New": "Jest", "Version": "Wersja",
@@ -1267,9 +1267,9 @@ function initSystem() {
         .catch(e => toast(e.message, true)));
 
     // Język: kioskd keeps it; the page reloads in it (i18n.js translates).
-    seg($("lang"), cfg.language || "pl", v => {
-        if (v === (cfg.language || "pl")) return;
-        saveCfg({ language: v }).then(() => location.reload()).catch(e => toast(e.message, true));
+    seg($("lang"), cfg.language || "en", v => {
+        if (v === (cfg.language || "en")) return;
+        saveCfg({ language: v }).then(c => i18n.use(c.language)).catch(e => toast(e.message, true));
     });
     $("host-name").addEventListener("input", e => { $("host-save").disabled = e.target.value === hostSaved; });
     $("host-save").addEventListener("click", e => busy(e.currentTarget, async () => {
@@ -1441,6 +1441,7 @@ async function initInstaller() {
         try { cfg = await api("/config"); break; }
         catch (_) { await new Promise(r => setTimeout(r, Math.min(500 * (i + 1), 3000))); }
     }
+    i18n.use(cfg.language);  // reloads the page if it started in another one
     applyAccent(cfg.accent);
     if (cfg.mode === "installer") initInstaller(); else initSettings();
 })();
