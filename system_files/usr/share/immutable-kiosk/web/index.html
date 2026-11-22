@@ -226,7 +226,7 @@
         </div>
         <div class="sep">
           <h3>Własny obraz systemu</h3>
-          <p class="hint">Obraz bootc z rejestru, np. gałąź testowa. System przyjmuje tylko obrazy podpisane kluczem ghcr.io/lukemech.</p>
+          <p class="hint">Tylko obrazy podpisane kluczem ghcr.io/lukemech.</p>
           <label>Obraz
             <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
           </label>
@@ -236,8 +236,34 @@
             <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
             <button class="btn" id="sys-repo-save" disabled>Zapisz</button>
           </div>
-          <p class="hint" style="margin-top:8px">Stąd pochodzą opisy wersji („Co nowego”) — z wydań (releases) tego repozytorium.</p>
+          <p class="hint" style="margin-top:8px">Źródło opisów „Co nowego” (wydania na GitHubie).</p>
         </div>
+      </div>
+      <!-- Język i region: what the kiosk speaks, its clock, its name. -->
+      <div class="card">
+        <h2>Język i region</h2>
+        <dl class="kv">
+          <dt>Język</dt>
+          <dd>
+            <div class="seg" id="lang">
+              <button data-v="pl">Polski</button>
+              <button data-v="en">English</button>
+            </div>
+          </dd>
+          <dt>Strefa czasowa</dt>
+          <dd class="inline">
+            <select id="tz-region" aria-label="Region"></select>
+            <select id="tz-city" aria-label="Miasto"></select>
+          </dd>
+          <dt>Nazwa w sieci</dt>
+          <dd>
+            <span class="inline">
+              <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
+              <button class="btn" id="host-save" disabled>Zapisz</button>
+            </span>
+            <span class="sub">Małe litery, cyfry i myślniki.</span>
+          </dd>
+        </dl>
       </div>
       <!-- Urządzenie: the tablet itself and how long it took to start. -->
       <div class="card">
@@ -245,19 +271,8 @@
         <dl class="kv" id="dev-info">
           <dt>Model</dt><dd id="dev-model">—</dd>
           <dt>Producent</dt><dd id="dev-vendor">—</dd>
-          <dt>Strefa czasowa</dt>
-          <dd class="inline">
-            <select id="tz-region" aria-label="Region"></select>
-            <select id="tz-city" aria-label="Miasto"></select>
-          </dd>
-          <dt>Nazwa hosta</dt>
-          <dd>
-            <span class="inline">
-              <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
-              <button class="btn" id="host-save" disabled>Zapisz</button>
-            </span>
-            <span class="sub">Pod tą nazwą tablet widać w sieci (DHCP, router). Małe litery, cyfry i myślniki.</span>
-          </dd>
+          <dt>Procesor</dt><dd id="dev-cpu">—</dd>
+          <dt>Pamięć</dt><dd id="dev-mem">—</dd>
         </dl>
         <div class="sep">
           <h3>Czas uruchamiania</h3>

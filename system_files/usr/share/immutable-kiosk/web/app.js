@@ -103,7 +103,9 @@ function holdButton(btn, fn) {
 }
 
 const fmtSize = b => b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : (b / 1e6).toFixed(0) + " MB";
-const fmtTime = t => t ? new Date(t).toLocaleString("pl-PL") : "—";
+// Dates and numbers in the page's language (i18n.js sets <html lang>).
+const LOCALE = () => (document.documentElement.lang === "en" ? "en-GB" : "pl-PL");
+const fmtTime = t => t ? new Date(t).toLocaleString(LOCALE()) : "—";
 
 /* ======================================================= SETTINGS */
 
@@ -745,16 +747,14 @@ function renderChannel(running) {
         b.classList.toggle("on", b.dataset.v === sel);
         b.disabled = running || !avail;
     });
-    let hint = "Stabilny: wydania (releases) — sprawdzone wersje. Testowy: każda zmiana z gałęzi dev, " +
-        "nowości od razu, ale mniej sprawdzone.";
+    let hint = "Stabilny: sprawdzone wydania. Testowy: każda zmiana od razu.";
     if (chanPick) {
-        hint = `Pobierze wersję z kanału ${CHANNEL_NAMES[chanPick]} i włączy ją po restarcie.` +
-            (chanPick === "stable" && cur === "dev" ? " Może być starsza niż ta z kanału testowego." : "");
+        hint = `Pobierze kanał ${CHANNEL_NAMES[chanPick]}, włączy go po restarcie.` +
+            (chanPick === "stable" && cur === "dev" ? " Może być starszy." : "");
     } else if (avail && cur === "custom") {
-        hint = `System działa z własnego obrazu (${s.booted ? s.booted.image : "?"}). Wybierz kanał, ` +
-            "żeby wrócić do zwykłych aktualizacji.";
+        hint = "Własny obraz: wybierz kanał, by wrócić do aktualizacji.";
     } else if (avail && s.channel !== s.next_channel) {
-        hint = `Po restarcie system przejdzie na kanał ${CHANNEL_NAMES[s.next_channel] || "własny"}.`;
+        hint = `Po restarcie: kanał ${CHANNEL_NAMES[s.next_channel] || "własny"}.`;
     }
     $("chan-hint").textContent = hint;
     $("chan-switch").hidden = !chanPick;
@@ -797,17 +797,14 @@ const rawVersion = v => {
     return r ? r.tag : labelVersion(v);
 };
 const AUTO_TRIES = 3;  // boot-counter's TRIES
-// The GRUB menu is hidden (boot-counter's custom.cfg / 05_timeout.cfg).
-const GRUB_HINT = "Ręcznie, gdy system nie startuje: klawiatura USB, zaraz po włączeniu trzymaj Shift " +
-    "(albo naciskaj Esc), w menu GRUB druga pozycja strzałkami i Enterem.";
 
 function fmtAgo(t) {
     const s = Date.now() / 1000 - t;
     if (s < 90) return "przed chwilą";
     if (s < 3600) return `${Math.round(s / 60)} min temu`;
-    return "o " + new Date(t * 1000).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+    return "o " + new Date(t * 1000).toLocaleTimeString(LOCALE(), { hour: "2-digit", minute: "2-digit" });
 }
-const fmtDate = t => t ? new Date(t).toLocaleDateString("pl-PL", { day: "numeric", month: "long", year: "numeric" }) : "";
+const fmtDate = t => t ? new Date(t).toLocaleDateString(LOCALE(), { day: "numeric", month: "long", year: "numeric" }) : "";
 
 /* Just enough Markdown for the release bodies build.yml writes: headings,
    lists (commits), tables (package changes), `code`, **bold**, links (text
@@ -891,7 +888,7 @@ function renderUpdate() {
         sub = `Teraz działa ${versionName(s.booted)}`;
     } else if (s.staged) {
         state = "ready"; title = `Wersja ${versionName(s.staged)} czeka na restart`;
-        sub = `Jest pobrana i włączy się po ponownym uruchomieniu. Do tego czasu działa ${versionName(s.booted)}.`;
+        sub = `Teraz działa ${versionName(s.booted)}.`;
     } else if (s.checked && s.checked.error) {
         state = "err"; title = "Nie udało się sprawdzić aktualizacji"; sub = s.checked.error;
     } else if (s.checked && s.checked.time) {
@@ -928,19 +925,12 @@ function renderUpdate() {
         `${versionName(s.rollback)} jest ustawiona jako domyślna; do restartu działa ${versionName(s.booted)}.`);
     else if (!avail) setStatus("rb-st", "err", ICONS.err, "Przywracanie niedostępne", s.error || "");
     else if (fb) setStatus("rb-st", "warn", ICONS.warn, "Nowa wersja się nie uruchomiła",
-        `${rawVersion(fb.failed) || "Aktualizacja"} ${AUTO_TRIES} razy nie pokazała kiosku, więc system sam wrócił ` +
-        `do ${rawVersion(fb.running) || "poprzedniej wersji"} (${fmtTime(fb.time * 1000)}).`);
+        `Wrócono do ${rawVersion(fb.running) || "poprzedniej"} (${fmtTime(fb.time * 1000)}).`);
     else if (s.rollback) setStatus("rb-st", "", ICONS.ready, `Poprzednia wersja: ${versionName(s.rollback)}`,
-        `Teraz działa ${versionName(s.booted)}. Przywrócenie włączy poprzednią po restarcie.`);
-    else setStatus("rb-st", "off", ICONS.ready, "Brak poprzedniej wersji", `Teraz działa ${versionName(s.booted)} — nie ma do czego wrócić.`);
-    $("rb-hint").textContent = [
-        `Automatycznie: jeśli nowa wersja ${AUTO_TRIES} razy z rzędu nie pokaże kiosku (albo zawiesi się na 10 min), ` +
-        "system sam uruchomi poprzednią i zostanie przy niej.",
-        GRUB_HINT,
-        "Ustawienia domyślne: adres HMI, ekran, rogi, kolor i dane logowania HMI wracają do początkowych; " +
-        "sieci Wi-Fi, adresy IP, nazwa urządzenia i strefa czasowa zostają.",
-        `Skrót do tej karty: przytrzymaj ${RECOVERY_HOLD_S} s róg ${CORNER_NAMES[recoveryCorner()]}, w HMI albo w ustawieniach.`,
-    ].join(" ");
+        `Teraz działa ${versionName(s.booted)}.`);
+    else setStatus("rb-st", "off", ICONS.ready, "Brak poprzedniej wersji", `Teraz działa ${versionName(s.booted)}.`);
+    $("rb-hint").textContent = `Sama wraca po ${AUTO_TRIES} nieudanych startach. Skrót: ${RECOVERY_HOLD_S} s w rogu ` +
+        `${CORNER_NAMES[recoveryCorner()]}. Ręcznie: Shift przy starcie.`;
     renderNotes();
 }
 
@@ -961,6 +951,10 @@ function renderNotes() {
         </details>`).join("");
 }
 
+// Settings > System: the parts worth naming (kioskd reads their versions).
+const COMPONENTS = [["kernel", "Jądro Linux"], ["mesa", "Mesa (grafika)"], ["gtk", "GTK"],
+    ["webkit", "WebKitGTK"], ["cage", "cage"], ["bootc", "bootc"], ["systemd", "systemd"]];
+
 function renderSysInfo() {
     const info = $("sys-info"), s = sys;
     if (!s || !s.available) {
@@ -972,7 +966,9 @@ function renderSysInfo() {
         <dt>Wersja</dt><dd>${esc(versionName(b))}</dd>
         <dt>Obraz</dt><dd>${esc(b.image || "—")}</dd>
         <dt>Zbudowany</dt><dd>${esc(fmtTime(b.timestamp))}</dd>
-        ${s.rollback ? `<dt>Poprzednia</dt><dd>${esc(versionName(s.rollback))}</dd>` : ""}`;
+        ${s.rollback ? `<dt>Poprzednia</dt><dd>${esc(versionName(s.rollback))}</dd>` : ""}
+        ${COMPONENTS.filter(([k]) => s.components && s.components[k])
+            .map(([k, label]) => `<dt>${label}</dt><dd>${esc(s.components[k])}</dd>`).join("")}`;
     if (!$("sys-image").value) $("sys-image").value = b.image || "";
 }
 
@@ -1045,6 +1041,8 @@ async function refreshDevice() {
     renderBar(i);
     $("dev-model").textContent = i.device.product || "—";
     $("dev-vendor").textContent = i.device.vendor || "—";
+    $("dev-cpu").textContent = i.device.cpu || "—";
+    $("dev-mem").textContent = i.device.memory_mb ? `${(i.device.memory_mb / 1024).toFixed(1).replace(".", ",")} GB` : "—";
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {
         h.value = i.hostname;
@@ -1160,7 +1158,7 @@ const BOOT_PHASES = {
     initrd: ["initramfs", "#a371f7"], userspace: ["Usługi", "#2f81f7"], hmi: ["HMI", "#3fb950"],
 };
 // Non-breaking space: "13,3 s" never splits across lines (legend, timeline).
-const secs = (v, d = 1) => v.toLocaleString("pl-PL", { minimumFractionDigits: d, maximumFractionDigits: d }) + " s";
+const secs = (v, d = 1) => v.toLocaleString(LOCALE(), { minimumFractionDigits: d, maximumFractionDigits: d }) + " s";
 
 let bootLoaded = false;
 async function loadBoot() {
@@ -1267,6 +1265,11 @@ function initSystem() {
         await loadNotes();
     }).then(() => { $("sys-repo-save").disabled = true; }).catch(() => {}));
 
+    // Język: kioskd keeps it; the page reloads in it (i18n.js translates).
+    seg($("lang"), cfg.language || "pl", v => {
+        if (v === (cfg.language || "pl")) return;
+        saveCfg({ language: v }).then(() => location.reload()).catch(e => toast(e.message, true));
+    });
     $("host-name").addEventListener("input", e => { $("host-save").disabled = e.target.value === hostSaved; });
     $("host-save").addEventListener("click", e => busy(e.currentTarget, async () => {
         const r = await api("/hostname", { hostname: $("host-name").value });

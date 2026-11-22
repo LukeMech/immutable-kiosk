@@ -71,6 +71,8 @@ DEFAULT_CONFIG = {
     "settings_corner": "top-right",
     # Settings' accent colour (Ekran > Kolor akcentu), one of ACCENTS.
     "accent": "blue",
+    # Settings' language (static/web/i18n.js translates the page): pl, en.
+    "language": "en",
     # Backlight in percent, applied by kioskd at start and on change. None =
     # never touched (systemd-backlight's restored value stays).
     "brightness": None,
@@ -272,6 +274,10 @@ def save_config(update):
         if not GITHUB_REPO.match(repo):
             raise ApiError("Repozytorium w postaci właściciel/nazwa, np. LukeMech/immutable-kiosk")
         cfg["releases_repo"] = repo
+    if "language" in update:
+        if update["language"] not in LANGUAGES:
+            raise ApiError("Nieznany język")
+        cfg["language"] = update["language"]
     if "accent" in update:
         if update["accent"] not in ACCENTS:
             raise ApiError("Nieznany kolor akcentu")
@@ -1661,13 +1667,58 @@ def current_timezone():
         return "UTC"
 
 
+LANGUAGES = ("pl", "en")
+
+
+def cpu_model():
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                return " ".join(line.split(":", 1)[1].split())
+    except OSError:
+        pass
+    return ""
+
+
+def memory_mb():
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+# The pieces of the system worth naming in Settings > System: they change
+# with an update (rpm's database is the image's). Read once per kioskd.
+_components = {}
+
+
+def components():
+    if not _components:
+        _components["kernel"] = os.uname().release
+        names = {"mesa-dri-drivers": "mesa", "gtk4": "gtk", "webkitgtk6.0": "webkit", "cage": "cage",
+                 "bootc": "bootc", "systemd": "systemd"}
+        try:
+            out = run(["rpm", "-q", "--qf", "%{NAME} %{VERSION}\n", *names], check=False, timeout=20)
+        except ApiError:
+            out = ""
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0] in names:
+                _components[names[parts[0]]] = parts[1]
+    return _components
+
+
 def r_info(body, q):
     time.tzset()  # glibc re-reads /etc/localtime if the time zone was changed
     return {
         "mode": mode(),
         "hostname": socket.gethostname(),
         # What the hardware says about itself (DMI).
-        "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor")},
+        "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor"),
+                   "cpu": cpu_model(), "memory_mb": memory_mb()},
         "power": power_state(),
         "net": net_brief(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1972,6 +2023,7 @@ def r_system(body, q):
                              if ln.startswith("VERSION_ID=")), None)
     except OSError:
         st["fedora"] = None
+    st["components"] = components()
     return st
 
 
