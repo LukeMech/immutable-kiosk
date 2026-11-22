@@ -234,6 +234,7 @@ class KioskShell(Gtk.Application):
         self.settings_loaded = False
         self.hmi_error = False
         self.boot_reported = False
+        self.ok_reported = False
 
     # -- setup
     def do_activate(self):
@@ -277,6 +278,9 @@ class KioskShell(Gtk.Application):
             # two web processes starting side by side on a Bay Trail Atom
             # slowed the HMI's first paint down.
             self.show("hmi")
+            # An HMI server that accepts but never answers would keep
+            # Settings from ever loading (and the boot from counting as good).
+            GLib.timeout_add_seconds(60, self.ensure_settings)
         else:
             self.show("settings")  # first boot: nothing to show yet but Settings
 
@@ -312,6 +316,7 @@ class KioskShell(Gtk.Application):
         view.connect("web-process-terminated", lambda v, r: v.load_uri(SETTINGS_URL))
         # kioskd restarting / not up yet: keep trying.
         view.connect("load-failed", self.settings_load_failed)
+        view.connect("load-changed", self.on_any_load_changed)
         return view
 
     def make_hmi_view(self):
@@ -507,7 +512,27 @@ class KioskShell(Gtk.Application):
                         "Włącz „Akceptuj certyfikat HMI” w Ustawieniach.", uri)
         return True
 
+    def on_any_load_changed(self, view, event):
+        """First page rendered by either view -- the HMI, its error page or
+        Settings: cage, GTK, WebKit and kioskd all work. kioskd tells
+        boot-counter this boot is good (automatic rollback)."""
+        if event == WebKit.LoadEvent.FINISHED and not self.ok_reported:
+            self.ok_reported = True
+            threading.Thread(target=self.report_boot_ok, daemon=True).start()
+
+    def report_boot_ok(self):
+        for _ in range(10):
+            try:
+                r = api_post("/api/boot/ok", {}, timeout=150)
+                if r.get("fallback"):
+                    log("new version never came up, previous one restored:", r)
+                return
+            except (OSError, ValueError) as e:
+                log("boot ok:", e)
+                GLib.usleep(5_000_000)
+
     def on_hmi_load_changed(self, view, event):
+        self.on_any_load_changed(view, event)
         if event == WebKit.LoadEvent.COMMITTED:
             self.cancel_retry()
         elif event == WebKit.LoadEvent.FINISHED and not self.hmi_error:

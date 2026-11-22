@@ -1,0 +1,22 @@
+# Automatic rollback, the boot/shutdown half (see boot-counter):
+#   start: GRUB's custom.cfg (hidden menu + try counter) and grubenv;
+#   stop (shutdown): next boot is a new deployment -> arm 3 tries.
+# Stopped before /boot is unmounted and before ostree finalizes a staged
+# deployment (After= = stopped earlier); either way bootc status says the
+# next boot differs (staged, or rollbackQueued once finalized).
+[Unit]
+Description=immutable-kiosk: GRUB boot counter (automatic rollback)
+# Not on the live installer ISO: no installed /boot there.
+ConditionPathExists=!/run/initramfs/live
+RequiresMountsFor=/boot /var/lib
+After=local-fs.target ostree-finalize-staged.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/immutable-kiosk/boot-counter setup
+ExecStop=/usr/libexec/immutable-kiosk/boot-counter arm
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

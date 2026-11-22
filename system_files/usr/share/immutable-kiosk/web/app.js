@@ -551,6 +551,16 @@ function releaseOf(e) {
         .find(r => r && r.sha && r.sha.startsWith(e.sha)) || null;
 }
 const versionName = e => { const r = releaseOf(e); return r ? r.tag : shortVersion(e); };
+// A bare version label (boot-counter's note): release tag if known.
+const rawVersion = v => {
+    if (!v) return "";
+    const r = sysNotes && [sysNotes.current, sysNotes.target, ...(sysNotes.news || [])]
+        .find(x => x && x.sha && v.includes(x.sha.slice(0, 7)));
+    return r ? r.tag : v.replace(/^[^.]*\./, "");
+};
+const AUTO_TRIES = 3;  // boot-counter's TRIES
+const GRUB_HINT = "Ręcznie, gdy system nie startuje: klawiatura USB, w menu GRUB (pierwsze sekundy startu) " +
+    "druga pozycja strzałkami i Enterem.";
 
 function fmtAgo(t) {
     const s = Date.now() / 1000 - t;
@@ -652,14 +662,21 @@ function renderUpdate() {
     $("sys-reboot-box").hidden = running || !(avail && s.staged);
     $("sys-switch").disabled = running;
     $("sys-rollback").disabled = running || !(avail && s.rollback);
+    const fb = s && s.fallback;
     if (!s) setStatus("rb-st", "busy", ICONS.busy, "Wczytywanie…");
     else if (!avail) setStatus("rb-st", "err", ICONS.err, "Przywracanie niedostępne", s.error || "");
+    else if (fb) setStatus("rb-st", "warn", ICONS.warn, "Nowa wersja się nie uruchomiła",
+        `${rawVersion(fb.failed) || "Aktualizacja"} ${AUTO_TRIES} razy nie pokazała kiosku, więc system sam wrócił ` +
+        `do ${rawVersion(fb.running) || "poprzedniej wersji"} (${fmtTime(fb.time * 1000)}).`);
     else if (s.rollback) setStatus("rb-st", "", ICONS.ready, `Poprzednia wersja: ${versionName(s.rollback)}`,
         `Teraz działa ${versionName(s.booted)}. Przywrócenie włączy poprzednią po restarcie.`);
     else setStatus("rb-st", "off", ICONS.ready, "Brak poprzedniej wersji", `Teraz działa ${versionName(s.booted)} — nie ma do czego wrócić.`);
-    $("rb-hint").textContent = "Gdy system nie uruchamia się wcale: podłącz klawiaturę USB i w menu GRUB " +
-        `(pierwsze sekundy startu) wybierz drugą pozycję strzałkami i Enterem. Skrót do tej karty: przytrzymaj ${RECOVERY_HOLD_S} s róg ` +
-        `${CORNER_NAMES[recoveryCorner()]}, w HMI albo w ustawieniach.`;
+    $("rb-hint").textContent = [
+        `Automatycznie: jeśli nowa wersja ${AUTO_TRIES} razy z rzędu nie pokaże kiosku (albo zawiesi się na 10 min), ` +
+        "system sam uruchomi poprzednią i zostanie przy niej.",
+        GRUB_HINT,
+        `Skrót do tej karty: przytrzymaj ${RECOVERY_HOLD_S} s róg ${CORNER_NAMES[recoveryCorner()]}, w HMI albo w ustawieniach.`,
+    ].join(" ");
     renderNotes();
 }
 

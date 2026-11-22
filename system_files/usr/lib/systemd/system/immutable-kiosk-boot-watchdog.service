@@ -1,0 +1,14 @@
+# Automatic rollback: a trial boot of a new version that never brings the
+# kiosk up reboots after 10 min, so the try counts (see boot-counter).
+[Unit]
+Description=immutable-kiosk: reboot a new version that never comes up
+ConditionPathExists=!/run/initramfs/live
+After=immutable-kiosk-boot-counter.service
+Wants=immutable-kiosk-boot-counter.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/immutable-kiosk/boot-counter watchdog
+
+[Install]
+WantedBy=multi-user.target

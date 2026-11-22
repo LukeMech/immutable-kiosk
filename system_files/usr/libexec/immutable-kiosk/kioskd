@@ -764,6 +764,8 @@ def changelog():
 # Set by kiosk-shell (POST /api/boot/hmi) when the HMI page first finished
 # loading: seconds since the kernel started (CLOCK_MONOTONIC).
 HMI_SHOWN = {"at": None}
+BOOT_COUNTER = "/usr/libexec/immutable-kiosk/boot-counter"
+BOOT_FALLBACK_NOTE = STATE_DIR / "boot-fallback.json"
 
 
 def parse_span(s):
@@ -1390,7 +1392,14 @@ def r_touch_set(body, q):
 
 
 def r_system(body, q):
-    return bootc_status()
+    st = bootc_status()
+    # Left by boot-counter when a new version never came up and the previous
+    # one was booted (and made the default again) automatically.
+    try:
+        st["fallback"] = json.loads(BOOT_FALLBACK_NOTE.read_text())
+    except (OSError, ValueError):
+        st["fallback"] = None
+    return st
 
 
 def r_system_changelog(body, q):
@@ -1405,6 +1414,17 @@ def r_boot_hmi(body, q):
     if HMI_SHOWN["at"] is None:
         HMI_SHOWN["at"] = time.monotonic()
     return {"hmi_shown": HMI_SHOWN["at"]}
+
+
+def r_boot_ok(body, q):
+    """kiosk-shell rendered its first page: this boot is good (automatic
+    rollback, see boot-counter). Runs bootc rollback after a fallback, so
+    it can take a while."""
+    out = run([BOOT_COUNTER, "ok"], timeout=150)
+    try:
+        return json.loads(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"ok": True}
 
 
 def r_system_check(body, q):
@@ -1482,6 +1502,7 @@ ROUTES = {
     ("GET", "/api/system/changelog"): r_system_changelog,
     ("GET", "/api/boot"): r_boot,
     ("POST", "/api/boot/hmi"): r_boot_hmi,
+    ("POST", "/api/boot/ok"): r_boot_ok,
     ("POST", "/api/system/check"): r_system_check,
     ("POST", "/api/system/upgrade"): r_system_upgrade,
     ("POST", "/api/system/switch"): r_system_switch,

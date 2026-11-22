@@ -23,7 +23,8 @@ chmod 0755 /usr/libexec/immutable-kiosk/*
 # otherwise only show up as a black screen on the device.
 python3 -m py_compile \
     /usr/libexec/immutable-kiosk/kiosk-shell \
-    /usr/libexec/immutable-kiosk/kioskd
+    /usr/libexec/immutable-kiosk/kioskd \
+    /usr/libexec/immutable-kiosk/boot-counter
 find /usr/libexec/immutable-kiosk -name '__pycache__' -prune -exec rm -rf {} +
 
 # The kiosk account: no password, no sudo, no shell login -- it only runs
@@ -46,6 +47,8 @@ passwd -l kiosk
 
 systemctl enable immutable-kiosk-backend.service
 systemctl enable immutable-kiosk-cage.service
+# Automatic rollback when a new version never brings the kiosk up.
+systemctl enable immutable-kiosk-boot-counter.service immutable-kiosk-boot-watchdog.service
 systemctl set-default graphical.target
 
 # tty1 belongs to the kiosk: no login prompt there, ever -- not even when
