@@ -1014,7 +1014,6 @@ async function loadNotes() {
     try { sysNotes = await api("/system/changelog"); } catch (_) { return; }
     if (document.activeElement !== $("sys-repo") && sysNotes.repo) {
         $("sys-repo").value = sysNotes.repo;
-        $("sys-repo-save").disabled = true;
     }
     renderSysInfo();
     renderUpdate();
@@ -1255,15 +1254,17 @@ function initSystem() {
         .catch(e => toast(e.message, true)));
     holdButton($("pw-off"), power("poweroff"));
 
-    $("sys-repo").addEventListener("input", () => { $("sys-repo-save").disabled = false; });
-    $("sys-repo-save").addEventListener("click", e => busy(e.currentTarget, async () => {
-        cfg = await api("/config", { releases_repo: $("sys-repo").value });
-        $("sys-repo").value = cfg.releases_repo;
-        $("sys-repo").blur();
-        toast(`Lista zmian z ${cfg.releases_repo}`);
-        $("upd-notes").dataset.key = "";
-        await loadNotes();
-    }).then(() => { $("sys-repo-save").disabled = true; }).catch(() => {}));
+    // Held, like the image switch next to it.
+    holdButton($("sys-repo-save"), () => api("/config", { releases_repo: $("sys-repo").value })
+        .then(c => {
+            cfg = c;
+            $("sys-repo").value = cfg.releases_repo;
+            $("sys-repo").blur();
+            toast(`Lista zmian z ${cfg.releases_repo}`);
+            $("upd-notes").dataset.key = "";
+            return loadNotes();
+        })
+        .catch(e => toast(e.message, true)));
 
     // Język: kioskd keeps it; the page reloads in it (i18n.js translates).
     seg($("lang"), cfg.language || "pl", v => {

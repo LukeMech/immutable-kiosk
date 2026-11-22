@@ -227,16 +227,17 @@
         <div class="sep">
           <h3>Własny obraz systemu</h3>
           <p class="hint">Tylko obrazy podpisane kluczem ghcr.io/lukemech.</p>
-          <label>Obraz
+          <!-- One under the other, each with its hold-to-apply button. -->
+          <label for="sys-image">Obraz</label>
+          <div class="inline">
             <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
-          </label>
-          <div class="actions"><button class="btn hold" data-hold="1500" id="sys-switch">Przytrzymaj: przełącz obraz</button></div>
-          <label for="sys-repo">Repozytorium z listą zmian (GitHub, właściciel/nazwa)</label>
+            <button class="btn hold" data-hold="1500" id="sys-switch">Przełącz</button>
+          </div>
+          <label for="sys-repo">Lista zmian (GitHub: właściciel/nazwa)</label>
           <div class="inline">
             <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
-            <button class="btn" id="sys-repo-save" disabled>Zapisz</button>
+            <button class="btn hold" data-hold="1500" id="sys-repo-save">Zapisz</button>
           </div>
-          <p class="hint" style="margin-top:8px">Źródło opisów „Co nowego” (wydania na GitHubie).</p>
         </div>
       </div>
       <!-- Język i region: what the kiosk speaks, its clock, its name. -->
