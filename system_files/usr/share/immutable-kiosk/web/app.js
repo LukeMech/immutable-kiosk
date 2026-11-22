@@ -1233,6 +1233,7 @@ function initSystem() {
     seg($("lang"), cfg.language || "en", v => {
         if (v === (cfg.language || "en")) return;
         saveCfg({ language: v }).then(c => {
+            seg($("lang"), c.language || "en");
             if (i18n.use(c.language)) { showTab(currentTab); refreshDevice(); }
         }).catch(e => toast(e.message, true));
     });
