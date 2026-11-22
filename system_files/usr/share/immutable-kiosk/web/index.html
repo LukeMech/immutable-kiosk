@@ -136,6 +136,11 @@
         </div>
       </div>
       <div class="card">
+        <h2>Kolor akcentu</h2>
+        <p class="hint">Przyciski, przełączniki i zaznaczenia w ustawieniach.</p>
+        <div class="swatches" id="accent"></div>
+      </div>
+      <div class="card">
         <h2>Orientacja</h2>
         <div class="seg wrap" id="rot">
           <button data-v="">Domyślna urządzenia</button>
@@ -147,12 +152,6 @@
           <button data-v="270">270°</button>
         </div>
         <p class="hint" id="rot-hint"></p>
-        <p class="hint" id="disp-info"></p>
-      </div>
-      <div class="card" id="res-card" hidden>
-        <h2>Rozdzielczość</h2>
-        <p class="hint">Tryb wbudowanego ekranu. Domyślna to tryb, który panel sam podaje jako właściwy.</p>
-        <div class="seg wrap" id="res"></div>
         <!-- The boot splash follows the rotation (kioskd rewrites a kernel
              argument): while that's being written, and when it's done. -->
         <div class="status" id="splash-st" hidden>
@@ -164,18 +163,19 @@
         </div>
       </div>
       <div class="card">
-        <h2>Skalowanie ekranu</h2>
-        <p class="hint">Powiększa wszystko: HMI, ustawienia i klawiaturę. Powiększenie HMI (zakładka HMI) mnoży się przez tę wartość.</p>
+        <h2>Rozdzielczość i skalowanie</h2>
+        <p class="hint">Skalowanie powiększa wszystko: HMI, ustawienia i klawiaturę. Powiększenie HMI (zakładka HMI) mnoży się przez tę wartość.</p>
         <div class="stepper">
           <button class="btn" id="scale-minus">−</button>
           <span id="scale-val">100%</span>
           <button class="btn" id="scale-plus">+</button>
         </div>
-      </div>
-      <div class="card">
-        <h2>Kolor akcentu</h2>
-        <p class="hint">Przyciski, przełączniki i zaznaczenia w ustawieniach.</p>
-        <div class="swatches" id="accent"></div>
+        <div id="res-wrap" hidden>
+          <h3>Rozdzielczość</h3>
+          <p class="hint">Tryb wbudowanego ekranu. Domyślna to tryb, który panel sam podaje jako właściwy.</p>
+          <div class="seg wrap" id="res"></div>
+        </div>
+        <p class="hint" id="disp-info"></p>
       </div>
       <div class="card">
         <h2>Wejście do ustawień z HMI</h2>

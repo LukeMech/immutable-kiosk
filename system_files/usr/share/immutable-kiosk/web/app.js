@@ -554,11 +554,11 @@ async function loadDisplay() {
     if (!d || !d.outputs) { $("disp-info").textContent = ""; return; }
     const outs = d.outputs.map(o => `${o.name} ${o.mode[0]}×${o.mode[1]}, obrót ${o.transform}, skala ${o.scale}`);
     $("disp-info").textContent = `Wyświetlacz: ${outs.join("; ") || "brak wyjść"} · okno ${d.window[0]}×${d.window[1]}` +
-        `, skala GTK ${d.gtk_scale}`;
+        (d.monitor ? `, monitor w GTK ${d.monitor[0]}×${d.monitor[1]}` : "") + `, skala GTK ${d.gtk_scale}`;
     // Rozdzielczość: the built-in panel's modes (the first output: kiosk-shell
     // lists the panel first), "WxH@R" when one size comes in several rates.
     const panel = d.outputs[0], modes = (panel && panel.modes) || [];
-    $("res-card").hidden = !modes.length;
+    $("res-wrap").hidden = !modes.length;
     if (!modes.length) return;
     const many = (m) => modes.filter(x => x.w === m.w && x.h === m.h).length > 1;
     const key = m => `${m.w}x${m.h}` + (many(m) ? `@${m.refresh}` : "");

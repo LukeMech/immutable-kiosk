@@ -208,6 +208,12 @@ div.inline { margin-top: 6px; }
    busy (spinning), off (grey, dimmed). */
 .status { display: flex; gap: 14px; align-items: center; }
 .status + * { margin-top: 14px; }
+/* Room between a card's blocks: a line or a status under a row of buttons,
+   a slider or a stepper -- they sat right against them. */
+.seg + .hint, .stepper + .hint, .slider + .hint, .swatches + .hint,
+.seg + div > .hint:first-child { margin-top: 12px; }
+* + .status { margin-top: 16px; }
+.card .hint:last-child { margin-bottom: 0; }
 .status-icon {
     flex: none; width: 52px; height: 52px; border-radius: 50%;
     display: grid; place-items: center; background: #273241; color: var(--muted);
