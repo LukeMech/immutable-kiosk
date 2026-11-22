@@ -4,7 +4,7 @@ name: Build container image
 # push, sign; then publish a release and hand over to build-media.yml for the
 # disk images and the installer ISO.
 #
-# Channels (what a kiosk follows -- Settings -> System -> Kanał):
+# Channels (what a kiosk follows -- Settings -> System -> Update channel):
 #   dev branch  -> :dev     + one rolling pre-release (v<fedora>.<commit>),
 #                             replaced by every build;
 #   main        -> :latest  + a release (stable, v<fedora>.<date>[.N]).
@@ -364,36 +364,50 @@ jobs:
           : > changelog.md
           if [[ "${CHANNEL}" == "dev" ]]; then
             {
-              echo "> Wersja testowa (kanał **dev**, gałąź \`dev\`): zastępuje ją każda kolejna zmiana."
-              echo "> Stabilna staje się po scaleniu \`dev\` do \`main\` albo po odznaczeniu *Pre-release*."
+              echo "> Testing build (**dev** channel, \`dev\` branch): every newer change replaces it."
+              echo "> It becomes stable when \`dev\` is merged into \`main\`, or when *Pre-release* is unchecked."
               echo
             } >> changelog.md
           fi
           ./scripts/merge-changelogs.sh changelog-artifacts "${VARIANT_LIST[@]}" >> changelog.md
           {
-            echo "## Instalacja"
+            echo "## Installation"
             echo
-            echo "1. Pobierz \`immutable-kiosk-installer-<urządzenie>-<tag>.iso\`. Jeśli ISO ma ponad 2 GiB, jest podzielone na"
-            echo "   \`….iso.001\`, \`….iso.002\`, …: pobierz wszystkie części do jednego folderu i otwórz \`.001\` w 7-Zip / NanaZip"
-            echo "   → *Wypakuj* daje jedno ISO. Bez programu: \`copy /b <plik>.iso.001 + <plik>.iso.002 <plik>.iso\` (Windows),"
-            echo "   \`cat <plik>.iso.0* > <plik>.iso\` (Linux). Suma kontrolna całego ISO: \`.sha256\`."
-            echo "2. Zapisz ISO na pendrive (Fedora Media Writer, Rufus w trybie DD, \`dd\`)."
-            echo "3. Podłącz pendrive i ładowarkę do tabletu przez hub USB-OTG, uruchom z pendrive'a"
-            echo "   (HP: *Volume −* przytrzymany przy włączaniu)."
-            echo "4. Instalator sam wybiera wewnętrzne eMMC → przytrzymaj przycisk instalacji 3 s. Po zakończeniu wyjmij pendrive i uruchom ponownie."
-            echo "5. Pierwszy start otwiera Ustawienia: Wi-Fi → adres HMI → *Zapisz i otwórz HMI*."
-            echo "   Później do Ustawień: przytrzymaj ~1 s prawy górny róg ekranu (róg zmienisz w *Ekran*)."
-            echo
-            echo "## Commits"
+            echo "1. Download \`immutable-kiosk-installer-<device>-<tag>.iso\`. An ISO over 2 GiB comes in parts,"
+            echo "   \`….iso.001\`, \`….iso.002\`, …: download them all into one folder and open \`.001\` in 7-Zip / NanaZip"
+            echo "   → *Extract* gives the one ISO. Without a tool: \`copy /b <file>.iso.001 + <file>.iso.002 <file>.iso\` (Windows),"
+            echo "   \`cat <file>.iso.0* > <file>.iso\` (Linux). The whole ISO's checksum: \`.sha256\`."
+            echo "2. Write the ISO to a USB stick (Fedora Media Writer, Rufus in DD mode, \`dd\`)."
+            echo "3. Connect the stick and the charger to the tablet through a USB-OTG hub and boot from the stick"
+            echo "   (HP: hold *Volume −* while powering on)."
+            echo "4. The installer picks the internal eMMC itself → hold the install button for 3 s. When it's done, pull the stick and restart."
+            echo "5. The first start opens Settings: Wi-Fi → HMI address → *Save and open HMI*."
+            echo "   Later, to get to Settings: hold the top-right corner of the screen for ~1 s (the corner is set under *Display*)."
             echo
           } >> changelog.md
-          # Since the current stable release (a pre-release: all it would add).
+          # Since the current stable release (a pre-release: all it would
+          # add), grouped by the commits' types (feat:, fix: -- README's
+          # "Commit messages").
           PREV_TAG=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           if [[ -n "${PREV_TAG}" ]]; then
-            git log --pretty='- %h %s' "${PREV_TAG}..HEAD" >> changelog.md
+            git log --no-merges --pretty='%h %s' "${PREV_TAG}..HEAD" > commits.txt
           else
-            git log --pretty='- %h %s' -1 >> changelog.md
+            git log --no-merges --pretty='%h %s' -1 > commits.txt
           fi
+          TYPE='(\([^)]*\))?!?: *'
+          section() {  # <title> <type>
+            local lines
+            lines=$(grep -E "^[0-9a-f]+ $2${TYPE}" commits.txt | sed -E "s/^([0-9a-f]+) $2${TYPE}/- \1 /" || true)
+            if [[ -n "${lines}" ]]; then printf '### %s\n\n%s\n\n' "$1" "${lines}"; fi
+          }
+          {
+            echo "## Commits"
+            echo
+            section "Features" feat
+            section "Fixes" fix
+            others=$(grep -Ev "^[0-9a-f]+ (feat|fix)${TYPE}" commits.txt | sed 's/^/- /' || true)
+            if [[ -n "${others}" ]]; then printf '### %s\n\n%s\n' "Other changes" "${others}"; fi
+          } >> changelog.md
 
       - name: Create release tag
         run: |

@@ -1036,7 +1036,7 @@ def release_notes(body):
         else:
             cur[1].append(line)
     sections.append(cur)
-    keep = [s for s in sections if s[0] != "Instalacja" and "\n".join(s[1]).strip()]
+    keep = [s for s in sections if s[0] not in ("Installation", "Instalacja") and "\n".join(s[1]).strip()]
     keep.sort(key=lambda s: 0 if s[0] == "Commits" else 1)
     return "\n".join("\n".join(s[1]).strip() + "\n" for s in keep).strip()
 
