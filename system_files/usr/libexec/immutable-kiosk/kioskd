@@ -1035,12 +1035,13 @@ def release_notes(body):
     return "\n".join("\n".join(s[1]).strip() + "\n" for s in keep).strip()
 
 
-def releases():
-    """[{tag, sha, date, notes}], newest first; [] when GitHub can't be reached."""
+def releases(force=False):
+    """[{tag, sha, date, notes}], newest first; [] when GitHub can't be reached.
+    force: past the cache (an update the cached list doesn't know yet)."""
     repo = load_config().get("releases_repo") or DEFAULT_CONFIG["releases_repo"]
     with _releases_lock:
         cached = _releases_cache["data"] if _releases_cache["repo"] == repo else None
-        if cached is not None and time.time() - _releases_cache["time"] < RELEASES_TTL:
+        if cached is not None and not force and time.time() - _releases_cache["time"] < RELEASES_TTL:
             return cached
         try:
             rels = _github(repo, "releases?per_page=30")
@@ -1062,31 +1063,35 @@ def changelog():
     st = bootc_status()
     # A stable kiosk never sees the dev pre-release in its notes.
     dev = "dev" in (st.get("channel"), st.get("next_channel"))
-    rels = [r for r in releases() if dev or not r["prerelease"]]
+    booted = st.get("booted") or {}
+    target = st.get("staged") or st.get("update") or None
 
-    def index(sha):
+    def load(force=False):
+        return [r for r in releases(force) if dev or not r["prerelease"]]
+
+    def index(rels, sha):
         if not sha:
             return None
         return next((i for i, r in enumerate(rels) if r["sha"].startswith(sha)), None)
 
-    booted = st.get("booted") or {}
-    target = st.get("staged") or st.get("update") or None
-    b = index(booted.get("sha"))
-    t = index(target.get("sha")) if target else None
+    rels = load()
+    # The update just found was published after the list was cached (15 min):
+    # fetch again rather than show the running version's notes for it.
+    if target and target.get("sha") and index(rels, target["sha"]) is None:
+        rels = load(force=True)
+    b = index(rels, booted.get("sha"))
+    t = index(rels, target.get("sha")) if target else None
     news = []
-    if target:
+    if target and t is not None:
         # Newest first: from the target's release down to (not including) the
-        # booted one's. Unknown target: everything newer than what runs.
-        start = t if t is not None else 0
-        end = b if b is not None else len(rels)
-        if b is None and booted.get("timestamp"):
-            end = next((i for i, r in enumerate(rels) if r["date"] and r["date"] <= booted["timestamp"]), len(rels))
-        news = rels[start:end]
+        # booted one's. The booted one's gone (the dev pre-release is replaced
+        # by every build, and it says all since stable anyway): the target's.
+        news = rels[t:b] if b is not None and b > t else [rels[t]]
     return {
         "repo": load_config().get("releases_repo"),
         "reachable": bool(rels),
         "current": rels[b] if b is not None else None,
-        "target": rels[t] if t is not None else (news[0] if news else None),
+        "target": rels[t] if t is not None else None,
         "news": news,
     }
 
