@@ -1,3 +1,4 @@
-# Quiet boot straight into the kiosk: no console text, no blinking cursor
-# while cage starts.
-kargs = ["quiet", "loglevel=3", "vt.global_cursor_default=0", "consoleblank=0"]
+# Quiet boot straight into the kiosk: the Plymouth splash (15-plymouth.sh)
+# instead of console text, no blinking cursor
+# while cage starts. Serial consoles (the tablets have ttyS*) get no splash.
+kargs = ["quiet", "loglevel=3", "vt.global_cursor_default=0", "consoleblank=0", "splash", "plymouth.ignore-serial-consoles"]

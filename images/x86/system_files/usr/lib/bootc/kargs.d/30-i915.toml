@@ -1,0 +1,10 @@
+# i915 is in the x86 initramfs (Plymouth needs the real GPU driver: simpledrm
+# has no panel orientation). Two things keep that from costing anything:
+# - driver_async_probe=i915: its ~3 s probe runs in the background, so udev's
+#   coldplug -- and dracut-initqueue's `udevadm settle` with it -- doesn't
+#   wait for it and the root is mounted as soon as the eMMC is there (before,
+#   root found at 6.7 s, mounted at 10.2 s right after the GPU);
+# - i915.fastboot=1: take over the mode the firmware set instead of a full
+#   modeset, which blanked the panel once mid-boot. (The per-chip default
+#   already covers newer generations; explicit here for Bay Trail.)
+kargs = ["driver_async_probe=i915", "i915.fastboot=1"]

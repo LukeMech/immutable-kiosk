@@ -16,14 +16,23 @@
 #                   here, plus hwdb (udev's 12 MB hardware database -- only
 #                   input devices use it, nothing that finds the root) and
 #                   i18n (console keymaps and fonts);
-#   --omit-drivers: i915 -- no early KMS. With i915 in here, its ~3 s probe
-#                   ran inside udev's coldplug and dracut-initqueue's
-#                   `udevadm settle` waited for it: the root was found at
-#                   6.7 s but mounted only at 10.2 s, after the GPU. From the
-#                   real root it loads in parallel with everything else, long
-#                   before cage starts; the backlight PWM ordering it needs
-#                   is the softdep in /usr/lib/modprobe.d/i915-backlight.conf,
-#                   which applies there too. Also xfs: the root is btrfs;
+#   --add-drivers:  i915 (early KMS) for the boot splash -- Plymouth needs the
+#                   real GPU driver: simpledrm has no panel orientation and
+#                   Fedora's Plymouth ignores it. Its ~3 s probe used to hold
+#                   the root mount up (dracut-initqueue's `udevadm settle`
+#                   waited for it: root found at 6.7 s, mounted at 10.2 s);
+#                   now it's probed asynchronously (driver_async_probe=i915,
+#                   images/x86 kargs.d), so it doesn't. Plus drivers/pwm and
+#                   i915-backlight.conf: on Bay Trail/Cherry Trail the
+#                   backlight is a PWM i915 looks up once, at probe -- without
+#                   the PWM driver bound first, no intel_backlight (the softdep
+#                   makes sure it is);
+#   --fwdir (empty): no firmware at all. Nothing else in here needs any, and
+#                   for i915 dracut would pack GuC/HuC/DMC/GSC blobs of every
+#                   GPU generation (~10 MB). Bay Trail/Cherry Trail graphics
+#                   take none; on newer Atoms i915 runs without DMC (deeper
+#                   display power states off), which is fine for a panel
+#                   that's always on;
 #   --no-early-microcode: dracut's generic early cpio carries every Intel
 #                   CPU's microcode (16 MB, uncompressed). Ours carries only
 #                   the Atom families this image is for (early_microcode).
@@ -61,7 +70,7 @@ OMIT=(
     # forced + its dependency omitted = dracut fails, so omit it too
     # (an omit beats an add).
     clevis clevis-pin-file clevis-pin-null clevis-pin-sss clevis-pin-tang clevis-pin-tpm2
-    qemu qemu-net biosdevname memstrack resume plymouth
+    qemu qemu-net biosdevname memstrack resume
     # Cloud/VM/server bits fedora-bootc carries for other targets: Azure's
     # agent, FIPS mode (needs fips=1 on the kernel command line anyway),
     # virtiofs root, NVDIMM, and kernel-modules-extra's exotic drivers.
@@ -71,18 +80,25 @@ OMIT=(
 )
 
 # Kernel modules left out (dracut --omit-drivers: each entry is a regex
-# matched against the whole module name, with - read as _). Nothing here is
+# matched against the whole module name, with - read as _). Basic regex
+# syntax only -- dracut-install compiles them as BRE: no +, ?, | or (). Nothing here is
 # needed to find and mount the root; the real root loads whatever the
 # hardware needs from /usr/lib/modules later, as usual.
 OMIT_DRIVERS=(
-    # GPU: early KMS held up the root mount (see the top).
-    i915
+    # GPUs other than Intel's: dracut's drm module (Plymouth depends on it)
+    # packs every KMS driver -- amdgpu alone is 6.5 MB. i915 stays (added
+    # explicitly), so does virtio_gpu (small; for testing in a VM).
+    amdgpu amdxcp amdkfd radeon nouveau xe vmwgfx gma500_gfx ast mgag200 qxl
+    bochs cirrus_qemu hyperv_drm hyperv_fb vboxvideo vkms vgem udl gud gm12u320
+    kvmgt ch7006 sil164 pixpaper sharp_memory 'ili9.*' 'ssd130x.*'
+    'st7[0-9].*' 'panel_.*' thinkpad_acpi chromeos_privacy_screen
     # Server/legacy SCSI HBAs, FC, SAS, iSCSI, InfiniBand, SCSI targets.
     '3w_.*' BusLogic a100u2w aacraid advansys 'aic7.*' am53c974 arcmsr atp870u
     bfa bnx2fc csiostor dc395x dmx3191d efct esas2r esp_scsi 'fcoe' 'libfc.*'
     'fdomain.*' fnic hpsa hptiop initio ipr ips isci leapraid libsas lpfc
     'megaraid.*' mpi3mr 'mpt.*' mvsas mvumi myrb myrs pm80xx pmcraid qedf
-    'qla.*' raid_class scsi_debug 'scsi_transport_(fc|sas|spi|srp|iscsi)'
+    'qla.*' raid_class scsi_debug scsi_transport_fc scsi_transport_sas
+    scsi_transport_spi scsi_transport_srp scsi_transport_iscsi
     smartpqi snic stex sym53c8xx vmw_pvscsi wd719x 'libiscsi.*'
     iscsi_boot_sysfs 'scsi_dh_.*' tcm_loop 'target_core_.*'
     'ib_.*' iw_cm 'rdma_.*' 'rtrs_.*' 'cnic' 'cxgb.*' 'qed.*'
@@ -126,7 +142,8 @@ OMIT_DRIVERS=(
     # other SoCs (none of it finds a root here).
     'alcor.*' 'rtsx_.*' 'cb710.*' 'tifm_.*' toshsd via_sdmmc vub300 wbsd ushc
     sdricoh_cs sdhci_xenon_driver sdio_uart 'pata_.*' pdc_adma acard_ahci
-    'sata_(mv|nv|promise|qstor|sil|sil24|sis|svw|sx4|uli|via|vsc)'
+    sata_mv sata_nv sata_promise sata_qstor sata_sil sata_sil24 sata_sis
+    sata_svw sata_sx4 sata_uli sata_via sata_vsc
     microtek 'ums_.*' 'pinctrl_.*'
 )
 # ...and what must still be there (in the initramfs or built in): eMMC on the
@@ -191,14 +208,18 @@ fi
 # From an empty directory: dracut word-splits the omit list unquoted, so a
 # pattern like 'mpt.*' would otherwise glob against files in the cwd.
 EMPTY=$(mktemp -d)
+NOFW=$(mktemp -d)   # --fwdir: no firmware (see the top)
 (cd "${EMPTY}" && DRACUT_NO_XATTR=1 dracut --force --reproducible --no-hostonly \
     --compress "zstd -19 -q -T0" \
     --no-early-microcode \
+    --fwdir "${NOFW}" \
     --omit " ${OMIT[*]} " \
     --omit-drivers " ${OMIT_DRIVERS[*]} " \
+    --add-drivers " i915 =drivers/pwm " \
+    --install /usr/lib/modprobe.d/i915-backlight.conf \
     "${ADD[@]}" \
     "${IMG}" "${KVER}")
-rmdir "${EMPTY}"
+rmdir "${EMPTY}" "${NOFW}"
 
 # Our early cpio: uncompressed, in front of the compressed main archive,
 # with kernel/x86/microcode/GenuineIntel.bin -- the layout dracut's own has.
@@ -256,10 +277,19 @@ done
 for k in mmc_block 'sdhci[-_]acpi'; do
     has_kmod /tmp/initramfs-new.list "${k}" || { echo "error: kernel module '${k}' missing from the initramfs" >&2; exit 1; }
 done
-# i915 loads from the real root (see the top); in here it would hold up the
-# root mount again.
-if grep -Eq '/i915\.ko' /tmp/initramfs-new.list; then
-    echo "error: i915 is in the initramfs (early KMS delays the root mount)" >&2
+# Early KMS for the splash, with the backlight PWM bound before i915 probes;
+# and the splash itself, with our theme.
+for k in i915 'pwm[-_]lpss[-_]platform'; do
+    has_kmod /tmp/initramfs-new.list "${k}" || { echo "error: kernel module '${k}' missing from the initramfs" >&2; exit 1; }
+done
+grep -q 'usr/lib/modprobe.d/i915-backlight.conf' /tmp/initramfs-new.list ||
+    { echo "error: i915-backlight.conf (PWM before i915) missing from the initramfs" >&2; exit 1; }
+grep -qx plymouth <<<"${NEW_MODS}" || { echo "error: dracut's plymouth module is not in the initramfs" >&2; exit 1; }
+grep -q 'usr/share/plymouth/themes/immutable-kiosk/throbber-0001.png' /tmp/initramfs-new.list ||
+    { echo "error: the immutable-kiosk Plymouth theme is not in the initramfs" >&2; exit 1; }
+# No firmware (see the top): i915's would be ~10 MB.
+if grep -q 'usr/lib/firmware/i915/' /tmp/initramfs-new.list; then
+    echo "error: i915 firmware ended up in the initramfs (--fwdir ignored?)" >&2
     exit 1
 fi
 # (No pipe into grep -q here: SIGPIPE + pipefail, see has_kmod.)

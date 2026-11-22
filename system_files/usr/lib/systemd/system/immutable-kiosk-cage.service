@@ -6,6 +6,12 @@
 Description=Kiosk (cage + kiosk-shell) on tty1
 After=systemd-user-sessions.service dbus.socket systemd-logind.service immutable-kiosk-backend.service
 Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
+# The boot splash hands the screen over to cage the way display managers do
+# it: plymouth-quit (the generic "stop the splash" at multi-user) is replaced
+# by our own `plymouth quit --retain-splash` right before cage starts, so the
+# splash's last frame stays up until the kiosk draws -- no black gap.
+After=plymouth-start.service plymouth-quit.service
+Conflicts=plymouth-quit.service
 ConditionPathExists=/dev/tty0
 # Never give up: with the default limit (5 starts in 10 s) a few early
 # failures left the unit dead, and tty1 showed a login prompt instead.
@@ -20,6 +26,9 @@ WorkingDirectory=/var/home/kiosk
 # for a DRM card first; after that, start anyway and let Restart= retry.
 # ($$: systemd expands $ itself.)
 ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do ls /dev/dri/card* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo "no /dev/dri/card* after 30 s" >&2'
+# Splash off, last frame kept, DRM master released for cage. "+": as root
+# (the rest of the unit runs as kiosk); "-": no splash running is fine.
+ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
 PAMName=login
 Environment=XDG_SESSION_TYPE=wayland
 # -d: no client-side decorations, kiosk-shell is the only (fullscreen) window.
