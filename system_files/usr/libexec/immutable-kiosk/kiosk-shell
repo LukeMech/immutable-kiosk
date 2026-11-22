@@ -423,6 +423,12 @@ class KioskShell(Gtk.Application):
         s.set_javascript_can_open_windows_automatically(False)
         s.set_enable_back_forward_navigation_gestures(False)
         view.connect("context-menu", lambda *a: True)
+        # No pinch zoom: a two-finger pinch is claimed here, in the capture
+        # phase, so WebKit's own zoom gesture never gets it.
+        pinch = Gtk.GestureZoom()
+        pinch.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        pinch.connect("begin", lambda g, _seq: g.set_state(Gtk.EventSequenceState.CLAIMED))
+        view.add_controller(pinch)
 
     def make_settings_view(self):
         ucm = WebKit.UserContentManager()
