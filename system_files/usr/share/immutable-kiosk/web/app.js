@@ -1276,7 +1276,7 @@ function initSystem() {
         })
         .catch(e => toast(e.message, true)));
 
-    // Język: kioskd keeps it; the page reloads in it (i18n.js translates).
+    // Language: kioskd keeps it; the page reloads in it (i18n.js translates).
     seg($("lang"), cfg.language || "en", v => {
         if (v === (cfg.language || "en")) return;
         saveCfg({ language: v }).then(c => i18n.use(c.language)).catch(e => toast(e.message, true));

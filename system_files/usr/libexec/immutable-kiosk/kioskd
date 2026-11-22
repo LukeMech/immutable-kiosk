@@ -2124,14 +2124,24 @@ def r_system_rollback(body, q):
     return start_job("rollback", "Przywracanie poprzedniej wersji", job_rollback, ROLLBACK_STEPS).as_dict()
 
 
-def r_settings_reset(body, q):
-    """Settings back to the defaults: kioskd's config (HMI address, screen,
-    corners, accent...) and the HMI's browser data (its login, cookies,
-    cache). The network (Wi-Fi, IP addresses), host name and time zone stay
-    -- a kiosk reset over the network must stay reachable. cage restarts, so
-    the kiosk comes up as after an installation: Settings first, no HMI."""
+DEFAULT_TIMEZONE = "Europe/Warsaw"  # the image's (build_files/05-base.sh)
+
+
+def reset_everything():
+    """Everything back to how the installer left it, then the kiosk again:
+      - kioskd's config: HMI address, rotation, scale, corners, accent,
+        language... (the rotation's default also brings the boot splash's
+        and the touch matrix back when kiosk-shell applies it);
+      - the HMI's browser data (its login, cookies, cache), kiosk-shell's
+        cached rotation;
+      - every NetworkManager connection: saved Wi-Fi networks, static IP
+        settings (a cable gets a fresh automatic "Wired connection");
+      - the host name and the time zone.
+    In a thread, after the reply: the request comes from inside cage, and
+    dropping the network takes the reply's way out with it."""
     import pwd
     import shutil
+    time.sleep(1.0)
     try:
         CONFIG_FILE.unlink()
     except FileNotFoundError:
@@ -2141,12 +2151,30 @@ def r_settings_reset(body, q):
     except KeyError:
         home = None
     if home:
-        for d in (home / ".local/share/immutable-kiosk/hmi", home / ".cache/immutable-kiosk/hmi"):
+        for d in (home / ".local/share/immutable-kiosk/hmi", home / ".cache/immutable-kiosk"):
             shutil.rmtree(d, ignore_errors=True)
-    print("kioskd: settings reset to the defaults, restarting the kiosk", flush=True)
+    try:
+        out = run(["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=20)
+        for line in out.splitlines():
+            uuid, _, kind = line.partition(":")
+            if uuid and kind != "loopback":
+                run(["nmcli", "connection", "delete", uuid], check=False, timeout=30)
+    except ApiError as e:
+        print(f"kioskd: reset: network: {e}", flush=True)
+    run(["hostnamectl", "set-hostname", ""], check=False, timeout=20)
+    run(["timedatectl", "set-timezone", DEFAULT_TIMEZONE], check=False, timeout=20)
+    time.tzset()
+    print("kioskd: everything reset to the defaults, restarting the kiosk", flush=True)
     EVENTS.emit("config")
-    # After the reply: the request comes from inside cage.
-    threading.Timer(1.0, subprocess.run, args=(["systemctl", "restart", CAGE_UNIT],)).start()
+    EVENTS.emit("device")
+    subprocess.run(["systemctl", "restart", CAGE_UNIT])
+
+
+def r_settings_reset(body, q):
+    """Back to how it was installed -- network, name and time zone too (see
+    reset_everything). The kiosk then comes up as after an installation:
+    Settings first, no Wi-Fi, no HMI."""
+    threading.Thread(target=reset_everything, daemon=True).start()
     return {"ok": True}
 
 
