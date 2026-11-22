@@ -18,11 +18,15 @@ FROM quay.io/fedora/fedora-bootc:45
 
 # Which images/<VARIANT>/ this image builds (see images/variants.toml).
 ARG VARIANT=x86
+# Release tag and commit (Justfile/CI): the version in os-release, so the
+# GRUB entry and Settings show "v45.20261122.1-778b844". Empty locally.
+ARG RELEASE_TAG=
+ARG GIT_SHA=
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
-    /ctx/build.sh "${VARIANT}"
+    RELEASE_TAG="${RELEASE_TAG}" GIT_SHA="${GIT_SHA}" /ctx/build.sh "${VARIANT}"
 
 RUN bootc container lint

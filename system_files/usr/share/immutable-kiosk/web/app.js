@@ -568,8 +568,19 @@ let sysNotes = null;     // GET /system/changelog (GitHub releases)
 const UPDATE_JOBS = ["check", "upgrade", "switch"];
 const CHECK_EVERY = 15 * 60;  // s: opening System checks again after this
 
-// "latest.20261121-22d3877" -> "20261121-22d3877" when no release matches.
-const shortVersion = e => !e ? "—" : ((e.version || "").replace(/^[^.]*\./, "") || (e.digest || "").slice(7, 19) || "—");
+// A version label, readable without a matching GitHub release:
+//   "v45.20261122.1-778b844" (CI builds carry their release tag) -> "v45.20261122.1"
+//   "latest.20261121-22d3877" (older builds) -> "v45.20261121-22d3877"
+//     (Fedora version from kioskd; the date+commit still says which build)
+function labelVersion(v) {
+    if (!v) return "";
+    let m = /^(v\d+\.\d{8}(?:\.\d+)?)-[0-9a-f]{7,}$/.exec(v);
+    if (m) return m[1];
+    m = /^[^.]*\.(\d{8}-[0-9a-f]{7,})$/.exec(v);
+    if (m) return `v${(sys && sys.fedora) || "?"}.${m[1]}`;
+    return v;
+}
+const shortVersion = e => !e ? "—" : (labelVersion(e.version) || (e.digest || "").slice(7, 19) || "—");
 function releaseOf(e) {
     if (!e || !e.sha || !sysNotes) return null;
     return [sysNotes.current, sysNotes.target, ...(sysNotes.news || [])]
@@ -581,7 +592,7 @@ const rawVersion = v => {
     if (!v) return "";
     const r = sysNotes && [sysNotes.current, sysNotes.target, ...(sysNotes.news || [])]
         .find(x => x && x.sha && v.includes(x.sha.slice(0, 7)));
-    return r ? r.tag : v.replace(/^[^.]*\./, "");
+    return r ? r.tag : labelVersion(v);
 };
 const AUTO_TRIES = 3;  // boot-counter's TRIES
 // The GRUB menu is hidden (boot-counter's custom.cfg / 05_timeout.cfg).

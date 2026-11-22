@@ -1479,6 +1479,14 @@ def r_system(body, q):
         st["fallback"] = json.loads(BOOT_FALLBACK_NOTE.read_text())
     except (OSError, ValueError):
         st["fallback"] = None
+    # Fedora release of what runs: names old builds' "latest.<date>-<sha>"
+    # labels "v45.<date>-<sha>" in Settings.
+    try:
+        st["fedora"] = next((ln.split("=", 1)[1].strip().strip('"') for ln in
+                             Path("/usr/lib/os-release").read_text().splitlines()
+                             if ln.startswith("VERSION_ID=")), None)
+    except OSError:
+        st["fedora"] = None
     return st
 
 

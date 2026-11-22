@@ -69,11 +69,16 @@ fi
 find /etc/systemd /usr/lib/systemd -lname '*kmscon*' -print -delete
 
 # GRUB's menu entry and "Booting ..." line come from PRETTY_NAME (ostree
-# writes it into each deployment's BLS entry). NAME/ID stay Fedora: dnf,
-# bootc and friends key off those.
-. /usr/lib/os-release
-sed -i "s|^PRETTY_NAME=.*|PRETTY_NAME=\"immutable-kiosk (Fedora Linux ${VERSION_ID})\"|" /usr/lib/os-release
-grep -q '^PRETTY_NAME="immutable-kiosk' /usr/lib/os-release
+# writes it into each deployment's BLS entry): the release, e.g.
+# "immutable-kiosk v45.20261122.1-778b844" -- which version an entry boots,
+# at a glance. CI passes tag and commit (Containerfile ARGs); local builds
+# say "dev". IMAGE_ID/IMAGE_VERSION carry the same. NAME/ID/VERSION_ID stay
+# Fedora's: dnf, bootc and friends key off those.
+IK_VERSION="${RELEASE_TAG:-dev}${GIT_SHA:+-${GIT_SHA}}"
+sed -i -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"immutable-kiosk ${IK_VERSION}\"|" \
+    -e '/^IMAGE_ID=/d' -e '/^IMAGE_VERSION=/d' /usr/lib/os-release
+printf 'IMAGE_ID="immutable-kiosk"\nIMAGE_VERSION="%s"\n' "${IK_VERSION}" >> /usr/lib/os-release
+grep -q "^PRETTY_NAME=\"immutable-kiosk ${IK_VERSION}\"" /usr/lib/os-release
 # Hostname until one is set in Settings (hostnamectl -> /etc/hostname, which
 # wins): systemd falls back to os-release's DEFAULT_HOSTNAME, not "fedora".
 # (/etc/hostname itself can't be touched here: during a RUN step podman

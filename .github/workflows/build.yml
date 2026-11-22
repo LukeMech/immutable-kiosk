@@ -33,9 +33,32 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       variants: ${{ steps.list.outputs.variants }}
+      release_tag: ${{ steps.release-tag.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Release tag = Fedora version + date, .1/.2/... for a same-day repeat.
+      # Computed before the build, so the image carries it (label + os-release:
+      # Settings and the GRUB entry show it); release-meta tags with the same.
+      - name: Compute release tag
+        id: release-tag
+        run: |
+          set -euo pipefail
+          FEDORA_VER=$(awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}' Containerfile)
+          [[ -n "${FEDORA_VER}" ]] || { echo "error: no Fedora version in Containerfile" >&2; exit 1; }
+          PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
+          if ! git rev-parse -q --verify "refs/tags/${PREFIX}" >/dev/null \
+              && [[ -z "$(git tag -l "${PREFIX}.*")" ]]; then
+            TAG="${PREFIX}"
+          else
+            LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
+            TAG="${PREFIX}.$(( 10#${LAST_NUM:-0} + 1 ))"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       # Every top-level table in images/variants.toml IS a variant.
       - name: List variants
@@ -104,6 +127,8 @@ jobs:
           fi
 
       - name: Build Image
+        env:
+          RELEASE_TAG: ${{ needs.discover.outputs.release_tag }}
         run: just build ${{ matrix.variant }} ${IMAGE_NAME} ${DEFAULT_TAG}
 
       - name: Login to GitHub Container Registry
@@ -248,7 +273,7 @@ jobs:
     permissions:
       contents: write
     outputs:
-      tag: ${{ steps.release-tag.outputs.tag }}
+      tag: ${{ needs.discover.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -256,22 +281,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # Tag = Fedora version + date, .1/.2/... for a same-day repeat.
-      - name: Compute release tag
-        id: release-tag
-        run: |
-          set -euo pipefail
-          FEDORA_VER=$(awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}' Containerfile)
-          [[ -n "${FEDORA_VER}" ]] || { echo "error: no Fedora version in Containerfile" >&2; exit 1; }
-          PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
-          if ! git rev-parse -q --verify "refs/tags/${PREFIX}" >/dev/null \
-              && [[ -z "$(git tag -l "${PREFIX}.*")" ]]; then
-            TAG="${PREFIX}"
-          else
-            LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
-            TAG="${PREFIX}.$(( 10#${LAST_NUM:-0} + 1 ))"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Download changelog artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -316,15 +325,15 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          TAG="${{ steps.release-tag.outputs.tag }}"
+          TAG="${{ needs.discover.outputs.release_tag }}"
           git tag -a "${TAG}" -m "${TAG}"
           git push origin "${TAG}"
 
       - name: Publish release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          tag_name: ${{ steps.release-tag.outputs.tag }}
-          name: ${{ steps.release-tag.outputs.tag }}
+          tag_name: ${{ needs.discover.outputs.release_tag }}
+          name: ${{ needs.discover.outputs.release_tag }}
           body_path: changelog.md
 
   build-media:
