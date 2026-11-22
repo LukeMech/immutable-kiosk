@@ -130,7 +130,8 @@ function showTab(name) {
     currentTab = name;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
     document.querySelectorAll(".tab").forEach(s => { s.hidden = s.id !== "tab-" + name; });
-    ({ hmi: loadHmi, wifi: () => loadWifi(false), net: loadNet, screen: loadScreen, system: loadSystem })[name]();
+    const net = () => { loadWifi(false); loadNet(); };  // Wi-Fi and IP: one tab
+    ({ hmi: loadHmi, net, screen: loadScreen, system: loadSystem })[name]();
 }
 
 // kiosk-shell calls this whenever Settings becomes visible.
@@ -384,8 +385,9 @@ async function loadNet() {
     try { n = await api("/network"); }
     catch (e) { box.innerHTML = lone("err", ICONS.err, "Nie udało się odczytać sieci", e.message); return; }
     if (!n.connections.length) {
-        box.innerHTML = lone("warn", ICONS.warn, "Brak aktywnego połączenia",
-            "Połącz się z siecią Wi-Fi albo podłącz kabel (adapter USB-Ethernet).");
+        // Nothing connected: the Wi-Fi card above already says so.
+        box.innerHTML = `<div class="card"><h2>Adres IP</h2>` + statusHtml("off", ICONS.ethernet, "Brak połączenia",
+            "Połącz się z siecią Wi-Fi powyżej albo podłącz kabel (adapter USB-Ethernet).") + `</div>`;
         return;
     }
     box.innerHTML = "";
@@ -396,7 +398,7 @@ async function loadNet() {
         const kind = c.type === "wifi" ? "Wi-Fi" : c.type === "ethernet" ? "Ethernet" : c.type;
         const has = cur.addresses.length > 0;
         const how = c.method === "manual" ? "adres statyczny" : "adres z DHCP";
-        el.innerHTML = `<h2>${esc(kind)}</h2>` +
+        el.innerHTML = `<h2>Adres IP · ${esc(kind)}</h2>` +
           statusHtml(has ? "ok" : "busy", has ? (c.type === "wifi" ? wifiIcon(3) : ICONS.ethernet) : ICONS.busy,
                      c.name, has ? `${cur.addresses.join(", ")} · ${how}` : "Czekam na adres IP…") + `
           <dl class="kv">
