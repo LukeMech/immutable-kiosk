@@ -259,7 +259,7 @@ def end_splash():
 
 # ------------------------------------------------------------ error page
 
-ERROR_PAGE = """<!doctype html><html lang="pl"><meta charset="utf-8">
+ERROR_PAGE = """<!doctype html><html lang="{lang}"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   html,body{{margin:0;height:100%;background:#10151c;color:#e6edf3;
@@ -275,10 +275,10 @@ ERROR_PAGE = """<!doctype html><html lang="pl"><meta charset="utf-8">
 <main>
   <h1>{title}</h1>
   <p>{detail}</p>
-  <p>Ponowna próba za <span id="s">{retry}</span> s</p>
+  <p>{retry_in} <span id="s">{retry}</span> s</p>
   <div class="row">
-    <button onclick="go('settings')">⚙ Ustawienia</button>
-    <button class="sec" onclick="go('retry')">↻ Spróbuj teraz</button>
+    <button onclick="go('settings')">⚙ {settings}</button>
+    <button class="sec" onclick="go('retry')">↻ {retry_now}</button>
   </div>
 </main>
 <script>
@@ -730,7 +730,9 @@ class KioskShell(Gtk.Application):
         url = self.cfg.get("hmi_url")
         self.loaded_url = url
         if not url:
-            self.show_error("Brak adresu HMI", "Ustaw adres wizualizacji w Ustawieniach.", None)
+            self.show_error(self.t("Brak adresu HMI", "No HMI address"),
+                            self.t("Ustaw adres wizualizacji w Ustawieniach.", "Set the HMI's address in Settings."),
+                            None)
             return
         self.hmi.load_uri(url)
 
@@ -752,11 +754,19 @@ class KioskShell(Gtk.Application):
         self.retry_source = GLib.timeout_add_seconds(secs, fire)
         return secs
 
+    def t(self, pl, en):
+        """The error page's own texts, in Settings' language (en by default;
+        Settings itself is translated by i18n.js)."""
+        return pl if (self.cfg or {}).get("language", "en") == "pl" else en
+
     def show_error(self, title, detail, failing_uri):
         self.hmi_error = True
-        self.ensure_settings()  # the error page's "Ustawienia" button is the way out
+        self.ensure_settings()  # the error page's "Settings" button is the way out
         secs = self.schedule_retry() if failing_uri else 0
-        html = ERROR_PAGE.format(title=esc(title), detail=detail, retry=secs)
+        html = ERROR_PAGE.format(
+            title=esc(title), detail=detail, retry=secs, lang=(self.cfg or {}).get("language", "en"),
+            retry_in=self.t("Ponowna próba za", "Trying again in"), settings=self.t("Ustawienia", "Settings"),
+            retry_now=self.t("Spróbuj teraz", "Try now"))
         self.hmi.load_alternate_html(html, failing_uri or "about:blank", None)
 
     def on_hmi_load_failed(self, view, event, uri, error):
@@ -771,8 +781,9 @@ class KioskShell(Gtk.Application):
             self.waiting_for_hmi = True
             self.pending = "settings"
             self.ensure_settings()
-        self.show_error("Brak połączenia z HMI",
-                        f"Nie można otworzyć <code>{esc(uri)}</code>.<br>{esc(error.message)}", uri)
+        self.show_error(self.t("Brak połączenia z HMI", "Can't reach the HMI"),
+                        self.t("Nie można otworzyć", "Couldn't open") +
+                        f" <code>{esc(uri)}</code>.<br>{esc(error.message)}", uri)
         return True
 
     def on_hmi_tls_error(self, view, uri, certificate, errors):
@@ -784,9 +795,11 @@ class KioskShell(Gtk.Application):
             self.hmi_session.allow_tls_certificate_for_host(certificate, host)
             view.load_uri(uri)
             return True
-        self.show_error("Niezaufany certyfikat",
-                        f"Serwer <code>{esc(host)}</code> przedstawił niezaufany certyfikat. "
-                        "Włącz „Akceptuj certyfikat HMI” w Ustawieniach.", uri)
+        self.show_error(self.t("Niezaufany certyfikat", "Untrusted certificate"),
+                        self.t(f"Serwer <code>{esc(host)}</code> przedstawił niezaufany certyfikat. "
+                               "Włącz „Akceptuj certyfikat HMI” w Ustawieniach.",
+                               f"The server <code>{esc(host)}</code> presented an untrusted certificate. "
+                               "Turn on “Accept the HMI's certificate” in Settings."), uri)
         return True
 
     def on_any_load_changed(self, view, event):
