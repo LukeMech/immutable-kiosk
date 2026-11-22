@@ -15,6 +15,8 @@ set -ouex pipefail
 # plymouth-plugin-label is required although nothing draws text: without it
 # plymouthd segfaults in ply_console_viewer_hide().
 dnf install -y plymouth plymouth-plugin-script plymouth-plugin-label
+# For 16-plymouth-images.py, which renders the labels with Pango.
+dnf install -y python3-gobject python3-cairo gobject-introspection pango google-noto-sans-vf-fonts
 
 THEME=/usr/share/plymouth/themes/immutable-kiosk
 mkdir -p "${THEME}"
