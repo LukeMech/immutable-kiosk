@@ -5,6 +5,10 @@ Wants=NetworkManager.service
 
 [Service]
 Type=simple
+# The boot splash eases into its rest pose now (0.6 s), well before cage's
+# unit deactivates it: kiosk-splash continues from that pose, and the boot
+# doesn't wait for it. "-": no splash is fine.
+ExecStartPre=-/usr/bin/plymouth update --status=handover
 ExecStart=/usr/libexec/immutable-kiosk/kioskd
 Restart=always
 RestartSec=2

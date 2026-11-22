@@ -23,10 +23,10 @@ WorkingDirectory=/var/home/kiosk
 # Wait up to 30 s for a non-simple-framebuffer card, then start anyway.
 # ($$: systemd expands $ itself.)
 ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do for c in /sys/class/drm/card[0-9]; do d=$$(readlink -f "$$c/device/driver"); [ -n "$$d" ] && [ "$${d##*/}" != simple-framebuffer ] && exit 0; done; sleep 0.5; done; echo "no GPU (only a firmware framebuffer) after 30 s" >&2'
-# "handover": the splash eases into its rest pose (0.6 s), then releases the
-# GPU with that frame on screen for kiosk-splash to continue from.
+# The splash is in its rest pose already (kioskd's unit sent "handover"):
+# release the GPU with that frame on screen for kiosk-splash to continue.
 # "+": as root; "-": no splash is fine.
-ExecStartPre=-+/bin/sh -c '/usr/bin/plymouth update --status=handover && sleep 0.7; /usr/bin/plymouth deactivate'
+ExecStartPre=-+/usr/bin/plymouth deactivate
 PAMName=immutable-kiosk
 Environment=XDG_SESSION_TYPE=wayland
 # -d: no client-side decorations.
