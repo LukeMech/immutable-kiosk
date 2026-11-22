@@ -982,7 +982,7 @@ async function loadSystem() {
     renderSysInfo();
     renderUpdate();
     followSysJob();
-    loadSplash();  // the language card's boot screen status (the page reloads on a change)
+    loadSplash();  // the language card's boot screen status
     refreshDevice();
     loadTimezones();
     loadBoot();
@@ -1228,10 +1228,13 @@ function initSystem() {
         })
         .catch(e => toast(e.message, true)));
 
-    // Saved in kioskd; i18n.use reloads the page in it.
+    // Saved in kioskd; i18n.use re-translates the page in place, then the
+    // tab redraws what it formats itself (dates, numbers).
     seg($("lang"), cfg.language || "en", v => {
         if (v === (cfg.language || "en")) return;
-        saveCfg({ language: v }).then(c => i18n.use(c.language)).catch(e => toast(e.message, true));
+        saveCfg({ language: v }).then(c => {
+            if (i18n.use(c.language)) { showTab(currentTab); refreshDevice(); }
+        }).catch(e => toast(e.message, true));
     });
     $("host-name").addEventListener("input", e => { $("host-save").disabled = e.target.value === hostSaved; });
     $("host-save").addEventListener("click", e => busy(e.currentTarget, async () => {
@@ -1397,7 +1400,7 @@ async function initInstaller() {
         try { cfg = await api("/config"); break; }
         catch (_) { await new Promise(r => setTimeout(r, Math.min(500 * (i + 1), 3000))); }
     }
-    i18n.use(cfg.language);  // reloads the page if it started in another one
+    i18n.use(cfg.language);  // re-translates if it started in another one
     applyAccent(cfg.accent);
     if (cfg.mode === "installer") initInstaller(); else initSettings();
 })();

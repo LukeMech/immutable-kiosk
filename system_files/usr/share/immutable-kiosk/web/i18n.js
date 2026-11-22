@@ -4,7 +4,9 @@
  * included): EXACT (whole trimmed strings), then PATTERNS (anchored regexes,
  * first match wins). Unlisted text stays English.
  * The language comes from kioskd's config (app.js calls i18n.use) and is
- * cached in localStorage so the page doesn't flash English first.
+ * cached in localStorage so the page doesn't flash English first. Each
+ * node's English original is kept, so a change of language re-translates the
+ * page in place, no reload.
  */
 (function () {
     "use strict";
@@ -39,30 +41,44 @@
         return false;
     }
 
-    function doText(n) {
+    // node -> {orig, out}: the English it had and what it was turned into.
+    // A value equal to `out` is our own translation; anything else is new.
+    const TEXTS = new WeakMap();
+    const ATTRS_DONE = new WeakMap();   // element -> {attr: {orig, out}}
+
+    function doText(n, again) {
         if (skipped(n)) return;
-        const t = tr(n.nodeValue);
-        if (t !== n.nodeValue) n.nodeValue = t;
+        const cur = n.nodeValue, k = TEXTS.get(n);
+        if (k && k.out === cur && !again) return;
+        const orig = k && k.out === cur ? k.orig : cur;
+        const out = tr(orig);
+        TEXTS.set(n, { orig, out });
+        if (out !== cur) n.nodeValue = out;
     }
 
-    function doElement(el) {
+    function doElement(el, again) {
+        let done = ATTRS_DONE.get(el);
         for (const a of ATTRS) {
-            const v = el.getAttribute(a);
-            if (v) {
-                const t = tr(v);
-                if (t !== v) el.setAttribute(a, t);
-            }
+            const cur = el.getAttribute(a);
+            if (!cur) continue;
+            const k = done && done[a];
+            if (k && k.out === cur && !again) continue;
+            const orig = k && k.out === cur ? k.orig : cur;
+            const out = tr(orig);
+            if (!done) ATTRS_DONE.set(el, done = {});
+            done[a] = { orig, out };
+            if (out !== cur) el.setAttribute(a, out);
         }
     }
 
-    function walk(root) {
-        if (root.nodeType === Node.TEXT_NODE) { doText(root); return; }
+    function walk(root, again) {
+        if (root.nodeType === Node.TEXT_NODE) { doText(root, again); return; }
         if (root.nodeType !== Node.ELEMENT_NODE || SKIP.has(root.tagName)) return;
-        doElement(root);
+        doElement(root, again);
         const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
         for (let n = w.nextNode(); n; n = w.nextNode()) {
-            if (n.nodeType === Node.TEXT_NODE) doText(n);
-            else doElement(n);
+            if (n.nodeType === Node.TEXT_NODE) doText(n, again);
+            else doElement(n, again);
         }
     }
 
@@ -74,24 +90,30 @@
         }
     });
 
+    const OBSERVE = { subtree: true, childList: true, characterData: true,
+                      attributes: true, attributeFilter: ATTRS };
+
     function start() {
         document.documentElement.lang = lang;
-        if (!DICTS[lang]) return;
         walk(document.body);
-        observer.observe(document.body, {
-            subtree: true, childList: true, characterData: true,
-            attributes: true, attributeFilter: ATTRS,
-        });
+        observer.observe(document.body, OBSERVE);
     }
 
     window.i18n = {
         get lang() { return lang; },
         tr,
-        // kioskd's language; reloads the page if it differs.
+        // kioskd's language: the page re-translated in place if it differs.
+        // True if it changed (app.js then redraws what it formats itself).
         use(l) {
             l = l || "en";
             try { localStorage.setItem("ik-lang", l); } catch (_) { /* no storage */ }
-            if (l !== lang) location.reload();
+            if (l === lang) return false;
+            lang = l;
+            document.documentElement.lang = lang;
+            observer.disconnect();          // our own changes aren't news
+            walk(document.body, true);
+            observer.observe(document.body, OBSERVE);
+            return true;
         },
     };
 
