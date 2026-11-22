@@ -30,7 +30,6 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -400,7 +399,6 @@ class KioskShell(Gtk.Application):
         configuration (scale 1, the rotation) applied once more, and what's
         there goes to kioskd -- Settings > Display shows it."""
         self.display_pending = False
-        self.display_fixed = 0.0
         self.win.get_surface().connect("notify::scale", lambda *a: self.display_changed())
         Gdk.Display.get_default().get_monitors().connect("items-changed", lambda *a: self.display_changed())
         self.display_changed()
@@ -415,12 +413,6 @@ class KioskShell(Gtk.Application):
         surface = self.win.get_surface()
         scale = surface.get_scale() if hasattr(surface, "get_scale") else float(surface.get_scale_factor())
         outputs = wlr_state()
-        wrong = scale != 1 or any(o["scale"] not in (None, 1, 1.0) for o in outputs)
-        if wrong and time.monotonic() - self.display_fixed > 5:
-            self.display_fixed = time.monotonic()
-            log(f"window scale {scale}, outputs {outputs}: output configuration again")
-            apply_output(self.cfg)
-            self.display_changed()  # and look once more
         monitor = Gdk.Display.get_default().get_monitor_at_surface(surface)
         geo = monitor.get_geometry() if monitor else None
         info = {"gtk_scale": scale, "window": [self.win.get_width(), self.win.get_height()],
@@ -728,22 +720,9 @@ class KioskShell(Gtk.Application):
 
     @staticmethod
     def set_zoom(view, level, name):
-        """WebKit's zoom, only on a view that's on the screen, and only
-        when it's to change: set on a view not yet shown it came out
-        garbled. 1.0 is WebKit's own default -- left alone."""
-        if abs(view.get_zoom_level() - level) < 0.001:
-            return
-        if not view.get_mapped():
-            if not getattr(view, "_zoom_pending", None):
-                def on_map(v):
-                    v.disconnect(v._zoom_pending)
-                    v._zoom_pending = None
-                    GLib.idle_add(lambda: (KioskShell.set_zoom(v, v._zoom_want, name), False)[1])
-                view._zoom_pending = view.connect("map", on_map)
-            view._zoom_want = level
-            return
-        log(f"zoom {name}: {level:.2f}")
-        view.set_zoom_level(level)
+        if abs(view.get_zoom_level() - level) >= 0.001:
+            log(f"zoom {name}: {level:.2f}")
+            view.set_zoom_level(level)
 
     def reload_config(self):
         try:
@@ -914,7 +893,8 @@ class KioskShell(Gtk.Application):
             return False
         GLib.timeout_add_seconds(2, lambda: (view.load_uri(SETTINGS_URL), GLib.SOURCE_REMOVE)[1])
         view.load_alternate_html("<body style='background:#10151c;color:#9aa7b4;font:20px sans-serif;"
-                                 "display:grid;place-items:center;height:100vh;margin:0'>Uruchamianie…</body>",
+                                 "display:grid;place-items:center;height:100vh;margin:0'>" +
+                                 self.t("Uruchamianie…", "Starting…") + "</body>",
                                  uri, None)
         return True
 
