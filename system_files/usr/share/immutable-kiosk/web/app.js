@@ -629,7 +629,45 @@ function pollJob(onUpdate) {
     tick();
 }
 
-const sysJobEls = () => ({ box: $("job"), stage: $("job-stage"), bar: $("job-bar"), detail: $("job-detail") });
+// "12 s", "3 min 5 s" (non-breaking: never split from its number).
+function fmtDur(s) {
+    s = Math.max(0, Math.round(s));
+    return s < 60 ? `${s}\u00a0s` : `${Math.floor(s / 60)}\u00a0min ${s % 60}\u00a0s`;
+}
+const STEP_ICONS = { done: ICONS.ok, active: ICONS.busy, failed: ICONS.err };
+
+// kioskd's job.steps as a chain. Kept as DOM between polls (every 0.7 s):
+// rebuilt, the bars would restart their animation each time.
+function renderSteps(job) {
+    const el = $("job-steps");
+    const steps = (job && job.steps) || [];
+    const show = steps.length > 0 && (job.state === "running" || job.state === "failed");
+    el.hidden = !show;
+    if (!show) return;
+    if (el.children.length !== steps.length) {
+        el.innerHTML = steps.map(() => '<li><span class="dot"></span><div><div class="sr"><span class="sl"></span>' +
+            '<span class="st"></span></div><div class="progress"><div></div></div><div class="sd"></div></div></li>').join("");
+    }
+    steps.forEach((s, i) => {
+        const li = el.children[i];
+        if (li.className !== s.state) {
+            li.className = s.state;
+            li.querySelector(".dot").innerHTML = STEP_ICONS[s.state] || "";
+        }
+        li.querySelector(".sl").textContent = s.label;
+        const took = s.state === "active" ? job.now - s.started : s.took;
+        li.querySelector(".st").textContent = s.state === "skipped" ? "pominięto"
+            : took != null && s.state !== "pending" ? fmtDur(took) : "";
+        const bar = li.querySelector(".progress");
+        bar.hidden = s.state !== "active";
+        bar.classList.toggle("indet", s.fraction == null);
+        bar.firstElementChild.style.width = ((s.fraction || 0) * 100).toFixed(1) + "%";
+        const d = li.querySelector(".sd");
+        d.textContent = s.detail || "";
+        d.hidden = !s.detail;
+    });
+}
+
 
 let sys = null;          // GET /system (bootc status + last check)
 let sysJob = null;       // last update-ish job (check / upgrade / switch)
@@ -731,15 +769,18 @@ function md(src) {
 function renderUpdate() {
     const s = sys, job = sysJob;
     const running = !!(job && job.state === "running");
-    const checking = running && (job.kind === "check" || job.stage === "Sprawdzanie aktualizacji");
-    const working = running && !checking;  // downloading / deploying
+    // A check is just a spinner; an update or a switch shows its steps
+    // (the update's first one is the same check).
+    const checking = running && job.kind === "check";
+    const working = running && !checking;
     let state, title, sub = "";
     // A running job first: while bootc works, its status may be stale or
     // briefly unavailable -- that's not a failure to show.
     if (working) {
         state = "busy";
-        title = job.kind === "switch" ? "Zmiana obrazu systemu…" : "Pobieranie aktualizacji…";
-        sub = job.kind === "upgrade" && s && s.update ? `Wersja ${versionName(s.update)}` : "";
+        title = job.kind === "switch" ? `${job.title}…` : "Aktualizowanie systemu…";
+        sub = job.kind === "upgrade" && s && s.update ? `Wersja ${versionName(s.update)}`
+            : "Działa normalnie dalej — nowa wersja włączy się po restarcie.";
     } else if (checking) {
         state = "busy"; title = "Sprawdzanie aktualizacji…";
         sub = s && s.booted ? `Teraz działa ${versionName(s.booted)}` : "";
@@ -763,7 +804,7 @@ function renderUpdate() {
     }
     setStatus("upd", state, ICONS[state], title, sub);
     // The bar only while there's progress to show -- a check is just a spinner.
-    renderJob(working ? job : null, sysJobEls());
+    renderSteps(job && UPDATE_JOBS.includes(job.kind) && job.kind !== "check" ? job : null);
     const avail = !!(s && s.available);
     // One row: [Aktualizuj | Uruchom ponownie] [↻]. Restart replaces
     // "Aktualizuj" once a version waits for it and nothing newer is out.

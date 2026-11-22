@@ -265,6 +265,34 @@ div.inline { margin-top: 6px; }
 .msg.warn { color: var(--warn); }
 
 .job { margin-top: 10px; }
+
+/* An update's steps, a chain like the boot card's: done ones with how long
+   they took, the active one with its bar, the rest still to come. */
+.steps { list-style: none; margin: 16px 0 0; padding: 0; }
+.steps li { display: grid; grid-template-columns: 30px 1fr; column-gap: 12px; position: relative; padding-bottom: 14px; }
+.steps li:last-child { padding-bottom: 0; }
+.steps li:not(:last-child)::after {
+    content: ""; position: absolute; left: 14px; top: 32px; bottom: 2px; width: 2px;
+    border-radius: 1px; background: var(--line);
+}
+.steps li.done:not(:last-child)::after { background: color-mix(in srgb, var(--ok) 55%, var(--line)); }
+.steps .dot {
+    width: 30px; height: 30px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--line);
+    display: grid; place-items: center; color: var(--muted); background: var(--card);
+}
+.steps .dot svg { width: 16px; height: 16px; }
+.steps li.done .dot { border-color: var(--ok); color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, var(--card)); }
+.steps li.active .dot { border-color: var(--accent); color: var(--accent); }
+.steps li.active .dot svg { animation: spin 1s linear infinite; }
+.steps li.failed .dot { border-color: var(--bad); color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, var(--card)); }
+.steps .sr { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; }
+.steps .sl { font-weight: 600; }
+.steps li.pending .sl, .steps li.skipped .sl { color: var(--muted); font-weight: 400; }
+.steps .st { color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.steps li.active .st { color: var(--text); }
+.steps .progress { margin-top: 6px; height: 10px; }
+.steps .sd { color: var(--muted); font-size: 15px; margin-top: 5px; overflow-wrap: anywhere; }
+.steps li.failed .sd { color: var(--bad); }
 .job-stage { font-weight: 600; }
 .job-detail { color: var(--muted); font-size: 16px; margin-top: 6px; min-height: 1.4em; }
 .progress { height: 14px; border-radius: 7px; background: var(--field); overflow: hidden; margin-top: 10px; }

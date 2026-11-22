@@ -522,7 +522,7 @@ def network_set(body):
 class Job:
     """One long-running operation at a time (update, switch, install)."""
 
-    def __init__(self, kind, title):
+    def __init__(self, kind, title, steps=()):
         self.kind = kind
         self.title = title
         self.state = "running"  # running | done | failed
@@ -533,6 +533,42 @@ class Job:
         self.result = None
         self.started = time.time()
         self.finished = None
+        # The page draws these as a chain: done (with how long it took),
+        # the active one (bar, detail, time so far), the ones still to come.
+        self.steps = [{"key": k, "label": label, "state": "pending", "detail": "",
+                       "fraction": None, "started": None, "took": None} for k, label in steps]
+
+    def step(self, key, detail=None, fraction=None):
+        """Makes `key` the active step (earlier ones done, or skipped if they
+        never ran) and sets its detail/bar; the job's own stage, detail and
+        fraction follow the active step."""
+        idx = next((i for i, st in enumerate(self.steps) if st["key"] == key), None)
+        # Never back: a late event of an earlier phase doesn't reopen it.
+        if idx is None or any(st["state"] in ("active", "done") for st in self.steps[idx + 1:]):
+            return
+        now = time.time()
+        for st in self.steps[:idx]:
+            if st["state"] == "active":
+                st.update(state="done", took=now - st["started"], fraction=None)
+            elif st["state"] == "pending":
+                st["state"] = "skipped"
+        st = self.steps[idx]
+        if st["state"] != "active":
+            st.update(state="active", started=now, detail="", fraction=None)
+        if detail is not None:
+            st["detail"] = detail
+        st["fraction"] = fraction
+        self.stage, self.detail, self.fraction = st["label"], st["detail"], fraction
+
+    def end_steps(self, error=None):
+        now = time.time()
+        for st in self.steps:
+            if st["state"] == "active":
+                st.update(state="failed" if error else "done", took=now - st["started"], fraction=None)
+                if error:
+                    st["detail"] = error
+            elif st["state"] == "pending" and not error:
+                st["state"] = "skipped"
 
     def add_log(self, line):
         line = line.rstrip()
@@ -542,28 +578,30 @@ class Job:
 
     def as_dict(self):
         return {k: getattr(self, k) for k in
-                ("kind", "title", "state", "stage", "fraction", "detail", "result", "started", "finished")} | {
-            "log": self.log[-40:]}
+                ("kind", "title", "state", "stage", "fraction", "detail", "result", "started", "finished",
+                 "steps")} | {"log": self.log[-40:], "now": time.time()}
 
 
 JOB_LOCK = threading.Lock()
 CURRENT_JOB = None
 
 
-def start_job(kind, title, target):
+def start_job(kind, title, target, steps=()):
     global CURRENT_JOB
     with JOB_LOCK:
         if CURRENT_JOB and CURRENT_JOB.state == "running":
             raise ApiError(f"Trwa już: {CURRENT_JOB.title}", HTTPStatus.CONFLICT)
-        job = Job(kind, title)
+        job = Job(kind, title, steps)
         CURRENT_JOB = job
 
     def wrapper():
         try:
             target(job)
+            job.end_steps()
             if job.state == "running":
                 job.state = "done"
         except Exception as e:  # noqa: BLE001 -- anything goes to the page
+            job.end_steps(error=str(e))
             job.state = "failed"
             job.detail = str(e)
             job.add_log(f"BŁĄD: {e}")
@@ -574,7 +612,17 @@ def start_job(kind, title, target):
     return job
 
 
-BOOTC_STAGES = {"pulling": "Pobieranie", "importing": "Importowanie", "staging": "Przygotowanie"}
+# An update / image switch as the page shows it. bootc streams the layers
+# into the repository as they arrive; once every byte is in, it still
+# commits the image on the eMMC (minutes on an Atom) -- that's "write", not
+# "download" any more.
+BOOTC_STEPS = [("pull", "Pobieranie"), ("write", "Rozpakowanie i zapis na dysk"),
+               ("deploy", "Przygotowanie do uruchomienia")]
+UPGRADE_STEPS = [("check", "Sprawdzenie nowej wersji")] + BOOTC_STEPS
+
+
+def decimal(x, digits=1):
+    return f"{x:.{digits}f}".replace(".", ",")
 
 
 def run_bootc_with_progress(job, args):
@@ -602,7 +650,7 @@ def run_bootc_with_progress(job, args):
         rate = (done - b0) / (now - t0)
         left = (total - done) / rate
         eta = f"{left / 60:.0f} min" if left >= 90 else f"{max(1, left):.0f} s"
-        return f" · {rate / 1e6:.1f} MB/s · zostało ok. {eta}".replace(".", ",")
+        return f" · {decimal(rate / 1e6)} MB/s · zostało około {eta}"
 
     def read_progress():
         with os.fdopen(r, "r") as f:
@@ -611,20 +659,34 @@ def run_bootc_with_progress(job, args):
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                t = ev.get("type")
+                t, task = ev.get("type"), ev.get("task")
                 if t == "Start":
-                    job.stage, job.fraction = "Start", 0
-                    continue
-                job.stage = BOOTC_STAGES.get(ev.get("task"), ev.get("description") or ev.get("task") or "")
-                if t == "ProgressBytes" and ev.get("bytesTotal"):
-                    job.fraction = ev["bytes"] / ev["bytesTotal"]
-                    job.detail = (f"{ev['bytes'] / 1e6:.0f} / {ev['bytesTotal'] / 1e6:.0f} MB"
-                                  + speed_text(ev["bytes"], ev["bytesTotal"]))
-                elif ev.get("stepsTotal"):
-                    job.fraction = ev.get("steps", 0) / ev["stepsTotal"]
+                    job.step("pull")
+                elif t == "ProgressBytes" and task == "pulling":
+                    done, total = ev.get("bytes") or 0, ev.get("bytesTotal") or 0
+                    if total and done < total:
+                        job.step("pull", f"{done / 1e6:.0f} / {total / 1e6:.0f} MB" + speed_text(done, total),
+                                 done / total)
+                    else:
+                        # All downloaded (or all of it already here): the
+                        # download's line becomes its summary.
+                        pull = job.steps[[st["key"] for st in job.steps].index("pull")] \
+                            if any(st["key"] == "pull" for st in job.steps) else None
+                        if pull and pull["state"] == "active" and total:
+                            secs = time.time() - pull["started"]
+                            pull["detail"] = f"{total / 1e6:.0f} MB" + (
+                                f" · średnio {decimal(total / 1e6 / secs)} MB/s" if secs >= 1 else "")
+                        cached = ev.get("bytesCached") or 0
+                        job.step("write", "" if total else
+                                 (f"{cached / 1e6:.0f} MB było już na dysku" if cached else ""))
+                elif task in ("pulling", "importing"):
+                    job.step("write", ev.get("description") or None)
+                elif task == "staging" or ev.get("stepsTotal"):
+                    steps, total = ev.get("steps") or 0, ev.get("stepsTotal") or 0
                     running = next((s.get("description") for s in ev.get("subtasks") or []
                                     if not s.get("completed")), "")
-                    job.detail = running or f"krok {ev.get('steps', 0)} / {ev['stepsTotal']}"
+                    job.step("deploy", running or (f"krok {steps} z {total}" if total else ""),
+                             steps / total if total else None)
 
     t = threading.Thread(target=read_progress, daemon=True)
     t.start()
@@ -701,6 +763,7 @@ def bootc_status():
 def check_for_update(job):
     """bootc upgrade --check (fetches only the manifest), remembered in LAST_CHECK."""
     job.stage = "Sprawdzanie aktualizacji"
+    job.step("check")
     try:
         out = run(["bootc", "upgrade", "--check"], timeout=180)
     except ApiError as e:
@@ -725,7 +788,10 @@ def job_upgrade(job):
         job.detail = "System jest aktualny"
         job.result = st
         return
+    update = st["update"]
+    job.step("check", f"Nowa wersja: {update.get('version') or update.get('digest', '')[7:19]}")
     run_bootc_with_progress(job, ["upgrade"])
+    job.end_steps()
     job.fraction = 1
     job.stage = "Gotowe"
     job.detail = "Nowa wersja zostanie uruchomiona po restarcie"
@@ -1026,6 +1092,7 @@ def boot_timing():
 def job_switch(image):
     def target(job):
         run_bootc_with_progress(job, ["switch", image])
+        job.end_steps()
         job.fraction = 1
         job.stage = "Gotowe"
         job.detail = f"Po restarcie system uruchomi obraz {image}"
@@ -1248,7 +1315,7 @@ def _progress(job, done, total, t0):
     eta = ""
     if total and speed > 0:
         left = (total - done) / speed
-        eta = f" · zostało ok. {int(left // 60)} min {int(left % 60)} s"
+        eta = f" · zostało około {int(left // 60)} min {int(left % 60)} s"
     job.detail = f"{done / 1e9:.2f} / {total / 1e9:.2f} GB · {speed / 1e6:.0f} MB/s{eta}" if total \
         else f"{done / 1e9:.2f} GB · {speed / 1e6:.0f} MB/s"
 
@@ -1587,7 +1654,7 @@ def r_system_check(body, q):
 
 
 def r_system_upgrade(body, q):
-    return start_job("upgrade", "Aktualizacja systemu", job_upgrade).as_dict()
+    return start_job("upgrade", "Aktualizacja systemu", job_upgrade, UPGRADE_STEPS).as_dict()
 
 
 def r_system_switch(body, q):

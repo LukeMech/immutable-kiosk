@@ -190,12 +190,8 @@
             <div class="status-sub" id="upd-sub"></div>
           </div>
         </div>
-        <!-- Only while an update actually downloads / deploys. -->
-        <div class="job" id="job" hidden>
-          <div class="job-stage" id="job-stage"></div>
-          <div class="progress"><div id="job-bar"></div></div>
-          <div class="job-detail" id="job-detail"></div>
-        </div>
+        <!-- While an update / channel switch runs (or after it failed): its steps. -->
+        <ol class="steps" id="job-steps" hidden></ol>
         <div class="actions upd-actions">
           <button class="btn primary" id="sys-upgrade" disabled>Aktualizuj</button>
           <button class="btn primary hold" data-hold="1500" id="sys-reboot-now" hidden>Przytrzymaj: uruchom ponownie teraz</button>
