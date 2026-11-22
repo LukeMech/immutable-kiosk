@@ -710,6 +710,28 @@ LAST_CHECK = {"time": None, "error": None}
 
 LAST_STATUS = {"value": None}  # last good bootc_status(), see r_system
 
+# What build.yml publishes: main -> :latest (releases), the dev branch ->
+# :dev (one rolling pre-release). Any other tag is a custom image.
+CHANNELS = {"stable": {"tag": "latest", "name": "stabilny"},
+            "dev": {"tag": "dev", "name": "testowy"}}
+
+
+def split_image(image):
+    """"ghcr.io/o/r:tag" -> ("ghcr.io/o/r", "tag"); no tag means latest."""
+    image = image.split("@", 1)[0]
+    head, _, last = image.rpartition("/")
+    if ":" in last:
+        name, tag = last.split(":", 1)
+        return f"{head}/{name}" if head else name, tag
+    return image, "latest"
+
+
+def channel_of(image):
+    if not image:
+        return None
+    tag = split_image(image)[1]
+    return next((c for c, v in CHANNELS.items() if v["tag"] == tag), "custom")
+
 
 def bootc_status():
     try:
@@ -754,8 +776,11 @@ def bootc_status():
         update = None
     if update and staged and update["digest"] == staged["digest"]:
         update = None
+    # The channel what runs follows; a staged switch says where it's going.
     st = {"available": True, "booted": booted, "staged": staged, "rollback": rollback,
-          "update": update, "checked": LAST_CHECK}
+          "update": update, "checked": LAST_CHECK,
+          "channel": channel_of((booted or {}).get("image")),
+          "next_channel": channel_of((staged or booted or {}).get("image"))}
     LAST_STATUS["value"] = st
     return st
 
@@ -847,8 +872,9 @@ def releases():
             return cached or []
         data = [{"tag": r.get("tag_name", ""), "sha": tags.get(r.get("tag_name", ""), ""),
                  "date": r.get("published_at") or r.get("created_at") or "",
+                 "prerelease": bool(r.get("prerelease")),
                  "notes": release_notes(r.get("body"))}
-                for r in rels if not r.get("draft") and not r.get("prerelease")]
+                for r in rels if not r.get("draft")]
         _releases_cache.update(time=time.time(), repo=repo, data=data)
         return data
 
@@ -856,7 +882,9 @@ def releases():
 def changelog():
     """Releases for the booted version and for what an update/restart brings."""
     st = bootc_status()
-    rels = releases()
+    # A stable kiosk never sees the dev pre-release in its notes.
+    dev = "dev" in (st.get("channel"), st.get("next_channel"))
+    rels = [r for r in releases() if dev or not r["prerelease"]]
 
     def index(sha):
         if not sha:
@@ -1663,7 +1691,26 @@ def r_system_switch(body, q):
         image = image[len("docker://"):]
     if not IMAGE_REF.match(image):
         raise ApiError("Niepoprawna nazwa obrazu (np. ghcr.io/lukemech/immutable-kiosk-x86:latest)")
-    return start_job("switch", f"Zmiana obrazu na {image}", job_switch(image)).as_dict()
+    return start_job("switch", f"Zmiana obrazu na {image}", job_switch(image), BOOTC_STEPS).as_dict()
+
+
+def r_system_channel(body, q):
+    """Follow the other channel: the same image repository, its tag."""
+    channel = body.get("channel")
+    if channel not in CHANNELS:
+        raise ApiError("Nieznany kanał")
+    st = bootc_status()
+    if not st.get("available"):
+        raise ApiError(st.get("error") or "bootc jest niedostępny")
+    current = (st.get("staged") or st.get("booted") or {}).get("image", "")
+    if not current:
+        raise ApiError("Nie wiadomo, z jakiego obrazu działa system")
+    repo, _ = split_image(current)
+    image = f"{repo}:{CHANNELS[channel]['tag']}"
+    if image == current:
+        raise ApiError(f"System już jest na kanale {CHANNELS[channel]['name']}")
+    return start_job("switch", f"Przejście na kanał {CHANNELS[channel]['name']}",
+                     job_switch(image), BOOTC_STEPS).as_dict()
 
 
 def r_system_rollback(body, q):
@@ -1729,6 +1776,7 @@ ROUTES = {
     ("POST", "/api/system/check"): r_system_check,
     ("POST", "/api/system/upgrade"): r_system_upgrade,
     ("POST", "/api/system/switch"): r_system_switch,
+    ("POST", "/api/system/channel"): r_system_channel,
     ("POST", "/api/system/rollback"): r_system_rollback,
     ("POST", "/api/power"): r_power,
     ("GET", "/api/job"): r_job,

@@ -293,6 +293,11 @@ div.inline { margin-top: 6px; }
 .steps .progress { margin-top: 6px; height: 10px; }
 .steps .sd { color: var(--muted); font-size: 15px; margin-top: 5px; overflow-wrap: anywhere; }
 .steps li.failed .sd { color: var(--bad); }
+
+.chan { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.chan-head { font-weight: 600; margin-bottom: 8px; }
+.chan .hint { margin: 10px 0 0; }
+.chan .btn { margin-top: 12px; }
 .job-stage { font-weight: 600; }
 .job-detail { color: var(--muted); font-size: 16px; margin-top: 6px; min-height: 1.4em; }
 .progress { height: 14px; border-radius: 7px; background: var(--field); overflow: hidden; margin-top: 10px; }

@@ -668,6 +668,34 @@ function renderSteps(job) {
     });
 }
 
+const CHANNEL_NAMES = { stable: "stabilny", dev: "testowy" };
+let chanPick = null;  // a channel tapped but not switched to yet
+
+function renderChannel(running) {
+    const s = sys, avail = !!(s && s.available);
+    const cur = avail ? s.next_channel : null;
+    if (chanPick === cur) chanPick = null;
+    const sel = chanPick || cur;
+    $("chan").querySelectorAll("button").forEach(b => {
+        b.classList.toggle("on", b.dataset.v === sel);
+        b.disabled = running || !avail;
+    });
+    let hint = "Stabilny: wydania (releases) — sprawdzone wersje. Testowy: każda zmiana z gałęzi dev, " +
+        "nowości od razu, ale mniej sprawdzone.";
+    if (chanPick) {
+        hint = `Pobierze wersję z kanału ${CHANNEL_NAMES[chanPick]} i włączy ją po restarcie.` +
+            (chanPick === "stable" && cur === "dev" ? " Może być starsza niż ta z kanału testowego." : "");
+    } else if (avail && cur === "custom") {
+        hint = `System działa z własnego obrazu (${s.booted ? s.booted.image : "?"}). Wybierz kanał, ` +
+            "żeby wrócić do zwykłych aktualizacji.";
+    } else if (avail && s.channel !== s.next_channel) {
+        hint = `Po restarcie system przejdzie na kanał ${CHANNEL_NAMES[s.next_channel] || "własny"}.`;
+    }
+    $("chan-hint").textContent = hint;
+    $("chan-switch").hidden = !chanPick;
+    $("chan-switch").disabled = running;
+    if (chanPick) $("chan-switch").textContent = `Przytrzymaj: przejdź na kanał ${CHANNEL_NAMES[chanPick]}`;
+}
 
 let sys = null;          // GET /system (bootc status + last check)
 let sysJob = null;       // last update-ish job (check / upgrade / switch)
@@ -798,13 +826,14 @@ function renderUpdate() {
         state = "err"; title = "Nie udało się sprawdzić aktualizacji"; sub = s.checked.error;
     } else if (s.checked && s.checked.time) {
         state = "ok"; title = "System jest aktualny";
-        sub = `${versionName(s.booted)} · sprawdzono ${fmtAgo(s.checked.time)}`;
+        sub = `${versionName(s.booted)}${s.channel === "dev" ? " (testowa)" : ""} · sprawdzono ${fmtAgo(s.checked.time)}`;
     } else {
         state = "ok"; title = `Wersja ${versionName(s.booted)}`; sub = "Aktualizacje nie były jeszcze sprawdzane";
     }
     setStatus("upd", state, ICONS[state], title, sub);
     // The bar only while there's progress to show -- a check is just a spinner.
     renderSteps(job && UPDATE_JOBS.includes(job.kind) && job.kind !== "check" ? job : null);
+    renderChannel(running);
     const avail = !!(s && s.available);
     // One row: [Aktualizuj | Uruchom ponownie] [↻]. Restart replaces
     // "Aktualizuj" once a version waits for it and nothing newer is out.
@@ -1100,6 +1129,15 @@ function initSystem() {
     // downloads only if there's still something newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
+    $("chan").addEventListener("click", e => {
+        const b = e.target.closest("button");
+        if (!b || b.disabled) return;
+        chanPick = b.dataset.v;
+        renderChannel(!!(sysJob && sysJob.state === "running"));
+    });
+    holdButton($("chan-switch"), () => api("/system/channel", { channel: chanPick })
+        .then(j => { chanPick = null; sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
+        .catch(e => toast(e.message, true)));
     holdButton($("sys-switch"), () => api("/system/switch", { image: $("sys-image").value.trim() })
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
         .catch(e => toast(e.message, true)));
