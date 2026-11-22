@@ -38,6 +38,16 @@ def log(*a):
     print("kiosk-shell:", *a, file=sys.stderr, flush=True)
 
 
+def milestone(label):
+    """A point of the kiosk's start-up, for Settings' boot timeline: kioskd
+    picks "kiosk-shell: milestone: <label>" lines out of this unit's journal
+    (their own timestamps), next to the system's."""
+    log("milestone:", label)
+
+
+milestone("kiosk-shell: start")
+
+
 def sandbox_works():
     """Can bubblewrap create the namespaces WebKit's web-process sandbox needs?
 
@@ -80,6 +90,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+milestone("kiosk-shell: GTK gotowy")
 
 WebKit = None  # load_webkit()
 
@@ -186,13 +197,16 @@ def apply_output(cfg):
             touch_transform = transform
     # Touch follows the panel: kioskd sets libinput's calibration matrix
     # (udev) and restarts cage once if it changed -- see kioskd r_touch_set.
+    # In the background: at start-up this runs before the first frame.
     if touch_transform:
-        try:
-            r = api_post("/api/touch", {"transform": touch_transform})
-            if r.get("restart"):
-                log(f"touch matrix changed to transform {touch_transform}, cage restarts")
-        except (OSError, ValueError) as e:
-            log("touch rotation:", e)
+        def set_touch():
+            try:
+                r = api_post("/api/touch", {"transform": touch_transform})
+                if r.get("restart"):
+                    log(f"touch matrix changed to transform {touch_transform}, cage restarts")
+            except (OSError, ValueError) as e:
+                log("touch rotation:", e)
+        threading.Thread(target=set_touch, daemon=True).start()
 
 
 # ------------------------------------------------------------ error page
@@ -265,6 +279,7 @@ class KioskShell(Gtk.Application):
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
+        milestone("kiosk-shell: konfiguracja i obrót")
 
         self.win = Gtk.ApplicationWindow(application=self, title="Kiosk")
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=200)
@@ -281,11 +296,13 @@ class KioskShell(Gtk.Application):
         self.stack.add_named(splash, "splash")
         self.win.fullscreen()
         self.win.present()
+        milestone("kiosk-shell: ekran startowy")
         # A moment for the first frame, then the rest.
         GLib.timeout_add(150, self.setup)
 
     def setup(self):
         load_webkit()
+        milestone("kiosk-shell: WebKit wczytany")
         self.settings = self.make_settings_view()
         self.stack.add_named(self.settings, "settings")
 
@@ -328,6 +345,7 @@ class KioskShell(Gtk.Application):
         if self.pending:
             name, self.pending = self.pending, None
             self.show(name)
+            milestone("kiosk-shell: pierwsza strona")
         return GLib.SOURCE_REMOVE
 
     def wait_for_config(self):
