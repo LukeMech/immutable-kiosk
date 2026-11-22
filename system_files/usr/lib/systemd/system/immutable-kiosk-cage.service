@@ -6,9 +6,9 @@
 Description=Kiosk (cage + kiosk-shell) on tty1
 After=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
-# Splash handover like GDM: `plymouth deactivate` (ExecStartPre) instead of
-# plymouth-quit keeps its last frame up until cage draws; kioskd sends
-# `plymouth quit --retain-splash` once the kiosk has drawn.
+# Splash handover as in the first (spinner) splash, which showed no black
+# gap: our own `plymouth quit --retain-splash` (ExecStartPre) instead of
+# plymouth-quit, its last frame kept until cage draws.
 After=plymouth-start.service plymouth-quit.service
 Conflicts=plymouth-quit.service
 ConditionPathExists=/dev/tty0
@@ -23,10 +23,10 @@ WorkingDirectory=/var/home/kiosk
 # Wait up to 30 s for a non-simple-framebuffer card, then start anyway.
 # ($$: systemd expands $ itself.)
 ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do for c in /sys/class/drm/card[0-9]; do d=$$(readlink -f "$$c/device/driver"); [ -n "$$d" ] && [ "$${d##*/}" != simple-framebuffer ] && exit 0; done; sleep 0.5; done; echo "no GPU (only a firmware framebuffer) after 30 s" >&2'
-# The splash is in its rest pose already (kioskd's unit sent "handover"):
-# release the GPU with that frame on screen for kiosk-splash to continue.
+# The splash has settled already (kioskd's unit sent "handover"): quit it,
+# its last frame kept, for kiosk-splash to continue.
 # "+": as root; "-": no splash is fine.
-ExecStartPre=-+/usr/bin/plymouth deactivate
+ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
 PAMName=immutable-kiosk
 Environment=XDG_SESSION_TYPE=wayland
 # -d: no client-side decorations.
@@ -36,9 +36,9 @@ RestartSec=2
 UtmpIdentifier=tty1
 UtmpMode=user
 TTYPath=/dev/tty1
-# No TTYReset/TTYVTDisallocate: they'd switch tty1 to text mode and blank
-# plymouth's frame before cage draws.
+TTYReset=yes
 TTYVHangup=yes
+TTYVTDisallocate=yes
 StandardInput=tty-fail
 StandardOutput=journal
 # Console output only shows when cage dies -- exactly when it's needed.
