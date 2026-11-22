@@ -192,53 +192,55 @@
 
     <!-- SYSTEM -->
     <section id="tab-system" class="tab" hidden>
+      <!-- System: what runs, its updates, a custom image. -->
       <div class="card">
-        <h2>Wersja systemu</h2>
+        <h2>System</h2>
         <dl class="kv" id="sys-info"></dl>
-      </div>
-      <div class="card">
-        <h2>Aktualizacja</h2>
-        <div class="status" id="upd">
-          <div class="status-icon" id="upd-icon"></div>
-          <div class="status-text">
-            <div class="status-title" id="upd-title">Wczytywanie…</div>
-            <div class="status-sub" id="upd-sub"></div>
+        <div class="sep">
+          <h3>Aktualizacja</h3>
+          <div class="status" id="upd">
+            <div class="status-icon" id="upd-icon"></div>
+            <div class="status-text">
+              <div class="status-title" id="upd-title">Wczytywanie…</div>
+              <div class="status-sub" id="upd-sub"></div>
+            </div>
+          </div>
+          <!-- While an update / channel switch runs (or after it failed): its steps. -->
+          <ol class="steps" id="job-steps" hidden></ol>
+          <div class="actions upd-actions">
+            <button class="btn primary" id="sys-upgrade" disabled>Aktualizuj</button>
+            <button class="btn primary hold" data-hold="1500" id="sys-reboot-now" hidden>Przytrzymaj: uruchom ponownie teraz</button>
+            <button class="btn icon" id="sys-check" aria-label="Sprawdź aktualizacje">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+            </button>
+          </div>
+          <div class="notes" id="upd-notes" hidden></div>
+          <div class="chan">
+            <div class="chan-head">Kanał aktualizacji</div>
+            <div class="seg" id="chan">
+              <button data-v="stable">Stabilny</button>
+              <button data-v="dev">Testowy (dev)</button>
+            </div>
+            <p class="hint" id="chan-hint"></p>
+            <button class="btn primary hold" data-hold="1500" id="chan-switch" hidden></button>
           </div>
         </div>
-        <!-- While an update / channel switch runs (or after it failed): its steps. -->
-        <ol class="steps" id="job-steps" hidden></ol>
-        <div class="actions upd-actions">
-          <button class="btn primary" id="sys-upgrade" disabled>Aktualizuj</button>
-          <button class="btn primary hold" data-hold="1500" id="sys-reboot-now" hidden>Przytrzymaj: uruchom ponownie teraz</button>
-          <button class="btn icon" id="sys-check" aria-label="Sprawdź aktualizacje">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
-          </button>
-        </div>
-        <div class="notes" id="upd-notes" hidden></div>
-        <div class="chan">
-          <div class="chan-head">Kanał aktualizacji</div>
-          <div class="seg" id="chan">
-            <button data-v="stable">Stabilny</button>
-            <button data-v="dev">Testowy (dev)</button>
+        <div class="sep">
+          <h3>Własny obraz systemu</h3>
+          <p class="hint">Obraz bootc z rejestru, np. gałąź testowa. System przyjmuje tylko obrazy podpisane kluczem ghcr.io/lukemech.</p>
+          <label>Obraz
+            <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
+          </label>
+          <div class="actions"><button class="btn hold" data-hold="1500" id="sys-switch">Przytrzymaj: przełącz obraz</button></div>
+          <label for="sys-repo">Repozytorium z listą zmian (GitHub, właściciel/nazwa)</label>
+          <div class="inline">
+            <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
+            <button class="btn" id="sys-repo-save" disabled>Zapisz</button>
           </div>
-          <p class="hint" id="chan-hint"></p>
-          <button class="btn primary hold" data-hold="1500" id="chan-switch" hidden></button>
+          <p class="hint" style="margin-top:8px">Stąd pochodzą opisy wersji („Co nowego”) — z wydań (releases) tego repozytorium.</p>
         </div>
       </div>
-      <div class="card">
-        <h2>Własny obraz systemu</h2>
-        <p class="hint">Obraz bootc z rejestru, np. gałąź testowa. System przyjmuje tylko obrazy podpisane kluczem ghcr.io/lukemech.</p>
-        <label>Obraz
-          <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
-        </label>
-        <div class="actions"><button class="btn hold" data-hold="1500" id="sys-switch">Przytrzymaj: przełącz obraz</button></div>
-        <label for="sys-repo">Repozytorium z listą zmian (GitHub, właściciel/nazwa)</label>
-        <div class="inline">
-          <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
-          <button class="btn" id="sys-repo-save" disabled>Zapisz</button>
-        </div>
-        <p class="hint" style="margin-top:8px">Stąd pochodzą opisy wersji („Co nowego”) — z wydań (releases) tego repozytorium.</p>
-      </div>
+      <!-- Urządzenie: the tablet itself and how long it took to start. -->
       <div class="card">
         <h2>Urządzenie</h2>
         <dl class="kv" id="dev-info">
@@ -258,26 +260,28 @@
             <span class="sub">Pod tą nazwą tablet widać w sieci (DHCP, router). Małe litery, cyfry i myślniki.</span>
           </dd>
         </dl>
-      </div>
-      <div class="card">
-        <h2>Czas uruchamiania</h2>
-        <div class="status" id="boot-st">
-          <div class="status-icon" id="boot-st-icon"></div>
-          <div class="status-text">
-            <div class="status-title" id="boot-st-title">Wczytywanie…</div>
-            <div class="status-sub" id="boot-st-sub"></div>
+        <div class="sep">
+          <h3>Czas uruchamiania</h3>
+          <div class="status" id="boot-st">
+            <div class="status-icon" id="boot-st-icon"></div>
+            <div class="status-text">
+              <div class="status-title" id="boot-st-title">Wczytywanie…</div>
+              <div class="status-sub" id="boot-st-sub"></div>
+            </div>
           </div>
+          <div class="bootbar" id="boot-bar"></div>
+          <div class="legend" id="boot-legend"></div>
+          <p class="msg warn" id="boot-failed" hidden></p>
+          <!-- Everything under the bar: folded until asked for. -->
+          <details class="log" id="boot-more" hidden>
+            <summary>Szczegóły startu</summary>
+            <h3>Przebieg startu (sekundy od startu jądra)</h3>
+            <ul class="timeline" id="boot-timeline"></ul>
+            <h3>Najdłużej startujące usługi</h3>
+            <ul class="slow" id="boot-slow"></ul>
+            <div id="boot-chains"></div>
+          </details>
         </div>
-        <div class="bootbar" id="boot-bar"></div>
-        <div class="legend" id="boot-legend"></div>
-        <div id="boot-more" hidden>
-          <h3>Przebieg startu (sekundy od startu jądra)</h3>
-          <ul class="timeline" id="boot-timeline"></ul>
-          <h3>Najdłużej startujące usługi</h3>
-          <ul class="slow" id="boot-slow"></ul>
-          <div id="boot-chains"></div>
-        </div>
-        <p class="msg warn" id="boot-failed" hidden></p>
       </div>
       <!-- Recovery: undoing things, held longer (3 s) than power (1.5 s). -->
       <div class="card" id="recovery-card">
