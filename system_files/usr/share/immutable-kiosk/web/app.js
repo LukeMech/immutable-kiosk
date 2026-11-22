@@ -40,6 +40,36 @@ function msg(el, text, kind = "") {
     el.className = "msg" + (kind ? " " + kind : "");
 }
 
+/* Icons (24x24, stroked) -- the status lines and list rows share them. */
+const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const wifiIcon = level => svg(  // level 0-3: how many arcs are lit
+    `<circle cx="12" cy="19" r="1.3" fill="currentColor" stroke="none"/>` +
+    ['M8.6 15.6a4.8 4.8 0 0 1 6.8 0', 'M5.6 12.6a9 9 0 0 1 12.8 0', 'M2.6 9.4a13.3 13.3 0 0 1 18.8 0']
+        .map((d, i) => `<path d="${d}"${i < level ? "" : ' opacity=".28"'}/>`).join(""));
+const ICONS = {
+    ok: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+    new: svg('<path d="M12 4v12"/><path d="M6.5 11l5.5 5.5 5.5-5.5"/><path d="M5 20h14"/>'),
+    ready: svg('<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>'),
+    err: svg('<path d="M12 7v6"/><path d="M12 17h.01"/>'),
+    warn: svg('<path d="M12 4l9 16H3z"/><path d="M12 10v4"/><path d="M12 17.5h.01"/>'),
+    busy: svg('<path d="M12 3a9 9 0 1 0 9 9"/>'),
+    screen: svg('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
+    wifiOff: svg('<circle cx="12" cy="19" r="1.3" fill="currentColor" stroke="none"/><path d="M8.6 15.6a4.8 4.8 0 0 1 6.8 0" opacity=".28"/><path d="M5.6 12.6a9 9 0 0 1 12.8 0" opacity=".28"/><path d="M3 3l18 18"/>'),
+    ethernet: svg('<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/>'),
+    clock: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'),
+    tablet: svg('<rect x="5" y="2.5" width="14" height="19" rx="2.5"/><path d="M11 18.5h2"/>'),
+    plug: svg('<path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>'),
+    battery: svg('<rect x="2.5" y="7" width="17" height="10" rx="2"/><path d="M22 10.5v3"/>'),
+};
+
+/* Fill a status line (see .status in app.css): <id>, <id>-icon, -title, -sub. */
+function setStatus(id, state, icon, title, sub = "") {
+    $(id).className = "status" + (state ? " " + state : "");
+    $(id + "-icon").innerHTML = icon;
+    $(id + "-title").textContent = title;
+    $(id + "-sub").textContent = sub;
+}
+
 async function busy(btn, fn) {
     btn.disabled = true;
     try { return await fn(); }
@@ -109,14 +139,33 @@ window.kioskShown = () => { if (cfg && cfg.mode !== "installer") showTab(current
 /* ---------- HMI */
 let hmiDraft = null;
 
-function renderHmiUrl() {
+let hmiTest = null;  // last "Sprawdź połączenie": {url, busy} or {url, ok, message}
+
+// Same rules as kioskd's hmi_url(), so a saved address compares equal.
+function hmiDraftUrl() {
     const h = hmiDraft;
-    if (!h.host) { $("hmi-url").textContent = "—"; return; }
+    let host = (h.host || "").trim();
+    if (!host) return "";
+    if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`;
     const def = h.scheme === "https" ? 443 : 80;
     const port = Number(h.port) && Number(h.port) !== def ? ":" + h.port : "";
     let path = h.path || "/";
     if (!path.startsWith("/")) path = "/" + path;
-    $("hmi-url").textContent = `${h.scheme}://${h.host}${port}${path}`;
+    return `${h.scheme}://${host}${port}${path}`;
+}
+
+function renderHmiUrl() {
+    const url = hmiDraftUrl();
+    if (!url) {
+        setStatus("hmi-st", "warn", ICONS.warn, "Brak adresu HMI", "Podaj adres serwera HMI, żeby wyświetlić wizualizację.");
+        return;
+    }
+    const unsaved = url !== (cfg && cfg.hmi_url);
+    const t = hmiTest && hmiTest.url === url ? hmiTest : null;
+    const note = unsaved ? "Niezapisane — „Zapisz i otwórz HMI”" : "";
+    if (t && t.busy) setStatus("hmi-st", "busy", ICONS.busy, url, "Sprawdzanie połączenia…");
+    else if (t) setStatus("hmi-st", t.ok ? "ok" : "err", t.ok ? ICONS.ok : ICONS.err, url, [t.message, note].filter(Boolean).join(" · "));
+    else setStatus("hmi-st", unsaved ? "new" : "", ICONS.screen, url, note || "Zapisany adres wizualizacji");
 }
 
 function readHmiForm() {
@@ -145,7 +194,6 @@ async function loadHmi() {
     $("opt-retry").value = cfg.retry_seconds;
     $("zoom-val").textContent = Math.round(cfg.zoom * 100) + "%";
     renderHmiUrl();
-    msg($("hmi-msg"), cfg.hmi_url ? "" : "Podaj adres serwera HMI, żeby wyświetlić wizualizację.", cfg.hmi_url ? "" : "warn");
     $("back").disabled = !cfg.hmi_url;
 }
 
@@ -158,19 +206,25 @@ function initHmi() {
         seg($("hmi-scheme"), scheme);
         readHmiForm();
     }));
-    $("hmi-test").addEventListener("click", e => busy(e.currentTarget, async () => {
+    $("hmi-test").addEventListener("click", e => {
         readHmiForm();
-        msg($("hmi-msg"), "Sprawdzanie…");
-        const r = await api("/hmi/test", { host: hmiDraft.host, port: hmiDraft.port });
-        msg($("hmi-msg"), r.message, r.ok ? "ok" : "err");
-    }).catch(() => msg($("hmi-msg"), "")));
+        const url = hmiDraftUrl();
+        hmiTest = { url, busy: true };
+        renderHmiUrl();
+        busy(e.currentTarget, async () => {
+            const r = await api("/hmi/test", { host: hmiDraft.host, port: hmiDraft.port });
+            hmiTest = { url, ok: r.ok, message: r.message };
+        }).catch(err => { hmiTest = { url, ok: false, message: err.message }; })
+            .finally(renderHmiUrl);
+    });
     $("hmi-save").addEventListener("click", e => busy(e.currentTarget, async () => {
         readHmiForm();
         cfg = await api("/config", { hmi: hmiDraft });
         shell("config-changed");
         if (cfg.hmi_url) shell("reload-hmi");
         $("back").disabled = !cfg.hmi_url;
-    }));
+        renderHmiUrl();
+    }).catch(() => {}));
     $("opt-save").addEventListener("click", e => busy(e.currentTarget, async () => {
         cfg = await api("/config", {
             accept_self_signed: $("opt-cert").checked,
@@ -183,65 +237,95 @@ function initHmi() {
 }
 
 /* ---------- Wi-Fi */
-const bars = s => {
-    const n = s >= 75 ? 4 : s >= 50 ? 3 : s >= 25 ? 2 : 1;
-    return `<span class="sig">${[1, 2, 3, 4].map(i => `<i class="${i <= n ? "on" : ""}" style="height:${i * 25}%"></i>`).join("")}</span>`;
-};
+const sigLevel = s => s >= 70 ? 3 : s >= 45 ? 2 : 1;
 let openSsid = null;
+let wifiLast = null;      // last GET /wifi
+let wifiOverride = null;  // {state, icon, title, sub} while connecting / after a failed connect
+
+function renderWifiStatus() {
+    const w = wifiLast, o = wifiOverride;
+    if (o) return setStatus("wifi-st", o.state, o.icon, o.title, o.sub);
+    if (!w) return setStatus("wifi-st", "busy", ICONS.busy, "Wczytywanie…");
+    const d = w.device;
+    if (!d) return setStatus("wifi-st", "err", ICONS.wifiOff, "Brak karty Wi-Fi", "Tablet nie zgłasza żadnego adaptera Wi-Fi.");
+    if (!w.enabled) return setStatus("wifi-st", "off", ICONS.wifiOff, "Wi-Fi wyłączone", "Włącz przełącznikiem obok tytułu.");
+    if (d.state.startsWith("connecting")) return setStatus("wifi-st", "busy", ICONS.busy, `Łączenie z ${d.connection || "siecią"}…`, "");
+    if (d.state.startsWith("connected")) {
+        const n = w.networks.find(x => x.in_use);
+        const sub = [d.address, n ? `sygnał ${n.signal}%` : ""].filter(Boolean).join(" · ");
+        return setStatus("wifi-st", "ok", wifiIcon(n ? sigLevel(n.signal) : 3), `Połączono z ${n ? n.ssid : d.connection}`, sub);
+    }
+    setStatus("wifi-st", "warn", wifiIcon(0), "Nie połączono", w.networks.length ? "Wybierz sieć z listy poniżej." : "W pobliżu nie widać żadnej sieci.");
+}
 
 async function loadWifi(rescan) {
-    const m = $("wifi-msg");
-    if (rescan) msg(m, "Szukanie sieci…");
+    if (rescan) wifiOverride = { state: "busy", icon: ICONS.busy, title: "Szukanie sieci…" };
+    renderWifiStatus();
     let w;
     try { w = await api("/wifi" + (rescan ? "?rescan=1" : "")); }
-    catch (e) { msg(m, e.message, "err"); return; }
-    msg(m, w.enabled ? "" : "Wi-Fi jest wyłączone.");
+    catch (e) {
+        wifiOverride = { state: "err", icon: ICONS.err, title: "Nie udało się odczytać Wi-Fi", sub: e.message };
+        renderWifiStatus();
+        return;
+    }
+    if (wifiOverride && wifiOverride.state === "busy") wifiOverride = null;
+    wifiLast = w;
     $("wifi-radio").checked = w.enabled;
+    renderWifiStatus();
     const list = $("wifi-list");
-    list.innerHTML = w.networks.length ? "" : `<li class="empty">${w.enabled ? "Nie znaleziono sieci." : ""}</li>`;
+    list.innerHTML = w.networks.length ? "" : `<li class="empty">${w.enabled ? "Nie znaleziono sieci." : "Wi-Fi jest wyłączone."}</li>`;
     for (const n of w.networks) {
         const li = document.createElement("li");
-        const lock = n.security ? "🔒 " + esc(n.security) : "otwarta";
-        li.innerHTML = `<div class="item">${bars(n.signal)}
-            <div class="name">${esc(n.ssid)}<div class="sub">${lock}</div></div>
+        const sec = n.security ? `zabezpieczona · ${esc(n.security)}` : "otwarta";
+        li.innerHTML = `<div class="item${n.in_use ? " static" : ""}">
+            <span class="ico${n.in_use ? " ok" : ""}">${wifiIcon(sigLevel(n.signal))}</span>
+            <div class="name">${esc(n.ssid)}<div class="sub">${sec} · ${n.signal}%</div></div>
             ${n.in_use ? '<span class="badge ok">połączono</span>' : n.saved ? '<span class="badge">zapisana</span>' : ""}
           </div>`;
+        const item = li.querySelector(".item");
+        list.appendChild(li);
+        if (n.in_use) continue;
         const ex = document.createElement("div");
         ex.className = "expand";
         ex.hidden = openSsid !== n.ssid;
-        if (n.in_use) {
-            ex.innerHTML = `<p class="hint">Połączono z tą siecią.</p>`;
-        } else {
-            ex.innerHTML = (n.security ? `<label>Hasło${n.saved ? " (puste = zapisane)" : ""}
-                    <input type="password" autocomplete="off"></label>` : "") +
-                `<div class="actions"><button class="btn primary">Połącz</button></div>`;
-            const btn = ex.querySelector("button");
-            btn.addEventListener("click", () => busy(btn, async () => {
-                const pass = ex.querySelector("input")?.value || "";
-                msg(m, `Łączenie z ${n.ssid}…`);
-                try {
-                    await api("/wifi/connect", { ssid: n.ssid, password: pass });
-                    msg(m, `Połączono z ${n.ssid}`, "ok");
-                    openSsid = null;
-                } catch (e) { msg(m, e.message, "err"); throw e; }
-                await loadWifi(false);
-            }).catch(() => {}));
-        }
-        li.querySelector(".item").addEventListener("click", () => {
+        item.classList.toggle("open", !ex.hidden);
+        ex.innerHTML = (n.security ? `<label>Hasło${n.saved ? " (puste = zapisane)" : ""}
+                <input type="password" autocomplete="off"></label>` : "") +
+            `<div class="actions"><button class="btn primary">Połącz</button></div>`;
+        const btn = ex.querySelector("button");
+        btn.addEventListener("click", () => busy(btn, async () => {
+            const pass = ex.querySelector("input")?.value || "";
+            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Łączenie z ${n.ssid}…`, sub: "To może potrwać do minuty." };
+            renderWifiStatus();
+            try {
+                await api("/wifi/connect", { ssid: n.ssid, password: pass });
+                wifiOverride = null;
+                openSsid = null;
+            } catch (e) {
+                wifiOverride = { state: "err", icon: ICONS.err, title: `Nie udało się połączyć z ${n.ssid}`, sub: e.message };
+                renderWifiStatus();
+                throw e;
+            }
+            await loadWifi(false);
+        }).catch(() => {}));
+        item.addEventListener("click", () => {
             openSsid = ex.hidden ? n.ssid : null;
-            list.querySelectorAll(".expand").forEach(x => { if (x !== ex) x.hidden = true; });
+            list.querySelectorAll(".expand").forEach(x => {
+                if (x !== ex) { x.hidden = true; x.previousElementSibling.classList.remove("open"); }
+            });
             ex.hidden = !ex.hidden;
+            item.classList.toggle("open", !ex.hidden);
             if (!ex.hidden) ex.querySelector("input")?.focus();
         });
         li.appendChild(ex);
-        list.appendChild(li);
     }
     const saved = $("wifi-saved");
     saved.innerHTML = w.saved.length ? "" : '<li class="empty">Brak zapisanych sieci.</li>';
     for (const s of w.saved) {
         const li = document.createElement("li");
-        li.innerHTML = `<div class="item"><div class="name">${esc(s.ssid)}</div>
-            ${s.active ? '<span class="badge ok">aktywna</span>' : ""}
+        li.innerHTML = `<div class="item static">
+            <span class="ico${s.active ? " ok" : ""}">${wifiIcon(s.active ? 3 : 0)}</span>
+            <div class="name">${esc(s.ssid)}${s.active ? '<div class="sub">aktywna</div>' : ""}</div>
             <button class="btn danger hold" data-hold="1000">Zapomnij</button></div>`;
         const b = li.querySelector("button");
         holdButton(b, () => busy(b, async () => {
@@ -254,9 +338,16 @@ async function loadWifi(rescan) {
 }
 
 function initWifi() {
-    $("wifi-scan").addEventListener("click", e => busy(e.currentTarget, () => loadWifi(true)));
-    $("wifi-radio").addEventListener("change", e => api("/wifi/radio", { enabled: e.target.checked })
-        .then(() => loadWifi(e.target.checked)).catch(err => toast(err.message, true)));
+    $("wifi-scan").addEventListener("click", e => {
+        const b = e.currentTarget;
+        b.classList.add("spin");
+        busy(b, () => loadWifi(true)).catch(() => {}).finally(() => b.classList.remove("spin"));
+    });
+    $("wifi-radio").addEventListener("change", e => {
+        wifiOverride = null;
+        api("/wifi/radio", { enabled: e.target.checked })
+            .then(() => loadWifi(e.target.checked)).catch(err => toast(err.message, true));
+    });
     $("hid-connect").addEventListener("click", e => busy(e.currentTarget, async () => {
         const ssid = $("hid-ssid").value.trim();
         await api("/wifi/connect", { ssid, password: $("hid-pass").value, hidden: true });
@@ -267,28 +358,38 @@ function initWifi() {
 }
 
 /* ---------- Network (IP) */
+const statusHtml = (state, icon, title, sub) => `<div class="status ${state}"><div class="status-icon">${icon}</div>
+    <div class="status-text"><div class="status-title">${esc(title)}</div><div class="status-sub">${esc(sub)}</div></div></div>`;
+
 async function loadNet() {
     const box = $("net-list");
     let n;
+    const lone = (state, icon, title, sub) => `<div class="card"><h2>Połączenie</h2>${statusHtml(state, icon, title, sub)}</div>`;
     try { n = await api("/network"); }
-    catch (e) { box.innerHTML = `<div class="card"><p class="msg err">${esc(e.message)}</p></div>`; return; }
+    catch (e) { box.innerHTML = lone("err", ICONS.err, "Nie udało się odczytać sieci", e.message); return; }
     if (!n.connections.length) {
-        box.innerHTML = `<div class="card"><h2>Brak aktywnego połączenia</h2>
-            <p class="hint">Połącz się z siecią Wi-Fi albo podłącz kabel (adapter USB-Ethernet).</p></div>`;
+        box.innerHTML = lone("warn", ICONS.warn, "Brak aktywnego połączenia",
+            "Połącz się z siecią Wi-Fi albo podłącz kabel (adapter USB-Ethernet).");
         return;
     }
     box.innerHTML = "";
     for (const c of n.connections) {
-        const card = document.createElement("div");
-        card.className = "card";
+        const el = document.createElement("div");
+        el.className = "card";
         const cur = c.current;
-        card.innerHTML = `<h2>${esc(c.type === "wifi" ? "Wi-Fi: " : c.type === "ethernet" ? "Ethernet: " : "")}${esc(c.name)}</h2>
+        const kind = c.type === "wifi" ? "Wi-Fi" : c.type === "ethernet" ? "Ethernet" : c.type;
+        const has = cur.addresses.length > 0;
+        const how = c.method === "manual" ? "adres statyczny" : "adres z DHCP";
+        el.innerHTML = `<h2>${esc(kind)}</h2>` +
+          statusHtml(has ? "ok" : "busy", has ? (c.type === "wifi" ? wifiIcon(3) : ICONS.ethernet) : ICONS.busy,
+                     c.name, has ? `${cur.addresses.join(", ")} · ${how}` : "Czekam na adres IP…") + `
           <dl class="kv">
-            <dt>Adres</dt><dd>${esc(cur.addresses.join(", ") || "—")}</dd>
             <dt>Brama</dt><dd>${esc(cur.gateway || "—")}</dd>
             <dt>DNS</dt><dd>${esc(cur.dns.join(", ") || "—")}</dd>
+            <dt>Interfejs</dt><dd>${esc(c.device || "—")}</dd>
           </dl>
-          <div class="seg" style="margin-top:16px"><button data-v="auto">Automatycznie (DHCP)</button><button data-v="manual">Statyczny adres</button></div>
+          <div class="sep"><h3>Adresowanie IPv4</h3>
+          <div class="seg"><button data-v="auto">Automatycznie (DHCP)</button><button data-v="manual">Statyczny adres</button></div>
           <div class="manual">
             <div class="grid2">
               <label>Adres IP<input name="address" type="text" inputmode="decimal" placeholder="192.168.1.20"></label>
@@ -301,10 +402,10 @@ async function loadNet() {
             </div>
           </div>
           <p class="msg"></p>
-          <div class="actions"><button class="btn primary save">Zastosuj</button></div>`;
+          <div class="actions"><button class="btn primary save">Zastosuj</button></div></div>`;
         let method = c.method === "manual" ? "manual" : "auto";
-        const segEl = card.querySelector(".seg"), manual = card.querySelector(".manual");
-        const f = name => card.querySelector(`[name=${name}]`);
+        const segEl = el.querySelector(".seg"), manual = el.querySelector(".manual");
+        const f = name => el.querySelector(`[name=${name}]`);
         f("address").value = c.address || (cur.addresses[0] || "").split("/")[0];
         f("prefix").value = c.prefix || (cur.addresses[0] || "/24").split("/")[1];
         f("gateway").value = c.gateway || cur.gateway;
@@ -313,7 +414,7 @@ async function loadNet() {
         const pick = v => { method = v; seg(segEl, v); manual.hidden = v !== "manual"; };
         seg(segEl, method, pick);
         pick(method);
-        const save = card.querySelector(".save"), m = card.querySelector(".msg");
+        const save = el.querySelector(".save"), m = el.querySelector(".msg");
         save.addEventListener("click", () => busy(save, async () => {
             await api("/network", {
                 uuid: c.uuid, method, address: f("address").value, prefix: Number(f("prefix").value),
@@ -322,7 +423,7 @@ async function loadNet() {
             msg(m, "Zastosowano. Połączenie jest odnawiane…", "ok");
             setTimeout(loadNet, 4000);
         }).catch(e => msg(m, e.message, "err")));
-        box.appendChild(card);
+        box.appendChild(el);
     }
 }
 
@@ -417,15 +518,6 @@ let sysWasRunning = false;
 let sysNotes = null;     // GET /system/changelog (GitHub releases)
 const UPDATE_JOBS = ["check", "upgrade", "switch"];
 const CHECK_EVERY = 15 * 60;  // s: opening System checks again after this
-
-const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-const UPD_ICONS = {
-    ok: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
-    new: svg('<path d="M12 4v12"/><path d="M6.5 11l5.5 5.5 5.5-5.5"/><path d="M5 20h14"/>'),
-    ready: svg('<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>'),
-    err: svg('<path d="M12 7v6"/><path d="M12 17h.01"/>'),
-    busy: svg('<path d="M12 3a9 9 0 1 0 9 9"/>'),
-};
 
 // "latest.20261121-22d3877" -> "20261121-22d3877" when no release matches.
 const shortVersion = e => !e ? "—" : ((e.version || "").replace(/^[^.]*\./, "") || (e.digest || "").slice(7, 19) || "—");
@@ -525,10 +617,7 @@ function renderUpdate() {
     } else {
         state = "ok"; title = `Wersja ${versionName(s.booted)}`; sub = "Aktualizacje nie były jeszcze sprawdzane";
     }
-    $("upd").className = "upd " + state;
-    $("upd-icon").innerHTML = UPD_ICONS[state];
-    $("upd-title").textContent = title;
-    $("upd-sub").textContent = sub;
+    setStatus("upd", state, ICONS[state], title, sub);
     // The bar only while there's progress to show -- a check is just a spinner.
     renderJob(working ? job : null, sysJobEls());
     const avail = !!(s && s.available);
@@ -634,9 +723,12 @@ let hostSaved = null;
 async function refreshDevice() {
     const i = await api("/info").catch(() => null);
     if (!i) return;
-    $("dev-name").textContent = i.device.name || i.device.product || "—";
-    $("dev-vendor").textContent = i.device.vendor || "—";
-    $("dev-power").textContent = powerText(i.power);
+    const p = i.power;
+    const low = p.ac_online === false && p.battery != null && p.battery <= 15;
+    setStatus("dev-st", low ? "warn" : p.ac_online ? "ok" : "",
+              p.ac_online ? ICONS.plug : p.battery != null ? ICONS.battery : ICONS.tablet,
+              i.device.name || i.device.product || "Tablet",
+              [i.device.vendor, powerText(p)].filter(Boolean).join(" · "));
     $("dev-time").textContent = i.time;
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {

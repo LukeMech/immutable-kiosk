@@ -361,7 +361,27 @@ def wifi_state(rescan):
             elif in_use == "*":
                 n["in_use"] = True
     nets = sorted(networks.values(), key=lambda n: (not n["in_use"], -n["signal"]))
-    return {"enabled": radio, "networks": nets, "saved": saved}
+    return {"enabled": radio, "networks": nets, "saved": saved, "device": wifi_device()}
+
+
+def wifi_device():
+    """The Wi-Fi adapter's state for the status line: {device, state,
+    connection, address} -- state is nmcli's (connected, connecting
+    (getting IP configuration), disconnected, unavailable...). None = no
+    Wi-Fi adapter at all."""
+    try:
+        rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
+    except ApiError:
+        return None
+    for dev, typ, state, conn in rows:
+        if typ != "wifi":
+            continue
+        addr = ""
+        if state.startswith("connected"):
+            a = nm_kv(["-f", "IP4.ADDRESS", "dev", "show", dev]).get("IP4.ADDRESS", "")
+            addr = (a[0] if isinstance(a, list) else a).split("/")[0]
+        return {"device": dev, "state": state, "connection": "" if conn in ("", "--") else conn, "address": addr}
+    return None
 
 
 def wifi_connect(ssid, password, hidden):

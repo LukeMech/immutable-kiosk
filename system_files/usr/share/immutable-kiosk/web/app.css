@@ -111,7 +111,6 @@ div.inline { margin-top: 6px; }
     all: unset; min-height: 48px; padding: 0 16px; border-radius: 24px; border: 1px solid var(--line);
     color: var(--muted); display: grid; place-items: center; font-size: 16px;
 }
-.url { margin: 14px 0 0; font-family: "Noto Sans Mono", monospace; font-size: 16px; overflow-wrap: anywhere; color: var(--muted); }
 
 .switch { display: flex; align-items: center; gap: 14px; min-height: 56px; color: var(--text); font-size: 18px; margin: 6px 0 0; }
 .switch.inline { margin: 0; }
@@ -126,24 +125,34 @@ div.inline { margin-top: 6px; }
 .switch input:checked { background: var(--accent); }
 .switch input:checked::after { left: 29px; }
 
-.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
-.list { list-style: none; margin: 12px 0 0; padding: 0; }
+.list { list-style: none; margin: 8px 0 0; padding: 0; }
 .list li { border-top: 1px solid var(--line); }
 .list li:first-child { border-top: 0; }
 .list .item { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 6px 4px; }
 .list .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .list .item .sub { color: var(--muted); font-size: 15px; font-weight: 400; }
-.list .expand { padding: 0 4px 16px; }
+.list .item.open { background: rgba(47,129,247,.06); border-radius: 12px 12px 0 0; }
+.list .item::after { content: "▸"; color: var(--muted); flex: none; transition: transform .15s; }
+.list .item.static::after { content: none; }
+.list .item.open::after { transform: rotate(90deg); }
+.list .expand { padding: 0 4px 16px 62px; }
 .list .empty { color: var(--muted); padding: 14px 4px; }
-.badge { font-size: 14px; padding: 4px 10px; border-radius: 10px; background: #273241; color: var(--muted); }
+/* Small round icon at the start of a list row (same family as .status-icon). */
+.ico {
+    flex: none; width: 44px; height: 44px; border-radius: 50%;
+    display: grid; place-items: center; background: #273241; color: var(--text);
+}
+.ico svg { width: 24px; height: 24px; }
+.ico.ok { background: rgba(63,185,80,.15); color: var(--ok); }
+.ico.new { background: rgba(47,129,247,.18); color: var(--accent); }
+.badge { flex: none; font-size: 14px; padding: 4px 10px; border-radius: 10px; background: #273241; color: var(--muted); }
 .badge.ok { background: rgba(63,185,80,.18); color: #7ee787; }
-.sig { display: inline-flex; align-items: flex-end; gap: 3px; height: 22px; }
-.sig i { width: 5px; background: #3a4655; border-radius: 2px; }
-.sig i.on { background: var(--text); }
+.badge.new { background: rgba(47,129,247,.18); color: #a5c8ff; }
 
 .list.pick .item { border: 2px solid var(--line); border-radius: 12px; margin-top: 10px; padding: 12px 16px; }
 .list.pick li { border: 0; }
+.list.pick .item::after { content: none; }
 .list.pick .item.on { border-color: var(--accent); background: rgba(47,129,247,.12); }
 .list.pick .item.off { opacity: .45; }
 
@@ -153,22 +162,35 @@ div.inline { margin-top: 6px; }
 .kv dd .sub { display: block; color: var(--muted); font-size: 14px; margin-top: 6px; }
 .kv dt:has(+ dd.inline), .kv dt:has(+ dd > .inline) { align-self: center; }
 
-/* Update status: icon + one line of what's going on + one of detail. */
-.upd { display: flex; gap: 14px; align-items: center; }
-.upd-icon {
+/* Status line, the same on every tab: round icon (colour = state) + one line
+   of what's going on + one of detail, optionally a small action on the right.
+   States: ok / ready (green), new (blue), warn (amber), err (red),
+   busy (spinning), off (grey, dimmed). */
+.status { display: flex; gap: 14px; align-items: center; }
+.status + * { margin-top: 14px; }
+.status-icon {
     flex: none; width: 52px; height: 52px; border-radius: 50%;
     display: grid; place-items: center; background: #273241; color: var(--muted);
 }
-.upd-icon svg { width: 28px; height: 28px; }
-.upd-text { min-width: 0; }
-.upd-title { font-weight: 600; font-size: 19px; }
-.upd-sub { color: var(--muted); font-size: 16px; overflow-wrap: anywhere; }
-.upd.ok .upd-icon, .upd.ready .upd-icon { background: rgba(63,185,80,.15); color: var(--ok); }
-.upd.new .upd-icon { background: rgba(47,129,247,.18); color: var(--accent); }
-.upd.err .upd-icon { background: rgba(248,81,73,.15); color: var(--bad); }
-.upd.busy .upd-icon svg { animation: spin 1s linear infinite; }
-.upd.ready { background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.35); border-radius: 12px; padding: 14px; }
-.actions .btn.icon { flex: 0 0 64px; padding: 0; }
+.status-icon svg { width: 28px; height: 28px; }
+.status-text { flex: 1; min-width: 0; }
+.status-title { font-weight: 600; font-size: 19px; overflow-wrap: anywhere; }
+.status-sub { color: var(--muted); font-size: 16px; overflow-wrap: anywhere; }
+.status > .btn { flex: none; }
+.status.ok .status-icon, .status.ready .status-icon { background: rgba(63,185,80,.15); color: var(--ok); }
+.status.new .status-icon { background: rgba(47,129,247,.18); color: var(--accent); }
+.status.warn .status-icon { background: rgba(210,153,34,.16); color: var(--warn); }
+.status.err .status-icon { background: rgba(248,81,73,.15); color: var(--bad); }
+.status.busy .status-icon svg { animation: spin 1s linear infinite; }
+.status.off .status-title { color: var(--muted); }
+.status.ready { background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.35); border-radius: 12px; padding: 14px; }
+/* Card title with something on its right (a switch). */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.card-head h2 { margin: 0; }
+/* A quieter sub-heading inside a card (like "Co nowego"). */
+.card h3 { margin: 18px 0 2px; font-size: 16px; color: var(--muted); font-weight: 600; }
+.sep { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 4px; }
+.actions .btn.icon, .btn.icon { flex: 0 0 64px; width: 64px; padding: 0; }
 .btn.icon svg { width: 26px; height: 26px; }
 .btn.icon.spin { opacity: 1; }
 .btn.icon.spin svg { animation: spin 1s linear infinite; }
@@ -176,7 +198,7 @@ div.inline { margin-top: 6px; }
 
 /* Release notes ("Co nowego") from the GitHub release bodies. */
 .notes { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
-.notes h3 { margin: 0 0 2px; font-size: 16px; color: var(--muted); font-weight: 600; }
+.notes h3 { margin: 0 0 2px; }
 .rel summary { min-height: 52px; display: flex; align-items: center; gap: 12px; list-style: none; }
 .rel summary::-webkit-details-marker { display: none; }
 .rel summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
