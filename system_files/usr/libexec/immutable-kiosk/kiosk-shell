@@ -291,6 +291,10 @@ class KioskShell(Gtk.Application):
         self.boot_reported = False
         self.ok_reported = False
         self.pending = None  # view to reveal once its first page is rendered
+        # The HMI couldn't be reached at start (no network yet, server still
+        # booting): Settings is shown instead, and the HMI replaces it the
+        # moment it loads. Settings' top bar says what's being waited for.
+        self.waiting_for_hmi = False
 
     # -- setup
     def do_activate(self):
@@ -366,6 +370,39 @@ class KioskShell(Gtk.Application):
             self.pending = "settings"  # first boot: nothing to show yet but Settings
             self.ensure_settings()
         GLib.timeout_add_seconds(30, self.reveal)
+        threading.Thread(target=self.listen_events, daemon=True).start()
+
+    def listen_events(self):
+        """kioskd's live events (/api/events, the Settings page reads the
+        same): a network change retries an HMI that couldn't be reached,
+        right then instead of at the next retry tick."""
+        while True:
+            try:
+                req = urllib.request.Request(API + "/api/events")
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    for raw in r:
+                        line = raw.decode(errors="replace").strip()
+                        if line.startswith("data:") and "net" in json.loads(line[5:]):
+                            GLib.idle_add(self.on_net_change)
+            except (OSError, ValueError) as e:
+                log("events:", e)
+            GLib.usleep(3_000_000)
+
+    def on_net_change(self):
+        if self.hmi and self.hmi_error and self.retry_source:
+            log("network changed: retrying the HMI now")
+            self.load_hmi()
+        return GLib.SOURCE_REMOVE
+
+    def set_waiting(self, on):
+        self.waiting_for_hmi = on
+        self.tell_settings_waiting()
+
+    def tell_settings_waiting(self):
+        if self.settings_loaded:
+            self.settings.evaluate_javascript(
+                f"window.kioskWaiting && window.kioskWaiting({'true' if self.waiting_for_hmi else 'false'})",
+                -1, None, None, None, None, None)
 
     def reveal(self):
         if self.pending:
@@ -503,6 +540,7 @@ class KioskShell(Gtk.Application):
         if name == "settings":
             self.settings.evaluate_javascript("window.kioskShown && window.kioskShown()", -1,
                                               None, None, None, None, None)
+            self.tell_settings_waiting()
         elif self.settings_loaded:
             self.settings.evaluate_javascript("window.kioskHidden && window.kioskHidden()", -1,
                                               None, None, None, None, None)
@@ -579,6 +617,8 @@ class KioskShell(Gtk.Application):
     def schedule_retry(self):
         self.cancel_retry()
         secs = int(self.cfg.get("retry_seconds", 10))
+        if self.waiting_for_hmi:
+            secs = min(secs, 5)  # Settings is on screen meanwhile: try often
 
         def fire():
             self.retry_source = None
@@ -598,6 +638,14 @@ class KioskShell(Gtk.Application):
         if is_benign(error):
             return False
         log("HMI load failed:", uri, error.message)
+        if self.pending == "hmi":
+            # Start-up and no HMI: Settings instead of the error page (it
+            # shows the network and what's being waited for); the HMI keeps
+            # being tried behind it and takes over once it loads.
+            log("HMI not reachable at start: Settings until it is")
+            self.waiting_for_hmi = True
+            self.pending = "settings"
+            self.ensure_settings()
         self.show_error("Brak połączenia z HMI",
                         f"Nie można otworzyć <code>{esc(uri)}</code>.<br>{esc(error.message)}", uri)
         return True
@@ -620,6 +668,8 @@ class KioskShell(Gtk.Application):
         """First page rendered by either view -- the HMI, its error page or
         Settings: cage, GTK, WebKit and kioskd all work. kioskd tells
         boot-counter this boot is good (automatic rollback)."""
+        if event == WebKit.LoadEvent.FINISHED and view is self.settings:
+            self.tell_settings_waiting()  # a (re)loaded page starts without it
         if event == WebKit.LoadEvent.FINISHED and self.pending == ("hmi" if view is self.hmi else "settings"):
             self.reveal()
         if event == WebKit.LoadEvent.FINISHED and not self.ok_reported:
@@ -642,6 +692,12 @@ class KioskShell(Gtk.Application):
         if event == WebKit.LoadEvent.COMMITTED:
             self.cancel_retry()
         elif event == WebKit.LoadEvent.FINISHED and not self.hmi_error:
+            if self.waiting_for_hmi:
+                # Reachable at last: the HMI replaces Settings shown meanwhile.
+                log("HMI reachable: switching to it")
+                self.set_waiting(False)
+                if self.stack.get_visible_child_name() == "settings":
+                    self.show("hmi")
             # The HMI is up: Settings may load now, with a head start for the
             # HMI's own scripts.
             GLib.timeout_add_seconds(3, self.ensure_settings)
