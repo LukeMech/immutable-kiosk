@@ -244,6 +244,9 @@ let wifiOverride = null;  // {state, icon, title, sub} while connecting / after 
 
 function renderWifiStatus() {
     const w = wifiLast, o = wifiOverride;
+    const d0 = w && w.device;
+    // Disconnect: only next to a live connection, never while something runs.
+    $("wifi-off").hidden = !!o || !(w && w.enabled && d0 && /^(connected|connecting)/.test(d0.state));
     if (o) return setStatus("wifi-st", o.state, o.icon, o.title, o.sub);
     if (!w) return setStatus("wifi-st", "busy", ICONS.busy, "Wczytywanie…");
     const d = w.device;
@@ -271,20 +274,22 @@ async function loadWifi(rescan) {
     if (wifiOverride && wifiOverride.state === "busy") wifiOverride = null;
     wifiLast = w;
     $("wifi-radio").checked = w.enabled;
+    $("wifi-radio-box").hidden = !w.device;  // shown once the real state is known
     renderWifiStatus();
     const list = $("wifi-list");
-    list.innerHTML = w.networks.length ? "" : `<li class="empty">${w.enabled ? "Nie znaleziono sieci." : "Wi-Fi jest wyłączone."}</li>`;
-    for (const n of w.networks) {
+    // The connected network is the status line above, not a row here.
+    const others = w.networks.filter(n => !n.in_use);
+    list.innerHTML = others.length ? "" : `<li class="empty">${w.enabled ? "Nie znaleziono innych sieci." : "Wi-Fi jest wyłączone."}</li>`;
+    for (const n of others) {
         const li = document.createElement("li");
         const sec = n.security ? `zabezpieczona · ${esc(n.security)}` : "otwarta";
-        li.innerHTML = `<div class="item${n.in_use ? " static" : ""}">
-            <span class="ico${n.in_use ? " ok" : ""}">${wifiIcon(sigLevel(n.signal))}</span>
+        li.innerHTML = `<div class="item">
+            <span class="ico">${wifiIcon(sigLevel(n.signal))}</span>
             <div class="name">${esc(n.ssid)}<div class="sub">${sec} · ${n.signal}%</div></div>
-            ${n.in_use ? '<span class="badge ok">połączono</span>' : n.saved ? '<span class="badge">zapisana</span>' : ""}
+            ${n.saved ? '<span class="badge">zapisana</span>' : ""}
           </div>`;
         const item = li.querySelector(".item");
         list.appendChild(li);
-        if (n.in_use) continue;
         const ex = document.createElement("div");
         ex.className = "expand";
         ex.hidden = openSsid !== n.ssid;
@@ -342,6 +347,17 @@ function initWifi() {
         const b = e.currentTarget;
         b.classList.add("spin");
         busy(b, () => loadWifi(true)).catch(() => {}).finally(() => b.classList.remove("spin"));
+    });
+    holdButton($("wifi-off"), () => {
+        const name = (wifiLast && wifiLast.device && wifiLast.device.connection) || "sieci";
+        wifiOverride = { state: "busy", icon: ICONS.busy, title: `Rozłączanie z ${name}…` };
+        renderWifiStatus();
+        api("/wifi/disconnect", {})
+            .then(() => { wifiOverride = null; return loadWifi(false); })
+            .catch(e => {
+                wifiOverride = { state: "err", icon: ICONS.err, title: "Nie udało się rozłączyć", sub: e.message };
+                renderWifiStatus();
+            });
     });
     $("wifi-radio").addEventListener("change", e => {
         wifiOverride = null;

@@ -88,7 +88,8 @@
       <div class="card">
         <div class="card-head">
           <h2>Wi-Fi</h2>
-          <label class="switch inline"><input type="checkbox" id="wifi-radio"><span>Włączone</span></label>
+          <!-- Hidden until /api/wifi answers: unchecked-by-default read as "off". -->
+          <label class="switch inline" id="wifi-radio-box" hidden><input type="checkbox" id="wifi-radio"><span>Włączone</span></label>
         </div>
         <div class="status" id="wifi-st">
           <div class="status-icon" id="wifi-st-icon"></div>
@@ -96,6 +97,9 @@
             <div class="status-title" id="wifi-st-title">Wczytywanie…</div>
             <div class="status-sub" id="wifi-st-sub"></div>
           </div>
+          <button class="btn icon danger hold" data-hold="1000" id="wifi-off" aria-label="Rozłącz" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5L7 17a3.2 3.2 0 0 1-4.5-4.5L5 10"/><path d="M14.5 9.5L17 7a3.2 3.2 0 0 1 4.5 4.5L19 14"/><path d="M8 3v3M3 8h3M16 21v-3M21 16h-3"/></svg>
+          </button>
           <button class="btn icon" id="wifi-scan" aria-label="Szukaj sieci">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
           </button>

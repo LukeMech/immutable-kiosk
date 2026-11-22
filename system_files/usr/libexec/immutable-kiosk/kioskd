@@ -1299,6 +1299,16 @@ def r_wifi_forget(body, q):
     return wifi_state(rescan=False)
 
 
+def r_wifi_disconnect(body, q):
+    """Drop the current Wi-Fi connection. NetworkManager doesn't reconnect
+    the device by itself after a manual disconnect -- until a network is
+    picked again (or the next boot)."""
+    dev = wifi_device()
+    if dev and dev["state"].startswith(("connected", "connecting")):
+        run(["nmcli", "dev", "disconnect", dev["device"]], timeout=30)
+    return wifi_state(rescan=False)
+
+
 def r_wifi_radio(body, q):
     run(["nmcli", "radio", "wifi", "on" if body.get("enabled") else "off"])
     return wifi_state(rescan=False)
@@ -1507,6 +1517,7 @@ ROUTES = {
     ("POST", "/api/wifi/connect"): r_wifi_connect,
     ("POST", "/api/wifi/forget"): r_wifi_forget,
     ("POST", "/api/wifi/radio"): r_wifi_radio,
+    ("POST", "/api/wifi/disconnect"): r_wifi_disconnect,
     ("GET", "/api/network"): r_network,
     ("POST", "/api/network"): r_network_set,
     ("POST", "/api/hostname"): r_hostname_set,
