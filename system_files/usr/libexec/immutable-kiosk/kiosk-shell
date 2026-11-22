@@ -200,15 +200,12 @@ def apply_output(cfg):
         (CACHE / "outputs.tmp").replace(CACHE / "outputs")
     except OSError as e:
         log("output cache:", e)
-    # Touch and the boot splash follow the panel (kioskd r_touch_set; it
-    # restarts cage if the calibration matrix changed). In the background:
-    # at start-up this runs before the first frame.
+    # Touch and the boot splash follow the panel (kioskd r_touch_set). In
+    # the background: at start-up this runs before the first frame.
     if touch_transform:
         def set_touch():
             try:
-                r = api_post("/api/touch", {"transform": touch_transform, "output": panel})
-                if r.get("restart"):
-                    log(f"touch matrix changed to transform {touch_transform}, cage restarts")
+                api_post("/api/touch", {"transform": touch_transform, "output": panel})
             except (OSError, ValueError) as e:
                 log("touch rotation:", e)
         threading.Thread(target=set_touch, daemon=True).start()

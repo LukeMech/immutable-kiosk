@@ -1854,20 +1854,22 @@ def r_display_get(body, q):
     return DISPLAY_INFO
 
 
-def touchscreens_present():
+def touchscreens():
+    found = []
     for ev in Path("/sys/class/input").glob("event*"):
         props = subprocess.run(["udevadm", "info", "-q", "property", str(ev)],
                                capture_output=True, text=True, timeout=5).stdout
         if "ID_INPUT_TOUCHSCREEN=1" in props.splitlines():
-            return True
-    return False
+            found.append(str(ev))
+    return found
 
 
 def r_touch_set(body, q):
     """Make touch follow the panel transform kiosk-shell reports.
 
-    libinput reads the matrix only when a device is added, so cage restarts
-    once when the rule changes; later boots get it from udev before cage.
+    libinput reads the matrix only when a device is added: each touchscreen
+    is removed and added again (udev events), and cage picks it up as a
+    hotplugged device -- no restart.
     """
     transform = str(body.get("transform", ""))
     matrix = TOUCH_MATRICES.get(transform)
@@ -1893,15 +1895,14 @@ def r_touch_set(body, q):
     tmp.write_text(rule)
     tmp.replace(TOUCH_RULE)
     run(["udevadm", "control", "--reload"], timeout=10)
-    run(["udevadm", "trigger", "--action=change", "--subsystem-match=input"], timeout=10)
-    run(["udevadm", "settle", "--timeout=5"], check=False, timeout=10)
-    restart = touchscreens_present()
-    print(f"kioskd: touch matrix for transform {transform}: {matrix}"
-          f"{' -- restarting cage' if restart else ' (no touchscreen)'}", flush=True)
-    if restart:
-        # After the reply: the request comes from inside cage.
-        threading.Timer(1.0, subprocess.run, args=(["systemctl", "restart", CAGE_UNIT],)).start()
-    return {"changed": True, "restart": restart}
+    devices = touchscreens()
+    for action in ("remove", "add"):
+        for dev in devices:
+            run(["udevadm", "trigger", f"--action={action}", dev], check=False, timeout=10)
+        run(["udevadm", "settle", "--timeout=5"], check=False, timeout=10)
+    print(f"kioskd: touch matrix for transform {transform}: {matrix}, "
+          f"{len(devices)} touchscreen(s) re-added", flush=True)
+    return {"changed": True, "restart": False}
 
 
 def r_system(body, q):
