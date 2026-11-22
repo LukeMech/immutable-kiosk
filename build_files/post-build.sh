@@ -54,6 +54,12 @@ remove_if_installed \
 # shellcheck disable=SC2046
 remove_if_installed $(rpm -qa --qf '%{NAME}\n' 'qemu-user-static*')
 
+# sos: the support-report collector for Red Hat cases. (os-prober stays:
+# 0.1 MB, never run -- bootupd's static grub.cfg doesn't use grub2-mkconfig --
+# but grub2-tools hard-requires it, and `rpm -e --nodeps` would leave a broken
+# dependency for every later dnf here and in derived images.)
+remove_if_installed sos
+
 dnf5 -y autoremove
 dnf5 -y clean all
 

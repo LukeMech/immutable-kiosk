@@ -55,3 +55,29 @@ systemctl enable immutable-kiosk-ca-trust.service
 systemd-hwdb update --usr
 rm -f /etc/udev/hwdb.bin
 test -s /usr/lib/udev/hwdb.bin
+
+# Services fedora-bootc enables that nothing on a kiosk uses, each started on
+# every boot (on the Atom every one of them costs boot time):
+# - sssd: authselect's profile is "local" -- no directory users;
+# - LVM/RAID monitoring (lvm2-monitor scans every block device), dm-event,
+#   lvmpolld, mdmonitor and its weekly raid-check: btrfs on one eMMC;
+# - avahi (mDNS): nothing looks the tablet up as *.local;
+# - systemd-homed: no portable home directories;
+# - udisks2: started on demand over D-Bus if something asks, not at boot;
+# - clevis-luks-askpass: no LUKS;
+# - sshd: kiosk and root have no password (10-kiosk.sh) and nobody has keys,
+#   so it could never let anyone in -- debugging is the tty9 debug shell.
+for unit in sssd.service lvm2-monitor.service lvm-devices-import.path \
+    lvm-devices-import.service dm-event.socket lvm2-lvmpolld.socket \
+    mdmonitor.service raid-check.timer avahi-daemon.service avahi-daemon.socket \
+    systemd-homed.service systemd-homed-activate.service udisks2.service \
+    clevis-luks-askpass.path sshd.service; do
+    if systemctl list-unit-files "${unit}" >/dev/null 2>&1; then
+        systemctl disable "${unit}" || true
+    fi
+done
+# udev starts iio-sensor-proxy as soon as it sees the tablet's accelerometer
+# (~1 s at boot); the screen's rotation is set in Settings, never automatic.
+if [[ -f /usr/lib/systemd/system/iio-sensor-proxy.service ]]; then
+    systemctl mask iio-sensor-proxy.service
+fi
