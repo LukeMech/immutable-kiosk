@@ -982,6 +982,7 @@ async function loadSystem() {
     renderSysInfo();
     renderUpdate();
     followSysJob();
+    loadSplash();  // the language card's boot screen status (the page reloads on a change)
     refreshDevice();
     loadTimezones();
     loadBoot();

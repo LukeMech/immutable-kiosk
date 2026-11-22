@@ -1831,7 +1831,11 @@ def set_splash_orientation(output, transform):
 
 
 SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
-ACCENT_INITRD = "immutable-kiosk-accent.img"   # on /boot
+# ostree's own place for extra initramfs images ("overlay initrds"): it only
+# accepts /ostree/initramfs-overlays/<sha256>.img in a boot entry -- any other
+# extra initrd line breaks `bootc status` (and with it updates and rollback).
+OVERLAYS = Path("/boot/ostree/initramfs-overlays")
+OLD_ACCENT_INITRD = "immutable-kiosk-accent.img"   # 2a89877's, rejected by ostree
 
 
 def png_bytes(w, h, rgba):
@@ -1866,8 +1870,8 @@ def set_splash_look(what=""):
     marker from the overrides directory when they're there (splash-bar.json
     "overrides", /etc/immutable-kiosk/splash). At shutdown that's this
     system's /etc; at boot plymouth runs from the image's initramfs, so the
-    same files also go into an extra initramfs on /boot, loaded after it (a
-    second `initrd` line in every boot entry). Defaults (blue, English): no
+    same files also go into an ostree overlay initramfs on /boot, loaded
+    after it (a second `initrd` line in every boot entry). Defaults (blue, English): no
     files, no extra initramfs. `what` -- "accent" or "language" -- is the
     card in Settings that shows the progress."""
     try:
@@ -1887,7 +1891,8 @@ def set_splash_look(what=""):
     if cfg.get("language") == "pl":
         files["lang-pl.png"] = png_bytes(1, 1, [(0, 0, 0, 0)])
     overrides = Path(d["overrides"])
-    ours = (f"/{ACCENT_INITRD}", f"/boot/{ACCENT_INITRD}")
+    def ours(path):
+        return "/ostree/initramfs-overlays/" in path or path.endswith(f"/{OLD_ACCENT_INITRD}")
     with _splash_lock:
         try:
             # What has to change: /etc's files, the extra initramfs, the entries.
@@ -1902,13 +1907,13 @@ def set_splash_look(what=""):
                     tree.append(("/".join(parts[:i]), None))
                 tree += [(f"{'/'.join(parts)}/{n}", v) for n, v in sorted(files.items())]
                 image = cpio_newc(tree)
-                target = Path("/boot") / ACCENT_INITRD
-                if not target.exists() or target.read_bytes() != image:
+                target = OVERLAYS / f"{hashlib.sha256(image).hexdigest()}.img"
+                if not target.exists():
                     boot.append((target, image))
             for entry in sorted(BLS_ENTRIES.glob("*.conf")):
                 text = entry.read_text()
                 lines = [ln for ln in text.splitlines()
-                         if not (ln.startswith("initrd ") and ln.split()[1:2] and ln.split()[1] in ours)]
+                         if not (ln.startswith("initrd ") and ln.split()[1:2] and ours(ln.split()[1]))]
                 if files:
                     initrds = [i for i, ln in enumerate(lines) if ln.startswith("initrd ")]
                     if not initrds:
@@ -1916,7 +1921,7 @@ def set_splash_look(what=""):
                     # The same root as the entry's own initramfs (/ or /boot).
                     own = lines[initrds[-1]].split()[1]
                     prefix = "/boot" if own.startswith("/boot/") else ""
-                    lines.insert(initrds[-1] + 1, f"initrd {prefix}/{ACCENT_INITRD}")
+                    lines.insert(initrds[-1] + 1, f"initrd {prefix}/ostree/initramfs-overlays/{target.name}")
                 new = "\n".join(lines) + "\n"
                 if new != text:
                     boot.append((entry.resolve(), new.encode()))

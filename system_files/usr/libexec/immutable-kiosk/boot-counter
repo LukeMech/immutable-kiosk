@@ -95,6 +95,7 @@ def env_bytes(env):
 
 def write_in_place(path, data):
     """Overwrite in place (GRUB's save_env needs grubenv's blocks unmoved), fsync."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and path.stat().st_size == len(data):
         with open(path, "r+b") as f:
             f.write(data)
