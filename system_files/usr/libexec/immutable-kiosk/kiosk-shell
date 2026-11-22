@@ -324,7 +324,6 @@ class KioskShell(Gtk.Application):
         self.boot_reported = False
         self.ok_reported = False
         self.pending = None  # view to reveal once its first page is rendered
-        self.device_scale = 1.0  # GTK's scale for our window (display_check)
         # The HMI couldn't be reached at start (no network yet, server still
         # booting): Settings is shown instead, and the HMI replaces it the
         # moment it loads. Settings' top bar says what's being waited for.
@@ -414,12 +413,6 @@ class KioskShell(Gtk.Application):
             log(f"window scale {scale}, outputs {outputs}: output configuration again")
             apply_output(self.cfg)
             self.display_changed()  # and look once more
-        if scale > 0 and scale != self.device_scale:
-            # Whatever made GTK draw above 1 (the page came up ~2x too big),
-            # the pages keep their size: apply_scale divides WebKit's zoom by it.
-            log(f"window scale {scale}: WebKit zoom compensates")
-            self.device_scale = scale
-            self.apply_scale()
         monitor = Gdk.Display.get_default().get_monitor_at_surface(surface)
         geo = monitor.get_geometry() if monitor else None
         info = {"gtk_scale": scale, "window": [self.win.get_width(), self.win.get_height()],
@@ -712,19 +705,38 @@ class KioskShell(Gtk.Application):
 
     def apply_scale(self):
         """Screen scaling = WebKit zoom: Settings (and its keyboard) at the
-        scale, the HMI at scale x its own zoom (the HMI tab's setting) --
-        both divided by the scale GTK really draws our window at, so a page
-        is the same size whatever the compositor's scale is."""
+        scale, the HMI at scale x its own zoom (the HMI tab's setting)."""
         if not hasattr(self, "settings"):
             return  # before setup(): it applies the scale itself
-        scale = screen_scale(self.cfg) / (self.device_scale or 1.0)
-        self.settings.set_zoom_level(scale)
+        scale = screen_scale(self.cfg)
+        try:
+            zoom = float(self.cfg.get("zoom", 1.0))
+        except (TypeError, ValueError):
+            zoom = 1.0
+        self.set_zoom(self.settings, scale, "settings")
         if self.hmi:
-            try:
-                zoom = float(self.cfg.get("zoom", 1.0))
-            except (TypeError, ValueError):
-                zoom = 1.0
-            self.hmi.set_zoom_level(scale * zoom)
+            self.set_zoom(self.hmi, scale * zoom, "hmi")
+
+    @staticmethod
+    def set_zoom(view, level, name):
+        """WebKit's zoom, only on a view that's on the screen, and only
+        when it's to change. Set on a view not yet shown it came out
+        garbled: in landscape the pages were drawn ~2x too big
+        (devicePixelRatio 1.97 at 100 %, measured on the 408) a moment
+        after the first page. 1.0 is WebKit's own default -- left alone."""
+        if abs(view.get_zoom_level() - level) < 0.001:
+            return
+        if not view.get_mapped():
+            if not getattr(view, "_zoom_pending", None):
+                def on_map(v):
+                    v.disconnect(v._zoom_pending)
+                    v._zoom_pending = None
+                    GLib.idle_add(lambda: (KioskShell.set_zoom(v, v._zoom_want, name), False)[1])
+                view._zoom_pending = view.connect("map", on_map)
+            view._zoom_want = level
+            return
+        log(f"zoom {name}: {level:.2f}")
+        view.set_zoom_level(level)
 
     def reload_config(self):
         try:
