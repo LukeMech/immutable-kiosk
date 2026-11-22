@@ -20,6 +20,7 @@ applies the last one before this starts.
 
 import mmap
 import os
+import signal
 import socket
 import struct
 import sys
@@ -35,6 +36,11 @@ XRGB8888 = 1
 
 def log(*a):
     print("kiosk-splash:", *a, file=sys.stderr, flush=True)
+
+
+def milestone(label):
+    """For Settings' boot timeline (kioskd reads "milestone:" lines)."""
+    log("milestone:", f"kiosk-splash: {label}")
 
 
 def load_frames():
@@ -204,8 +210,11 @@ class Splash:
             if self.output_transform in (1, 3, 5, 7):
                 w, h = h, w
         if (w, h) != (self.width, self.height):
+            first = not self.buffers
             self.make_buffers(w, h)
             self.draw(full=True)
+            if first:
+                milestone(f"pierwsza klatka ({w}x{h})")
         self.flush()
 
     def on_frame(self, op, r):
@@ -310,6 +319,10 @@ class Splash:
 
 
 def main():
+    def ended(*_):
+        milestone("koniec")
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, ended)
     try:
         Splash().run()
     except (OSError, ValueError, RuntimeError, KeyError, ConnectionError) as e:

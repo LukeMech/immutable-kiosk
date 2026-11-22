@@ -328,8 +328,20 @@ class KioskShell(Gtk.Application):
         self.stack.add_named(splash, "splash")
         self.setup()
         self.win.fullscreen()
+        self.win.connect("map", self.on_first_map)
         self.win.present()
-        milestone("kiosk-shell: ekran startowy")
+        milestone("kiosk-shell: okno wysłane")
+
+    def on_first_map(self, win):
+        """The window's first frame actually drawn: from here it covers
+        kiosk-splash (the boot timeline shows any gap)."""
+        clock = win.get_frame_clock()
+        state = {}
+
+        def painted(_clock):
+            clock.disconnect(state["id"])
+            milestone("kiosk-shell: ekran startowy (pierwsza klatka okna)")
+        state["id"] = clock.connect("after-paint", painted)
 
     def setup(self):
         load_webkit()

@@ -1108,6 +1108,7 @@ def boot_journal():
         return {"journal_error": str(e)}
     switch = None
     starting, units, marks, failed = {}, [], [], []
+    cage_starts = 0
     seen = set()
     for line in out.splitlines():
         try:
@@ -1130,10 +1131,11 @@ def boot_journal():
                     seen.add(label)
                     marks.append({"t": t, "label": label})
             continue
-        # kiosk-shell's own start-up points ("kiosk-shell: milestone: <label>"
-        # on its stderr, in cage's unit) -- the first of each, this boot.
+        # The kiosk's own start-up points ("<program>: milestone: <label>" on
+        # kiosk-splash's and kiosk-shell's stderr, in cage's unit) -- the
+        # first of each, this boot.
         if e.get("_SYSTEMD_UNIT") == CAGE_UNIT and e.get("UNIT") is None:
-            label = msg.partition("kiosk-shell: milestone: ")[2].strip()
+            label = msg.partition("milestone: ")[2].strip()
             if label and label not in seen:
                 seen.add(label)
                 marks.append({"t": t, "label": label})
@@ -1147,6 +1149,12 @@ def boot_journal():
             continue
         if mid == MSG_STARTING:
             starting[unit] = t
+            # Every start of cage: a second one means the screen went black
+            # and the kiosk started over (a crash, the touch matrix).
+            if unit == CAGE_UNIT:
+                cage_starts += 1
+                marks.append({"t": t, "label": "Kiosk: start cage (plymouth znika)" if cage_starts == 1
+                              else f"Kiosk: cage uruchomiony ponownie ({cage_starts}.)"})
         elif mid == MSG_STARTED:
             t0 = starting.pop(unit, None)
             if t0 is not None and not unit.endswith((".device", ".target", ".slice", ".scope")):
