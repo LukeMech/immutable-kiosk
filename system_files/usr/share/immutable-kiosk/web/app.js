@@ -528,8 +528,23 @@ function renderAccent() {
         `<button data-v="${k}" class="${k === cur ? "on" : ""}" style="--sw:${hex}" aria-label="${esc(label)}" title="${esc(label)}">${ICONS.ok}</button>`).join("");
 }
 
+const SPLASH_ORIENT = { normal: "0°", left_side_up: "90°", upside_down: "180°", right_side_up: "270°" };
+async function loadSplash() {
+    let st;
+    try { st = await api("/splash"); } catch (_) { return; }
+    $("splash-st").hidden = !st.state;
+    const o = SPLASH_ORIENT[st.orientation] || st.orientation || "";
+    if (st.state === "working") setStatus("splash-st", "busy", ICONS.busy, "Obracanie ekranu startowego…",
+        `Zapisywanie orientacji ${o} w ustawieniach startu. Nie uruchamiaj tabletu ponownie, dopóki to trwa.`);
+    else if (st.state === "done") setStatus("splash-st", "ok", ICONS.ok, "Ekran startowy obrócony",
+        `Od następnego uruchomienia animacja startowa będzie w tej orientacji (${o}).`);
+    else if (st.state === "failed") setStatus("splash-st", "err", ICONS.err, "Nie udało się obrócić ekranu startowego",
+        st.error || "");
+}
+
 function loadScreen() {
     renderAccent();
+    loadSplash();
     const names = { portrait: "pion", landscape: "poziom", normal: "0°", 90: "90°", 180: "180°", 270: "270°" };
     seg($("rot"), cfg.rotation || "", v => saveCfg({ rotation: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
     $("rot-hint").textContent = `Teraz: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +

@@ -1730,6 +1730,14 @@ PANEL_ORIENTATIONS = {"normal": "normal", "90": "left_side_up",
                       "180": "upside_down", "270": "right_side_up"}
 BLS_ENTRIES = Path("/boot/loader/entries")
 _splash_lock = threading.Lock()
+# For Ekran (GET /api/splash, event "splash"): rewriting the boot entries
+# takes a few seconds; a restart in the middle would keep the old rotation.
+SPLASH_STATE = {"state": None, "orientation": None, "error": None}
+
+
+def splash_state(**changes):
+    SPLASH_STATE.update(changes)
+    EVENTS.emit("splash")
 
 
 def set_splash_orientation(output, transform):
@@ -1750,14 +1758,21 @@ def set_splash_orientation(output, transform):
                     present.update(a for a in line.split()[1:] if a.startswith(prefix))
         if present == {want}:
             return
+        splash_state(state="working", orientation=orientation, error=None)
         try:
             for old in sorted(present - {want}):
                 run(["ostree", "admin", "kargs", "edit-in-place", f"--delete-if-present={old}"], timeout=120)
             run(["ostree", "admin", "kargs", "edit-in-place", f"--append-if-missing={want}"], timeout=120)
             print(f"kioskd: boot splash orientation: {want} (was {', '.join(sorted(present)) or 'unset'})",
                   flush=True)
+            splash_state(state="done")
         except ApiError as e:
             print(f"kioskd: boot splash orientation {want}: {e}", flush=True)
+            splash_state(state="failed", error=str(e))
+
+
+def r_splash(body, q):
+    return SPLASH_STATE
 
 
 def touchscreens_present():
@@ -1997,6 +2012,7 @@ ROUTES = {
     ("POST", "/api/system/rollback"): r_system_rollback,
     ("POST", "/api/power"): r_power,
     ("GET", "/api/job"): r_job,
+    ("GET", "/api/splash"): r_splash,
     ("GET", "/api/installer"): r_installer,
     ("POST", "/api/installer/start"): r_installer_start,
 }

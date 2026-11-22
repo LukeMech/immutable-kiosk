@@ -147,6 +147,15 @@
           <button data-v="270">270°</button>
         </div>
         <p class="hint" id="rot-hint"></p>
+        <!-- The boot splash follows the rotation (kioskd rewrites a kernel
+             argument): while that's being written, and when it's done. -->
+        <div class="status" id="splash-st" hidden>
+          <div class="status-icon" id="splash-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="splash-st-title"></div>
+            <div class="status-sub" id="splash-st-sub"></div>
+          </div>
+        </div>
       </div>
       <div class="card">
         <h2>Skalowanie ekranu</h2>
