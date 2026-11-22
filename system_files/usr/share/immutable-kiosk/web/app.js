@@ -976,10 +976,16 @@ function renderSysInfo() {
     if (!$("sys-image").value) $("sys-image").value = b.image || "";
 }
 
+// Opening System checks on its own when the last check is old. Entering
+// Settings reloads System too, and both arrived before the first check had
+// recorded its time: two checks in a row. One automatic check a minute.
+let autoCheckAt = 0;
 function maybeAutoCheck() {
     if (!sys || !sys.available || sysWasRunning || currentTab !== "system") return;
     const t = sys.checked && sys.checked.time;
     if (t && Date.now() / 1000 - t < CHECK_EVERY) return;
+    if (Date.now() - autoCheckAt < 60000) return;
+    autoCheckAt = Date.now();
     startSysJob("/system/check");
 }
 
