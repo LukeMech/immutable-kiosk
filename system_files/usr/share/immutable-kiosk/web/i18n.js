@@ -1,17 +1,19 @@
 /* i18n.js -- Settings and the installer in English (the default) or Polish.
  *
- * The page is written in Polish. In any other language every text node and
- * the placeholder / title / aria-label attributes are translated as they
- * appear -- a MutationObserver over the whole document -- from that
+ * The page is written in English. In any other language every text node
+ * and the placeholder / title / aria-label attributes are translated as
+ * they appear -- a MutationObserver over the whole document -- from that
  * language's dictionary, lang/<code>.js: EXACT (whole strings, trimmed) and
  * PATTERNS (anchored regular expressions for strings with values in them:
- * the first that matches wins, its $1, $2... carry the values over). kioskd's messages (errors, job titles and steps, boot
- * timeline labels) reach the page as Polish text and are translated the
- * same way. Anything not listed stays Polish: add it to the dictionary.
+ * the first that matches wins, its $1, $2... carry the values over).
+ * kioskd's messages (errors, job titles and steps, boot timeline labels)
+ * reach the page as English text and are translated the same way. Anything
+ * not listed stays English: add it to the dictionary. English itself has
+ * no dictionary: nothing to translate.
  *
  * The language is kioskd's config "language" (app.js calls i18n.use with
  * it); the last one is remembered in localStorage, so the page doesn't
- * flash in Polish before the config arrives.
+ * flash in English before the config arrives.
  */
 (function () {
     "use strict";

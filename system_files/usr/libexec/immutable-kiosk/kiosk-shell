@@ -92,7 +92,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
-milestone("kiosk-shell: GTK gotowy")
+milestone("kiosk-shell: GTK ready")
 
 WebKit = None  # load_webkit()
 
@@ -206,7 +206,7 @@ def apply_output(cfg):
     The compositor's scale stays at 1, always set explicitly: a fractional
     output scale (wlr-randr --scale 1.25) made GTK/WebKit render far bigger
     than 125 %, and going back to 1 didn't undo it until cage restarted.
-    Screen scaling (Settings > Ekran) is WebKit zoom on both views instead
+    Screen scaling (Settings > Display) is WebKit zoom on both views instead
     (KioskShell.apply_scale) -- sharp at any step, and it can't get stuck.
     """
     rotation = cfg.get("rotation_effective", "landscape")
@@ -222,7 +222,7 @@ def apply_output(cfg):
             transform = "90" if h > w else "normal"
         else:
             transform = rotation
-        # The mode (Ekran > Rozdzielczość) only for the built-in panel; any
+        # The mode (Display > Resolution) only for the built-in panel; any
         # other output keeps its preferred one.
         res = cfg.get("resolution") if name.startswith(INTERNAL_OUTPUTS) else None
         mode = ["--mode", res.replace("@", "@") + ("Hz" if "@" in res else "")] if res else ["--preferred"]
@@ -351,7 +351,7 @@ class KioskShell(Gtk.Application):
         ctx = GLib.MainContext.default()
         while ctx.pending():
             ctx.iteration(False)
-        milestone("kiosk-shell: konfiguracja i obrót")
+        milestone("kiosk-shell: config and rotation")
 
         self.win = Gtk.ApplicationWindow(application=self, title="Kiosk")
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=200)
@@ -370,7 +370,7 @@ class KioskShell(Gtk.Application):
         self.win.fullscreen()
         self.win.connect("map", self.on_first_map)
         self.win.present()
-        milestone("kiosk-shell: okno wysłane")
+        milestone("kiosk-shell: window sent")
 
     def on_first_map(self, win):
         """The window's first frame actually drawn: from here it covers
@@ -380,7 +380,7 @@ class KioskShell(Gtk.Application):
 
         def painted(_clock):
             clock.disconnect(state["id"])
-            milestone("kiosk-shell: ekran startowy (pierwsza klatka okna)")
+            milestone("kiosk-shell: splash (window's first frame)")
             GLib.idle_add(self.setup_once)
             self.watch_display()
         state["id"] = clock.connect("after-paint", painted)
@@ -391,7 +391,7 @@ class KioskShell(Gtk.Application):
         drew at a scale above 1. Whenever the window's scale or the set of
         outputs changes, look again: a scale above 1 gets the output
         configuration (scale 1, the rotation) applied once more, and what's
-        there goes to kioskd -- Settings > Ekran shows it."""
+        there goes to kioskd -- Settings > Display shows it."""
         self.display_pending = False
         self.display_fixed = 0.0
         self.win.get_surface().connect("notify::scale", lambda *a: self.display_changed())
@@ -441,7 +441,7 @@ class KioskShell(Gtk.Application):
 
     def setup(self):
         load_webkit()
-        milestone("kiosk-shell: WebKit wczytany")
+        milestone("kiosk-shell: WebKit loaded")
         self.settings = self.make_settings_view()
         self.stack.add_named(self.settings, "settings")
 
@@ -516,7 +516,7 @@ class KioskShell(Gtk.Application):
         if self.pending:
             name, self.pending = self.pending, None
             self.show(name)
-            milestone("kiosk-shell: pierwsza strona")
+            milestone("kiosk-shell: first page")
         return GLib.SOURCE_REMOVE
 
     def splash_over(self):
@@ -695,10 +695,10 @@ class KioskShell(Gtk.Application):
             self.load_hmi()
 
     def place_corners(self):
-        """Settings corner where Ekran says, recovery corner opposite it.
+        """Settings corner where Display says, recovery corner opposite it.
         Removed and added back, not just re-aligned: a changed halign/valign
         on an overlay child that's already placed didn't move it (the
-        recovery corner stayed bottom-left whatever Ekran said)."""
+        recovery corner stayed bottom-left whatever Display said)."""
         corner = self.cfg.get("settings_corner", "top-right")
         if corner not in CORNERS:
             corner = "top-right"

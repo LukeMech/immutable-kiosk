@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <!-- Deliberately no <meta name="viewport">: with one, WebKit on the touch
@@ -14,21 +14,21 @@
 <div id="settings" hidden>
   <div class="top">
   <header class="bar">
-    <h1>Ustawienia</h1>
+    <h1>Settings</h1>
     <div class="bar-end">
       <div class="sysinfo">
         <span class="netbar" id="netbar" hidden></span>
         <span class="batt" id="batt" hidden></span>
         <span class="clock" id="clock"></span>
       </div>
-      <button id="back" class="btn primary">← Wróć do HMI</button>
+      <button id="back" class="btn primary">← Back to HMI</button>
     </div>
   </header>
 
   <nav class="tabs" id="tabs">
     <button data-tab="hmi" class="on">HMI</button>
-    <button data-tab="net">Sieć</button>
-    <button data-tab="screen">Ekran</button>
+    <button data-tab="net">Network</button>
+    <button data-tab="screen">Display</button>
     <button data-tab="system">System</button>
   </nav>
   </div>
@@ -37,28 +37,28 @@
     <!-- HMI -->
     <section id="tab-hmi" class="tab">
       <div class="card">
-        <h2>Adres wizualizacji</h2>
+        <h2>HMI address</h2>
         <div class="status" id="hmi-st">
           <div class="status-icon" id="hmi-st-icon"></div>
           <div class="status-text">
-            <div class="status-title" id="hmi-st-title">Wczytywanie…</div>
+            <div class="status-title" id="hmi-st-title">Loading…</div>
             <div class="status-sub" id="hmi-st-sub"></div>
           </div>
         </div>
-        <h3>Serwer</h3>
-        <p class="hint">Beckhoff TwinCAT HMI (TF2000): HTTPS na porcie 1020 albo HTTP na 1010.</p>
+        <h3>Server</h3>
+        <p class="hint">Beckhoff TwinCAT HMI (TF2000): HTTPS on port 1020 or HTTP on 1010.</p>
         <div class="seg" id="hmi-scheme">
           <button data-v="https">HTTPS</button>
           <button data-v="http">HTTP</button>
         </div>
-        <label>Adres IP lub nazwa serwera HMI
-          <input id="hmi-host" type="text" inputmode="decimal" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="np. 192.168.1.50">
+        <label>HMI server IP address or name
+          <input id="hmi-host" type="text" inputmode="decimal" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="e.g. 192.168.1.50">
         </label>
         <div class="grid2">
           <label>Port
             <input id="hmi-port" type="text" inputmode="numeric" autocomplete="off">
           </label>
-          <label>Ścieżka
+          <label>Path
             <input id="hmi-path" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/">
           </label>
         </div>
@@ -67,22 +67,22 @@
           <button class="chip" data-preset="http:1010">TwinCAT HTTP :1010</button>
         </div>
         <div class="actions">
-          <button class="btn" id="hmi-test">Sprawdź połączenie</button>
-          <button class="btn primary" id="hmi-save">Zapisz i otwórz HMI</button>
+          <button class="btn" id="hmi-test">Test connection</button>
+          <button class="btn primary" id="hmi-save">Save and open HMI</button>
         </div>
       </div>
       <div class="card">
-        <h2>Zachowanie</h2>
-        <label class="switch"><input type="checkbox" id="opt-cert"><span>Akceptuj certyfikat serwera HMI (self-signed)</span></label>
-        <label class="switch"><input type="checkbox" id="opt-osk"><span>Klawiatura ekranowa także w HMI</span></label>
-        <label>Ponowna próba połączenia co (s)
+        <h2>Behavior</h2>
+        <label class="switch"><input type="checkbox" id="opt-cert"><span>Accept the HMI server's certificate (self-signed)</span></label>
+        <label class="switch"><input type="checkbox" id="opt-osk"><span>On-screen keyboard in the HMI too</span></label>
+        <label>Retry connecting every (s)
           <input id="opt-retry" type="text" inputmode="numeric">
         </label>
-        <div class="actions"><button class="btn" id="opt-save">Zapisz</button></div>
+        <div class="actions"><button class="btn" id="opt-save">Save</button></div>
       </div>
       <div class="card">
-        <h2>Powiększenie HMI</h2>
-        <p class="hint">Tylko strona wizualizacji. Wszystko naraz: Ekran → Skalowanie ekranu.</p>
+        <h2>HMI zoom</h2>
+        <p class="hint">The HMI page only. Everything at once: Display → Scaling.</p>
         <div class="stepper">
           <button class="btn" id="zoom-minus">−</button>
           <span id="zoom-val">100%</span>
@@ -98,56 +98,56 @@
         <div class="card-head">
           <h2>Wi-Fi</h2>
           <!-- Hidden until /api/wifi answers: unchecked-by-default read as "off". -->
-          <label class="switch inline" id="wifi-radio-box" hidden><input type="checkbox" id="wifi-radio"><span>Włączone</span></label>
+          <label class="switch inline" id="wifi-radio-box" hidden><input type="checkbox" id="wifi-radio"><span>On</span></label>
         </div>
         <div class="status" id="wifi-st">
           <div class="status-icon" id="wifi-st-icon"></div>
           <div class="status-text">
-            <div class="status-title" id="wifi-st-title">Wczytywanie…</div>
+            <div class="status-title" id="wifi-st-title">Loading…</div>
             <div class="status-sub" id="wifi-st-sub"></div>
           </div>
-          <button class="btn icon danger hold" data-hold="1000" id="wifi-off" aria-label="Rozłącz" hidden>
+          <button class="btn icon danger hold" data-hold="1000" id="wifi-off" aria-label="Disconnect" hidden>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5L7 17a3.2 3.2 0 0 1-4.5-4.5L5 10"/><path d="M14.5 9.5L17 7a3.2 3.2 0 0 1 4.5 4.5L19 14"/><path d="M8 3v3M3 8h3M16 21v-3M21 16h-3"/></svg>
           </button>
-          <button class="btn icon" id="wifi-scan" aria-label="Szukaj sieci">
+          <button class="btn icon" id="wifi-scan" aria-label="Scan for networks">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
           </button>
         </div>
-        <div class="sep"><h3>Dostępne sieci</h3>
+        <div class="sep"><h3>Available networks</h3>
         <ul class="list" id="wifi-list"></ul></div>
       </div>
       <div class="card">
-        <h2>Zapisane sieci</h2>
+        <h2>Saved networks</h2>
         <ul class="list" id="wifi-saved"></ul>
       </div>
       <div class="card">
-        <h2>Sieć ukryta</h2>
-        <label>Nazwa sieci (SSID)<input id="hid-ssid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-        <label>Hasło<input id="hid-pass" type="password" autocomplete="off"></label>
-        <div class="actions"><button class="btn primary" id="hid-connect">Połącz</button></div>
+        <h2>Hidden network</h2>
+        <label>Network name (SSID)<input id="hid-ssid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label>Password<input id="hid-pass" type="password" autocomplete="off"></label>
+        <div class="actions"><button class="btn primary" id="hid-connect">Connect</button></div>
       </div>
     </section>
 
     <!-- SCREEN -->
     <section id="tab-screen" class="tab" hidden>
       <div class="card" id="bright-card" hidden>
-        <h2>Jasność</h2>
+        <h2>Brightness</h2>
         <div class="slider">
           <input type="range" id="bright" min="5" max="100" step="5">
           <span id="bright-val">–</span>
         </div>
       </div>
       <div class="card">
-        <h2>Kolor akcentu</h2>
-        <p class="hint">Przyciski, przełączniki i zaznaczenia w ustawieniach.</p>
+        <h2>Accent color</h2>
+        <p class="hint">Buttons, switches and highlights in Settings.</p>
         <div class="swatches" id="accent"></div>
       </div>
       <div class="card">
-        <h2>Orientacja</h2>
+        <h2>Orientation</h2>
         <div class="seg wrap" id="rot">
-          <button data-v="">Domyślna urządzenia</button>
-          <button data-v="portrait">Pion</button>
-          <button data-v="landscape">Poziom</button>
+          <button data-v="">Device default</button>
+          <button data-v="portrait">Portrait</button>
+          <button data-v="landscape">Landscape</button>
           <button data-v="normal">0°</button>
           <button data-v="90">90°</button>
           <button data-v="180">180°</button>
@@ -168,27 +168,27 @@
         </div>
       </div>
       <div class="card">
-        <h2>Rozdzielczość i skalowanie</h2>
-        <p class="hint">Skalowanie powiększa wszystko: HMI, ustawienia i klawiaturę. Powiększenie HMI (zakładka HMI) mnoży się przez tę wartość.</p>
+        <h2>Resolution and scaling</h2>
+        <p class="hint">Scaling enlarges everything: the HMI, Settings and the keyboard. HMI zoom (HMI tab) is multiplied by it.</p>
         <div class="stepper">
           <button class="btn" id="scale-minus">−</button>
           <span id="scale-val">100%</span>
           <button class="btn" id="scale-plus">+</button>
         </div>
         <div id="res-wrap" hidden>
-          <h3>Rozdzielczość</h3>
-          <p class="hint">Tryb wbudowanego ekranu. Domyślna to tryb, który panel sam podaje jako właściwy.</p>
+          <h3>Resolution</h3>
+          <p class="hint">The built-in screen's mode. Default is the one the panel reports as preferred.</p>
           <div class="seg wrap" id="res"></div>
         </div>
       </div>
       <div class="card">
-        <h2>Wejście do ustawień z HMI</h2>
-        <p class="hint">Przytrzymaj ok. 1 s wybrany róg ekranu.</p>
+        <h2>Opening Settings from the HMI</h2>
+        <p class="hint">Hold the chosen screen corner for about 1 s.</p>
         <div class="seg wrap" id="corner">
-          <button data-v="top-left">↖ Lewy górny</button>
-          <button data-v="top-right">↗ Prawy górny</button>
-          <button data-v="bottom-left">↙ Lewy dolny</button>
-          <button data-v="bottom-right">↘ Prawy dolny</button>
+          <button data-v="top-left">↖ Top left</button>
+          <button data-v="top-right">↗ Top right</button>
+          <button data-v="bottom-left">↙ Bottom left</button>
+          <button data-v="bottom-right">↘ Bottom right</button>
         </div>
         <p class="hint" id="corner-hint" style="margin:14px 0 0"></p>
       </div>
@@ -201,91 +201,91 @@
         <h2>System</h2>
         <dl class="kv" id="sys-info"></dl>
         <div class="sep">
-          <h3>Aktualizacja</h3>
+          <h3>Updates</h3>
           <div class="status" id="upd">
             <div class="status-icon" id="upd-icon"></div>
             <div class="status-text">
-              <div class="status-title" id="upd-title">Wczytywanie…</div>
+              <div class="status-title" id="upd-title">Loading…</div>
               <div class="status-sub" id="upd-sub"></div>
             </div>
           </div>
           <!-- While an update / channel switch runs (or after it failed): its steps. -->
           <ol class="steps" id="job-steps" hidden></ol>
           <div class="actions upd-actions">
-            <button class="btn primary" id="sys-upgrade" disabled>Aktualizuj</button>
-            <button class="btn primary hold" data-hold="1500" id="sys-reboot-now" hidden>Przytrzymaj: uruchom ponownie teraz</button>
-            <button class="btn icon" id="sys-check" aria-label="Sprawdź aktualizacje">
+            <button class="btn primary" id="sys-upgrade" disabled>Update</button>
+            <button class="btn primary hold" data-hold="1500" id="sys-reboot-now" hidden>Hold: restart now</button>
+            <button class="btn icon" id="sys-check" aria-label="Check for updates">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
             </button>
           </div>
           <div class="notes" id="upd-notes" hidden></div>
           <div class="chan">
-            <div class="chan-head">Kanał aktualizacji</div>
+            <div class="chan-head">Update channel</div>
             <div class="seg" id="chan">
-              <button data-v="stable">Stabilny</button>
-              <button data-v="dev">Testowy (dev)</button>
+              <button data-v="stable">Stable</button>
+              <button data-v="dev">Testing (dev)</button>
             </div>
             <p class="hint" id="chan-hint"></p>
             <button class="btn primary hold" data-hold="1500" id="chan-switch" hidden></button>
           </div>
         </div>
         <div class="sep">
-          <h3>Własny obraz systemu</h3>
-          <p class="hint">Tylko obrazy podpisane kluczem ghcr.io/lukemech.</p>
+          <h3>Custom system image</h3>
+          <p class="hint">Only images signed with the ghcr.io/lukemech key.</p>
           <!-- One under the other, each with its hold-to-apply button. -->
-          <label for="sys-image">Obraz</label>
+          <label for="sys-image">Image</label>
           <div class="inline">
             <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
-            <button class="btn hold" data-hold="1500" id="sys-switch">Przełącz</button>
+            <button class="btn hold" data-hold="1500" id="sys-switch">Switch</button>
           </div>
-          <label for="sys-repo">Lista zmian (GitHub: właściciel/nazwa)</label>
+          <label for="sys-repo">Changelog (GitHub: owner/name)</label>
           <div class="inline">
             <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
-            <button class="btn hold" data-hold="1500" id="sys-repo-save">Zapisz</button>
+            <button class="btn hold" data-hold="1500" id="sys-repo-save">Save</button>
           </div>
         </div>
       </div>
-      <!-- Język i region: what the kiosk speaks, its clock, its name. -->
+      <!-- Language and region: what the kiosk speaks, its clock, its name. -->
       <div class="card">
-        <h2>Język i region</h2>
+        <h2>Language and region</h2>
         <dl class="kv">
-          <dt>Język</dt>
+          <dt class="mid">Language</dt>
           <dd>
             <div class="seg" id="lang">
-              <button data-v="pl">Polski</button>
               <button data-v="en">English</button>
+              <button data-v="pl">Polski</button>
             </div>
           </dd>
-          <dt>Strefa czasowa</dt>
+          <dt>Time zone</dt>
           <dd class="inline">
             <select id="tz-region" aria-label="Region"></select>
-            <select id="tz-city" aria-label="Miasto"></select>
+            <select id="tz-city" aria-label="City"></select>
           </dd>
-          <dt>Nazwa w sieci</dt>
+          <dt>Host name</dt>
           <dd>
             <span class="inline">
               <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
-              <button class="btn" id="host-save" disabled>Zapisz</button>
+              <button class="btn" id="host-save" disabled>Save</button>
             </span>
-            <span class="sub">Małe litery, cyfry i myślniki.</span>
+            <span class="sub">Lowercase letters, digits and hyphens.</span>
           </dd>
         </dl>
       </div>
-      <!-- Urządzenie: the tablet itself and how long it took to start. -->
+      <!-- Device: the tablet itself and how long it took to start. -->
       <div class="card">
-        <h2>Urządzenie</h2>
+        <h2>Device</h2>
         <dl class="kv" id="dev-info">
           <dt>Model</dt><dd id="dev-model">—</dd>
-          <dt>Producent</dt><dd id="dev-vendor">—</dd>
-          <dt>Procesor</dt><dd id="dev-cpu">—</dd>
-          <dt>Pamięć</dt><dd id="dev-mem">—</dd>
+          <dt>Manufacturer</dt><dd id="dev-vendor">—</dd>
+          <dt>Processor</dt><dd id="dev-cpu">—</dd>
+          <dt>Memory</dt><dd id="dev-mem">—</dd>
         </dl>
         <div class="sep">
-          <h3>Czas uruchamiania</h3>
+          <h3>Boot time</h3>
           <div class="status" id="boot-st">
             <div class="status-icon" id="boot-st-icon"></div>
             <div class="status-text">
-              <div class="status-title" id="boot-st-title">Wczytywanie…</div>
+              <div class="status-title" id="boot-st-title">Loading…</div>
               <div class="status-sub" id="boot-st-sub"></div>
             </div>
           </div>
@@ -294,10 +294,10 @@
           <p class="msg warn" id="boot-failed" hidden></p>
           <!-- Everything under the bar: folded until asked for. -->
           <details class="log" id="boot-more" hidden>
-            <summary>Szczegóły startu</summary>
-            <h3>Przebieg startu (sekundy od startu jądra)</h3>
+            <summary>Boot details</summary>
+            <h3>Boot timeline (seconds since kernel start)</h3>
             <ul class="timeline" id="boot-timeline"></ul>
-            <h3>Najdłużej startujące usługi</h3>
+            <h3>Slowest-starting services</h3>
             <ul class="slow" id="boot-slow"></ul>
             <div id="boot-chains"></div>
           </details>
@@ -305,26 +305,26 @@
       </div>
       <!-- Recovery: undoing things, held longer (3 s) than power (1.5 s). -->
       <div class="card" id="recovery-card">
-        <h2>Odzyskiwanie</h2>
+        <h2>Recovery</h2>
         <div class="status" id="rb-st">
           <div class="status-icon" id="rb-st-icon"></div>
           <div class="status-text">
-            <div class="status-title" id="rb-st-title">Wczytywanie…</div>
+            <div class="status-title" id="rb-st-title">Loading…</div>
             <div class="status-sub" id="rb-st-sub"></div>
           </div>
         </div>
         <ol class="steps" id="rb-steps" hidden></ol>
         <div class="actions col">
-          <button class="btn hold" data-hold="3000" id="sys-rollback">Przytrzymaj: przywróć poprzednią wersję</button>
-          <button class="btn danger hold" data-hold="3000" id="pw-reset">Przytrzymaj: przywróć ustawienia domyślne</button>
+          <button class="btn hold" data-hold="3000" id="sys-rollback">Hold: restore previous version</button>
+          <button class="btn danger hold" data-hold="3000" id="pw-reset">Hold: reset everything</button>
         </div>
         <p class="hint" id="rb-hint" style="margin:14px 0 0"></p>
       </div>
       <div class="card" id="power-card">
-        <h2>Zasilanie</h2>
+        <h2>Power</h2>
         <div class="actions col">
-          <button class="btn hold" data-hold="1500" id="pw-reboot">Przytrzymaj: uruchom ponownie</button>
-          <button class="btn danger hold" data-hold="1500" id="pw-off">Przytrzymaj: wyłącz</button>
+          <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
+          <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
         </div>
       </div>
     </section>
@@ -334,47 +334,47 @@
 <!-- ============================== INSTALLER ============================== -->
 <div id="installer" hidden>
   <header class="bar">
-    <h1>Instalator</h1>
+    <h1>Installer</h1>
   </header>
   <main>
     <section id="inst-choose">
       <div class="card hero">
-        <h2>Instalacja systemu kiosku</h2>
-        <p>System zostanie skopiowany na wewnętrzną pamięć tabletu. <strong>Wszystkie dane na wybranym dysku zostaną usunięte.</strong></p>
+        <h2>Install the kiosk system</h2>
+        <p>The system will be copied to the tablet's internal storage. <strong>All data on the selected disk will be erased.</strong></p>
         <dl class="kv" id="inst-payload"></dl>
       </div>
       <div class="card">
-        <h2>Dysk docelowy</h2>
+        <h2>Target disk</h2>
         <ul class="list pick" id="inst-disks"></ul>
       </div>
       <p class="msg warn" id="inst-power" hidden></p>
       <p class="msg" id="inst-msg"></p>
-      <button class="btn primary big hold" data-hold="3000" id="inst-go">Przytrzymaj 3 s, aby zainstalować</button>
+      <button class="btn primary big hold" data-hold="3000" id="inst-go">Hold 3 s to install</button>
     </section>
 
     <section id="inst-progress" hidden>
       <div class="card hero">
-        <h2 id="inst-title">Instalowanie…</h2>
+        <h2 id="inst-title">Installing…</h2>
         <div class="job">
           <div class="job-stage" id="inst-stage"></div>
           <div class="progress big"><div id="inst-bar"></div></div>
           <div class="job-detail" id="inst-detail"></div>
         </div>
-        <p class="hint" id="inst-note">Nie wyłączaj tabletu i nie wyjmuj pendrive'a.</p>
+        <p class="hint" id="inst-note">Don't turn off the tablet or remove the USB drive.</p>
         <div class="actions" id="inst-done" hidden>
-          <button class="btn primary big hold" data-hold="1000" id="inst-reboot">Wyjąłem pendrive — uruchom ponownie</button>
+          <button class="btn primary big hold" data-hold="1000" id="inst-reboot">USB drive removed — restart</button>
         </div>
         <div class="actions" id="inst-failed" hidden>
-          <button class="btn big" id="inst-retry">Wróć</button>
+          <button class="btn big" id="inst-retry">Back</button>
         </div>
-        <details class="log"><summary>Szczegóły</summary><pre id="inst-log"></pre></details>
+        <details class="log"><summary>Details</summary><pre id="inst-log"></pre></details>
       </div>
     </section>
   </main>
 </div>
 
 <div id="toast" hidden></div>
-<script src="lang/en.js"></script>
+<script src="lang/pl.js"></script>
 <script src="i18n.js"></script>
 <script src="osk.js"></script>
 <script src="app.js"></script>

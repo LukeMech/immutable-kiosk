@@ -69,9 +69,9 @@ DEFAULT_CONFIG = {
     "retry_seconds": 10,
     # Where the invisible "hold ~2 s for Settings" spot sits on top of the HMI.
     "settings_corner": "top-right",
-    # Settings' accent colour (Ekran > Kolor akcentu), one of ACCENTS.
+    # Settings' accent colour (Display > Accent color), one of ACCENTS.
     "accent": "blue",
-    # Settings' language (web/i18n.js translates the Polish page): en, pl.
+    # Settings' language (web/i18n.js translates the English page): en, pl.
     "language": "en",
     # Backlight in percent, applied by kioskd at start and on change. None =
     # never touched (systemd-backlight's restored value stays).
@@ -101,11 +101,11 @@ def run(cmd, check=True, timeout=60, **kw):
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
     except subprocess.TimeoutExpired:
-        raise ApiError(f"{cmd[0]}: przekroczono czas ({timeout} s)")
+        raise ApiError(f"{cmd[0]}: timed out ({timeout} s)")
     except FileNotFoundError:
-        raise ApiError(f"brak programu {cmd[0]}")
+        raise ApiError(f"program not found: {cmd[0]}")
     if check and p.returncode != 0:
-        msg = (p.stderr or p.stdout).strip() or f"{cmd[0]} zakończył się kodem {p.returncode}"
+        msg = (p.stderr or p.stdout).strip() or f"{cmd[0]} exited with code {p.returncode}"
         raise ApiError(msg)
     return p.stdout
 
@@ -190,7 +190,7 @@ def brightness_get():
 def brightness_set(percent):
     d = backlight()
     if not d:
-        raise ApiError("Ten ekran nie ma regulacji jasności")
+        raise ApiError("This screen has no brightness control")
     percent = max(BRIGHTNESS_MIN, min(100, int(percent)))
     mx = int((d / "max_brightness").read_text())
     (d / "brightness").write_text(str(max(1, round(mx * percent / 100))))
@@ -226,31 +226,31 @@ def save_config(update):
     if "hmi" in update:
         h = update["hmi"]
         if not isinstance(h, dict):
-            raise ApiError("hmi: oczekiwano obiektu")
+            raise ApiError("hmi: expected an object")
         scheme = h.get("scheme", cfg["hmi"]["scheme"])
         if scheme not in ("http", "https"):
-            raise ApiError("Protokół musi być http lub https")
+            raise ApiError("Protocol must be http or https")
         host = str(h.get("host", cfg["hmi"]["host"])).strip()
         if host and not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", host):
-            raise ApiError("Niepoprawny adres IP / nazwa hosta")
+            raise ApiError("Invalid IP address / host name")
         port = h.get("port", cfg["hmi"]["port"])
         try:
             port = int(port)
         except (TypeError, ValueError):
-            raise ApiError("Port musi być liczbą")
+            raise ApiError("Port must be a number")
         if not 1 <= port <= 65535:
-            raise ApiError("Port musi być z zakresu 1-65535")
+            raise ApiError("Port must be 1-65535")
         path = str(h.get("path", cfg["hmi"]["path"])).strip() or "/"
         cfg["hmi"] = {"scheme": scheme, "host": host, "port": port, "path": path}
     if "rotation" in update:
         r = update["rotation"]
         if r is not None and r not in ROTATIONS:
-            raise ApiError("Niepoprawna orientacja")
+            raise ApiError("Invalid orientation")
         cfg["rotation"] = r
     if "resolution" in update:
         r = update["resolution"]
         if r is not None and not re.fullmatch(r"\d{3,5}x\d{3,5}(@\d{1,3}(\.\d{1,3})?)?", str(r)):
-            raise ApiError("Niepoprawna rozdzielczość")
+            raise ApiError("Invalid resolution")
         cfg["resolution"] = r
     for key in ("osk_in_hmi", "accept_self_signed"):
         if key in update:
@@ -258,33 +258,33 @@ def save_config(update):
     if "zoom" in update:
         z = float(update["zoom"])
         if not 0.5 <= z <= 3.0:
-            raise ApiError("Powiększenie: 50-300%")
+            raise ApiError("Zoom: 50-300%")
         cfg["zoom"] = round(z, 2)
     if "scale" in update:
         try:
             s = float(update["scale"])
         except (TypeError, ValueError):
-            raise ApiError("Skalowanie musi być liczbą")
+            raise ApiError("Scaling must be a number")
         if not 1.0 <= s <= 2.0:
-            raise ApiError("Skalowanie ekranu: 100-200%")
+            raise ApiError("Screen scaling: 100-200%")
         cfg["scale"] = round(s, 2)  # WebKit zoom of both views (kiosk-shell apply_scale)
     if "releases_repo" in update:
         repo = str(update["releases_repo"] or "").strip().removeprefix("https://github.com/").strip("/")
         repo = repo or DEFAULT_CONFIG["releases_repo"]
         if not GITHUB_REPO.match(repo):
-            raise ApiError("Repozytorium w postaci właściciel/nazwa, np. LukeMech/immutable-kiosk")
+            raise ApiError("Repository as owner/name, e.g. LukeMech/immutable-kiosk")
         cfg["releases_repo"] = repo
     if "language" in update:
         if update["language"] not in LANGUAGES:
-            raise ApiError("Nieznany język")
+            raise ApiError("Unknown language")
         cfg["language"] = update["language"]
     if "accent" in update:
         if update["accent"] not in ACCENTS:
-            raise ApiError("Nieznany kolor akcentu")
+            raise ApiError("Unknown accent color")
         cfg["accent"] = update["accent"]
     if "settings_corner" in update:
         if update["settings_corner"] not in CORNERS:
-            raise ApiError("Niepoprawny róg ekranu")
+            raise ApiError("Invalid screen corner")
         cfg["settings_corner"] = update["settings_corner"]
     if "retry_seconds" in update:
         cfg["retry_seconds"] = max(3, min(300, int(update["retry_seconds"])))
@@ -292,9 +292,9 @@ def save_config(update):
         try:
             b = int(update["brightness"])
         except (TypeError, ValueError):
-            raise ApiError("Jasność musi być liczbą")
+            raise ApiError("Brightness must be a number")
         if not BRIGHTNESS_MIN <= b <= 100:
-            raise ApiError(f"Jasność: {BRIGHTNESS_MIN}-100%")
+            raise ApiError(f"Brightness: {BRIGHTNESS_MIN}-100%")
         brightness_set(b)
         cfg["brightness"] = b
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -436,7 +436,7 @@ def wifi_device():
 
 def wifi_connect(ssid, password, hidden):
     if not ssid:
-        raise ApiError("Podaj nazwę sieci")
+        raise ApiError("Enter the network name")
     existing = [s for s in saved_wifi() if s["ssid"] == ssid]
     if existing and not password:
         run(["nmcli", "con", "up", existing[0]["uuid"]], timeout=60)
@@ -492,7 +492,7 @@ def network_state():
 def network_set(body):
     uuid = body.get("uuid") or ""
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
-        raise ApiError("Brak połączenia do zmiany")
+        raise ApiError("No connection to change")
     method = body.get("method")
     if method == "auto":
         args = ["ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", ""]
@@ -504,14 +504,14 @@ def network_set(body):
                 raise ValueError
             net = ipaddress.IPv4Network(f"{addr}/{prefix}", strict=False)
         except ValueError:
-            raise ApiError("Niepoprawny adres IP lub maska")
+            raise ApiError("Invalid IP address or mask")
         gw = (body.get("gateway") or "").strip()
         if gw:
             try:
                 if ipaddress.IPv4Address(gw) not in net:
-                    raise ApiError("Brama musi być w tej samej podsieci")
+                    raise ApiError("Gateway must be in the same subnet")
             except ValueError:
-                raise ApiError("Niepoprawny adres bramy")
+                raise ApiError("Invalid gateway address")
         dns = []
         for d in body.get("dns") or []:
             d = d.strip()
@@ -520,11 +520,11 @@ def network_set(body):
             try:
                 dns.append(str(ipaddress.IPv4Address(d)))
             except ValueError:
-                raise ApiError(f"Niepoprawny serwer DNS: {d}")
+                raise ApiError(f"Invalid DNS server: {d}")
         args = ["ipv4.method", "manual", "ipv4.addresses", f"{addr}/{prefix}",
                 "ipv4.gateway", gw, "ipv4.dns", " ".join(dns)]
     else:
-        raise ApiError("Tryb musi być auto lub manual")
+        raise ApiError("Mode must be auto or manual")
     run(["nmcli", "con", "mod", uuid] + args)
     # Re-activating drops the link for a moment; that never affects this API
     # (localhost), so it runs in the background and the page polls the result.
@@ -752,7 +752,7 @@ def start_job(kind, title, target, steps=()):
     global CURRENT_JOB
     with JOB_LOCK:
         if CURRENT_JOB and CURRENT_JOB.state == "running":
-            raise ApiError(f"Trwa już: {CURRENT_JOB.title}", HTTPStatus.CONFLICT)
+            raise ApiError(f"Already running: {CURRENT_JOB.title}", HTTPStatus.CONFLICT)
         job = Job(kind, title, steps)
         CURRENT_JOB = job
     EVENTS.emit("job")
@@ -767,7 +767,7 @@ def start_job(kind, title, target, steps=()):
             job.end_steps(error=str(e))
             job.state = "failed"
             job.detail = str(e)
-            job.add_log(f"BŁĄD: {e}")
+            job.add_log(f"ERROR: {e}")
         finally:
             job.finished = time.time()
             EVENTS.emit("job")
@@ -781,14 +781,14 @@ def start_job(kind, title, target, steps=()):
 # else happens on the tablet: committing the image on the eMMC, deploying
 # it, removing old ones -- one step, "local", with a time-paced bar (no byte
 # counts there) that bootc's own stages move along.
-BOOTC_STEPS = [("pull", "Pobieranie"), ("local", "Przygotowanie lokalne")]
-UPGRADE_STEPS = [("check", "Sprawdzenie nowej wersji")] + BOOTC_STEPS
+BOOTC_STEPS = [("pull", "Download"), ("local", "Preparing locally")]
+UPGRADE_STEPS = [("check", "Check for a new version")] + BOOTC_STEPS
 LOCAL_EXPECT_S = 95  # what "local" takes on the 408: ~60 s writing, ~35 s bootc's stages (1 min 34 s measured)
 # bootc's stages, by subtask id or description.
-BOOTC_STAGES = {"merging": "Scalanie obrazu", "deploying": "Wdrażanie nowej wersji",
-                "bound_images": "Pobieranie powiązanych obrazów", "bound images": "Pobieranie powiązanych obrazów",
-                "cleanup": "Usuwanie starych wersji", "removing old images": "Usuwanie starych wersji",
-                "pruning": "Usuwanie starych wersji"}
+BOOTC_STAGES = {"merging": "Merging the image", "deploying": "Deploying the new version",
+                "bound_images": "Fetching bound images", "bound images": "Fetching bound images",
+                "cleanup": "Removing old versions", "removing old images": "Removing old versions",
+                "pruning": "Removing old versions"}
 
 
 def stage_name(sub):
@@ -801,7 +801,7 @@ def stage_name(sub):
 
 
 def decimal(x, digits=1):
-    return f"{x:.{digits}f}".replace(".", ",")
+    return f"{x:.{digits}f}"
 
 
 def run_bootc_with_progress(job, args):
@@ -829,7 +829,7 @@ def run_bootc_with_progress(job, args):
         rate = (done - b0) / (now - t0)
         left = (total - done) / rate
         eta = f"{left / 60:.0f} min" if left >= 90 else f"{max(1, left):.0f} s"
-        return f" · {decimal(rate / 1e6)} MB/s · zostało około {eta}"
+        return f" · {decimal(rate / 1e6)} MB/s · about {eta} left"
 
     def read_progress():
         with os.fdopen(r, "r") as f:
@@ -854,13 +854,13 @@ def run_bootc_with_progress(job, args):
                         if pull and pull["state"] == "active" and total:
                             secs = time.time() - pull["started"]
                             pull["detail"] = f"{total / 1e6:.0f} MB" + (
-                                f" · średnio {decimal(total / 1e6 / secs)} MB/s" if secs >= 1 else "")
+                                f" · average {decimal(total / 1e6 / secs)} MB/s" if secs >= 1 else "")
                         cached = ev.get("bytesCached") or 0
-                        job.step("local", "Zapis obrazu na dysk" if total else
-                                 (f"{cached / 1e6:.0f} MB było już na dysku" if cached else "Zapis obrazu na dysk"))
+                        job.step("local", "Writing the image to disk" if total else
+                                 (f"{cached / 1e6:.0f} MB was already on disk" if cached else "Writing the image to disk"))
                         job.pace("local", 0.0, LOCAL_EXPECT_S)
                 elif task in ("pulling", "importing"):
-                    job.step("local", "Zapis obrazu na dysk")
+                    job.step("local", "Writing the image to disk")
                     job.pace("local", 0.0, LOCAL_EXPECT_S)
                 elif task == "staging" or ev.get("stepsTotal"):
                     steps, total = ev.get("steps") or 0, ev.get("stepsTotal") or 0
@@ -876,7 +876,7 @@ def run_bootc_with_progress(job, args):
     proc.wait()
     t.join(timeout=5)
     if proc.returncode != 0:
-        raise RuntimeError(job.log[-1] if job.log else f"bootc zakończył się kodem {proc.returncode}")
+        raise RuntimeError(job.log[-1] if job.log else f"bootc exited with code {proc.returncode}")
 
 
 # The image's version label ends in its git sha (Justfile): "v45.20261122.1-
@@ -894,8 +894,8 @@ LAST_STATUS = {"value": None}  # last good bootc_status(), see r_system
 
 # What build.yml publishes: main -> :latest (releases), the dev branch ->
 # :dev (one rolling pre-release). Any other tag is a custom image.
-CHANNELS = {"stable": {"tag": "latest", "name": "stabilny"},
-            "dev": {"tag": "dev", "name": "testowy"}}
+CHANNELS = {"stable": {"tag": "latest", "name": "stable"},
+            "dev": {"tag": "dev", "name": "testing"}}
 
 
 def split_image(image):
@@ -971,7 +971,7 @@ def bootc_status():
 
 def check_for_update(job):
     """bootc upgrade --check (fetches only the manifest), remembered in LAST_CHECK."""
-    job.stage = "Sprawdzanie aktualizacji"
+    job.stage = "Checking for updates"
     job.step("check")
     try:
         out = run(["bootc", "upgrade", "--check"], timeout=180)
@@ -986,24 +986,24 @@ def check_for_update(job):
 
 def job_check(job):
     job.result = check_for_update(job)
-    job.detail = "Dostępna nowa wersja" if job.result.get("update") else "System jest aktualny"
+    job.detail = "New version available" if job.result.get("update") else "System is up to date"
 
 
 def job_upgrade(job):
     # Always against what's in the registry right now, not an old check.
     st = check_for_update(job)
     if not st.get("update"):
-        job.stage = "Gotowe"
-        job.detail = "System jest aktualny"
+        job.stage = "Done"
+        job.detail = "System is up to date"
         job.result = st
         return
     update = st["update"]
-    job.step("check", f"Nowa wersja: {update.get('version') or update.get('digest', '')[7:19]}")
+    job.step("check", f"New version: {update.get('version') or update.get('digest', '')[7:19]}")
     run_bootc_with_progress(job, ["upgrade"])
     job.end_steps()
     job.fraction = 1
-    job.stage = "Gotowe"
-    job.detail = "Nowa wersja zostanie uruchomiona po restarcie"
+    job.stage = "Done"
+    job.detail = "The new version starts after a restart"
     job.result = bootc_status()
 
 
@@ -1124,21 +1124,21 @@ MSG_FAILED = "be02cf6855d2428ba40df7e9d022f03d"
 
 # Points on the way from kernel to HMI worth showing, in boot order.
 BOOT_MILESTONES = {
-    "initrd-root-device.target": "initrd: dysk systemowy znaleziony",
-    "initrd-root-fs.target": "initrd: system plików zamontowany",
-    "initrd.target": "initrd: gotowy do przełączenia",
-    "local-fs.target": "Systemy plików zamontowane",
-    "sysinit.target": "Inicjalizacja systemu (sysinit)",
-    "basic.target": "Usługi podstawowe (basic)",
-    "network.target": "NetworkManager uruchomiony",
-    "immutable-kiosk-backend.service": "kioskd uruchomiony",
-    "immutable-kiosk-cage.service": "Kiosk (cage) uruchomiony",
-    "graphical.target": "Start zakończony (graphical)",
+    "initrd-root-device.target": "initrd: system disk found",
+    "initrd-root-fs.target": "initrd: file system mounted",
+    "initrd.target": "initrd: ready to switch",
+    "local-fs.target": "File systems mounted",
+    "sysinit.target": "System initialization (sysinit)",
+    "basic.target": "Basic services (basic)",
+    "network.target": "NetworkManager started",
+    "immutable-kiosk-backend.service": "kioskd started",
+    "immutable-kiosk-cage.service": "Kiosk (cage) started",
+    "graphical.target": "Boot finished (graphical)",
 }
 KERNEL_MILESTONES = [
-    (re.compile(r"^Run /init as init process"), "Start initramfs"),
-    (re.compile(r"^mmcblk\d+: mmc\d+:"), "eMMC wykryty"),
-    (re.compile(r"Initialized i915 "), "GPU gotowe (i915)"),
+    (re.compile(r"^Run /init as init process"), "initramfs start"),
+    (re.compile(r"^mmcblk\d+: mmc\d+:"), "eMMC detected"),
+    (re.compile(r"Initialized i915 "), "GPU ready (i915)"),
 ]
 BOOT_CACHE = {}
 
@@ -1189,7 +1189,7 @@ def boot_journal():
             continue
         if msg.startswith("Switching root") and switch is None:
             switch = t
-            marks.append({"t": t, "label": "Przełączenie na system (switch-root)"})
+            marks.append({"t": t, "label": "Switch to the system (switch-root)"})
             continue
         unit, mid = e.get("UNIT") or "", e.get("MESSAGE_ID")
         if not unit:
@@ -1200,8 +1200,8 @@ def boot_journal():
             # and the kiosk started over (a crash, the touch matrix).
             if unit == CAGE_UNIT:
                 cage_starts += 1
-                marks.append({"t": t, "label": "Kiosk: start cage (plymouth znika)" if cage_starts == 1
-                              else f"Kiosk: cage uruchomiony ponownie ({cage_starts}.)"})
+                marks.append({"t": t, "label": "Kiosk: cage starts (plymouth goes away)" if cage_starts == 1
+                              else f"Kiosk: cage restarted (start #{cage_starts})"})
         elif mid == MSG_STARTED:
             t0 = starting.pop(unit, None)
             if t0 is not None and not unit.endswith((".device", ".target", ".slice", ".scope")):
@@ -1226,12 +1226,12 @@ def boot_journal():
 # after switch-root -- as systemd records it (manager properties, CLOCK_MONOTONIC
 # in µs). On the tablet 6.5 s passed between switch-root and the first unit.
 MANAGER_PHASES = [
-    ("InitRDSecurity", "initrd", "PID 1: polityka SELinux"),
-    ("InitRDGenerators", "initrd", "PID 1: generatory"),
-    ("InitRDUnitsLoad", "initrd", "PID 1: wczytanie jednostek"),
-    ("Security", "system", "PID 1: polityka SELinux"),
-    ("Generators", "system", "PID 1: generatory"),
-    ("UnitsLoad", "system", "PID 1: wczytanie jednostek"),
+    ("InitRDSecurity", "initrd", "PID 1: SELinux policy"),
+    ("InitRDGenerators", "initrd", "PID 1: generators"),
+    ("InitRDUnitsLoad", "initrd", "PID 1: loading units"),
+    ("Security", "system", "PID 1: SELinux policy"),
+    ("Generators", "system", "PID 1: generators"),
+    ("UnitsLoad", "system", "PID 1: loading units"),
 ]
 
 
@@ -1303,8 +1303,8 @@ def boot_timing():
         # The two waits that matter: the real root's file systems (udev,
         # /boot, everything before sysinit hangs on them) and the kiosk.
         out["chains"] = [
-            {"title": "Do zamontowania systemów plików (local-fs)", "steps": critical_chain("local-fs.target")},
-            {"title": "Do startu kiosku (cage)", "steps": critical_chain(CAGE_UNIT)},
+            {"title": "file systems mounted (local-fs)", "steps": critical_chain("local-fs.target")},
+            {"title": "the kiosk starting (cage)", "steps": critical_chain(CAGE_UNIT)},
         ]
         # Nothing about this boot changes once it has finished.
         if out.get("total") and "journal_error" not in out:
@@ -1319,8 +1319,8 @@ def job_switch(image):
         run_bootc_with_progress(job, ["switch", image])
         job.end_steps()
         job.fraction = 1
-        job.stage = "Gotowe"
-        job.detail = f"Po restarcie system uruchomi obraz {image}"
+        job.stage = "Done"
+        job.detail = f"After a restart the system runs image {image}"
         job.result = bootc_status()
     return target
 
@@ -1413,7 +1413,7 @@ def installer_state():
 
 CHUNK = 4 * 1024 * 1024
 SYNC_EVERY = 64 * 1024 * 1024
-LOG_EVERY = 512 * 1024 * 1024  # a progress line in "Szczegóły" every 512 MiB
+LOG_EVERY = 512 * 1024 * 1024  # a progress line in "Details" every 512 MiB
 
 
 def _mmss(seconds):
@@ -1424,27 +1424,27 @@ def job_install(disk_path):
     def target(job):
         payload = payload_info()
         if not payload:
-            raise RuntimeError("Brak obrazu systemu na nośniku instalacyjnym")
+            raise RuntimeError("No system image on the installation drive")
         size = int(payload.get("size") or 0)
         expected = payload.get("sha256") or ""
-        job.add_log(f"Obraz: {payload.get('image', '?')} ({payload.get('version', '?')})")
-        job.add_log(f"Rozmiar: {size / 1e9:.2f} GB, spakowany {payload['compressed'] / 1e9:.2f} GB")
-        job.add_log(f"Dysk docelowy: {disk_path}")
+        job.add_log(f"Image: {payload.get('image', '?')} ({payload.get('version', '?')})")
+        job.add_log(f"Size: {size / 1e9:.2f} GB, compressed {payload['compressed'] / 1e9:.2f} GB")
+        job.add_log(f"Target disk: {disk_path}")
 
         # Anything mounted from the target (an older install, auto-mounted) goes first.
-        job.stage = "Przygotowanie dysku"
+        job.stage = "Preparing the disk"
         job.add_log(job.stage)
         mounted = run(["lsblk", "-nrpo", "NAME,MOUNTPOINT", disk_path], check=False)
         for line in mounted.splitlines():
             parts = line.split(maxsplit=1)
             if len(parts) == 2 and parts[1]:
-                job.add_log(f"  odmontowanie {parts[0]} ({parts[1]})")
+                job.add_log(f"  unmounting {parts[0]} ({parts[1]})")
                 run(["umount", "-l", parts[0]], check=False)
         # Old partition tables, the backup GPT at the end of the disk included.
         for line in run(["wipefs", "-a", disk_path], check=False).splitlines():
             job.add_log(f"  {line}")
 
-        job.stage = "Kopiowanie systemu"
+        job.stage = "Copying the system"
         job.add_log(job.stage)
         next_log = LOG_EVERY
         digest = hashlib.sha256()
@@ -1477,20 +1477,20 @@ def job_install(disk_path):
                         next_log += LOG_EVERY
             os.fdatasync(fd)
             _progress(job, written, size, t0)
-            job.add_log(f"  zapisano {written / 1e9:.2f} GB w {_mmss(time.time() - t0)}")
+            job.add_log(f"  wrote {written / 1e9:.2f} GB in {_mmss(time.time() - t0)}")
         finally:
             os.close(fd)
         if dec.wait() != 0:
-            raise RuntimeError("Obraz systemu na pendrive jest uszkodzony (błąd dekompresji)")
+            raise RuntimeError("The system image on the USB drive is damaged (decompression error)")
         if size and written != size:
-            raise RuntimeError(f"Zapisano {written} B zamiast {size} B")
+            raise RuntimeError(f"Wrote {written} B instead of {size} B")
         if expected and digest.hexdigest() != expected:
-            raise RuntimeError("Suma kontrolna obrazu się nie zgadza -- nośnik instalacyjny jest uszkodzony")
+            raise RuntimeError("Image checksum mismatch -- the installation drive is damaged")
 
-        job.add_log(f"  sha256 {digest.hexdigest()[:16]}… zgodna z obrazem" if expected
+        job.add_log(f"  sha256 {digest.hexdigest()[:16]}… matches the image" if expected
                     else f"  sha256 {digest.hexdigest()[:16]}…")
 
-        job.stage = "Weryfikacja zapisu"
+        job.stage = "Verifying the write"
         job.add_log(job.stage)
         job.fraction = 0
         run(["blockdev", "--flushbufs", disk_path], check=False)
@@ -1515,10 +1515,10 @@ def job_install(disk_path):
         finally:
             os.close(fd)
         if check.hexdigest() != digest.hexdigest():
-            raise RuntimeError("Weryfikacja nieudana: dane na dysku różnią się od obrazu. Spróbuj ponownie.")
-        job.add_log(f"  odczytano {read / 1e9:.2f} GB w {_mmss(time.time() - t0)}, dane zgodne")
+            raise RuntimeError("Verification failed: the data on the disk differs from the image. Try again.")
+        job.add_log(f"  read {read / 1e9:.2f} GB in {_mmss(time.time() - t0)}, data matches")
 
-        job.stage = "Kończenie"
+        job.stage = "Finishing"
         job.add_log(job.stage)
         # The image is smaller than the eMMC: move the backup GPT to the real
         # end of the disk. The root partition itself grows on first boot.
@@ -1527,9 +1527,9 @@ def job_install(disk_path):
             for line in (p.stdout + p.stderr).splitlines():
                 job.add_log(f"  {line}")
         subprocess.run(["sync"])
-        job.add_log("Gotowe. Wyjmij pendrive i uruchom ponownie.")
+        job.add_log("Done. Remove the USB drive and restart.")
         job.fraction = 1
-        job.detail = "System zainstalowany. Wyjmij pendrive i uruchom ponownie."
+        job.detail = "System installed. Remove the USB drive and restart."
     return target
 
 
@@ -1540,7 +1540,7 @@ def _progress(job, done, total, t0):
     eta = ""
     if total and speed > 0:
         left = (total - done) / speed
-        eta = f" · zostało około {int(left // 60)} min {int(left % 60)} s"
+        eta = f" · about {int(left // 60)} min {int(left % 60)} s left"
     job.detail = f"{done / 1e9:.2f} / {total / 1e9:.2f} GB · {speed / 1e6:.0f} MB/s{eta}" if total \
         else f"{done / 1e9:.2f} GB · {speed / 1e6:.0f} MB/s"
 
@@ -1566,15 +1566,15 @@ class Handler(BaseHTTPRequestHandler):
     def body(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n > 64 * 1024:
-            raise ApiError("Za duże zapytanie")
+            raise ApiError("Request too large")
         if not n:
             return {}
         try:
             data = json.loads(self.rfile.read(n))
         except ValueError:
-            raise ApiError("Niepoprawny JSON")
+            raise ApiError("Invalid JSON")
         if not isinstance(data, dict):
-            raise ApiError("Oczekiwano obiektu JSON")
+            raise ApiError("Expected a JSON object")
         return data
 
     def guard(self):
@@ -1632,7 +1632,7 @@ class Handler(BaseHTTPRequestHandler):
         except ApiError as e:
             self.send_json({"error": str(e)}, e.status)
         except Exception as e:  # noqa: BLE001
-            self.send_json({"error": f"Błąd wewnętrzny: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.send_json({"error": f"Internal error: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_GET(self):
         self.dispatch("GET")
@@ -1734,7 +1734,7 @@ def r_timezones(body, q):
 def r_timezone_set(body, q):
     tz = str(body.get("timezone", "")).strip()
     if tz not in run(["timedatectl", "list-timezones", "--no-pager"], timeout=20).split():
-        raise ApiError("Nieznana strefa czasowa")
+        raise ApiError("Unknown time zone")
     run(["timedatectl", "set-timezone", tz], timeout=20)
     time.tzset()
     EVENTS.emit("device")
@@ -1757,16 +1757,16 @@ def r_hmi_test(body, q):
     try:
         port = int(body.get("port"))
     except (TypeError, ValueError):
-        raise ApiError("Port musi być liczbą")
+        raise ApiError("Port must be a number")
     if not host:
-        raise ApiError("Podaj adres HMI")
+        raise ApiError("Enter the HMI address")
     t0 = time.time()
     try:
         with socket.create_connection((host, port), timeout=3):
             pass
     except OSError as e:
-        return {"ok": False, "message": f"Brak połączenia z {host}:{port} ({e.strerror or e})"}
-    return {"ok": True, "message": f"Port {port} na {host} odpowiada ({(time.time() - t0) * 1000:.0f} ms)"}
+        return {"ok": False, "message": f"Can't connect to {host}:{port} ({e.strerror or e})"}
+    return {"ok": True, "message": f"Port {port} on {host} answers ({(time.time() - t0) * 1000:.0f} ms)"}
 
 
 def r_wifi(body, q):
@@ -1781,7 +1781,7 @@ def r_wifi_connect(body, q):
 def r_wifi_forget(body, q):
     uuid = str(body.get("uuid", ""))
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
-        raise ApiError("Niepoprawny profil")
+        raise ApiError("Invalid profile")
     run(["nmcli", "con", "delete", uuid])
     return wifi_state(rescan=False)
 
@@ -1817,7 +1817,7 @@ def r_hostname_set(body, q):
     """Static hostname (hostnamectl). One DNS label: what DHCP and routers show."""
     name = str(body.get("hostname", "")).strip().lower()
     if not HOSTNAME.fullmatch(name):
-        raise ApiError("Nazwa: 1-63 znaki, małe litery, cyfry i myślniki (nie na początku ani końcu)")
+        raise ApiError("Name: 1-63 characters, lowercase letters, digits and hyphens (not first or last)")
     run(["hostnamectl", "set-hostname", name])
     EVENTS.emit("device")
     return {"hostname": socket.gethostname()}
@@ -1858,7 +1858,7 @@ PANEL_ORIENTATIONS = {"normal": "normal", "90": "left_side_up",
                       "180": "upside_down", "270": "right_side_up"}
 BLS_ENTRIES = Path("/boot/loader/entries")
 _splash_lock = threading.Lock()
-# For Ekran (GET /api/splash, event "splash"): rewriting the boot entries
+# For Display (GET /api/splash, event "splash"): rewriting the boot entries
 # takes a few seconds; a restart in the middle would keep the old rotation.
 SPLASH_STATE = {"state": None, "orientation": None, "error": None}
 
@@ -1915,7 +1915,7 @@ def r_splash(body, q):
 
 
 # What kiosk-shell sees of the screen (its window's scale and size, cage's
-# outputs): Ekran shows it, for when the picture is the wrong size.
+# outputs): Display shows it, for when the picture is the wrong size.
 DISPLAY_INFO = {}
 
 
@@ -1965,7 +1965,7 @@ def r_touch_set(body, q):
     transform = str(body.get("transform", ""))
     matrix = TOUCH_MATRICES.get(transform)
     if not matrix:
-        raise ApiError("Nieznana orientacja")
+        raise ApiError("Unknown orientation")
     # The boot splash follows the built-in panel (kiosk-shell names it).
     threading.Thread(target=set_splash_orientation, args=(str(body.get("output") or ""), transform),
                      daemon=True).start()
@@ -1999,7 +1999,7 @@ def r_touch_set(body, q):
 
 def r_system(body, q):
     # While bootc upgrade/switch runs it holds the sysroot lock and `bootc
-    # status` waits for it -- 30 s, then "Aktualizacje są niedostępne" in
+    # status` waits for it -- 30 s, then "Updates unavailable" in
     # the middle of a download. Answer from the last good status instead.
     job = CURRENT_JOB
     cached = LAST_STATUS["value"]
@@ -2056,11 +2056,11 @@ def r_boot_ok(body, q):
 
 
 def r_system_check(body, q):
-    return start_job("check", "Sprawdzanie aktualizacji", job_check).as_dict()
+    return start_job("check", "Checking for updates", job_check).as_dict()
 
 
 def r_system_upgrade(body, q):
-    return start_job("upgrade", "Aktualizacja systemu", job_upgrade, UPGRADE_STEPS).as_dict()
+    return start_job("upgrade", "System update", job_upgrade, UPGRADE_STEPS).as_dict()
 
 
 def r_system_switch(body, q):
@@ -2068,31 +2068,31 @@ def r_system_switch(body, q):
     if image.startswith("docker://"):
         image = image[len("docker://"):]
     if not IMAGE_REF.match(image):
-        raise ApiError("Niepoprawna nazwa obrazu (np. ghcr.io/lukemech/immutable-kiosk-x86:latest)")
-    return start_job("switch", f"Zmiana obrazu na {image}", job_switch(image), BOOTC_STEPS).as_dict()
+        raise ApiError("Invalid image name (e.g. ghcr.io/lukemech/immutable-kiosk-x86:latest)")
+    return start_job("switch", f"Switching image to {image}", job_switch(image), BOOTC_STEPS).as_dict()
 
 
 def r_system_channel(body, q):
     """Follow the other channel: the same image repository, its tag."""
     channel = body.get("channel")
     if channel not in CHANNELS:
-        raise ApiError("Nieznany kanał")
+        raise ApiError("Unknown channel")
     st = bootc_status()
     if not st.get("available"):
-        raise ApiError(st.get("error") or "bootc jest niedostępny")
+        raise ApiError(st.get("error") or "bootc is unavailable")
     current = (st.get("staged") or st.get("booted") or {}).get("image", "")
     if not current:
-        raise ApiError("Nie wiadomo, z jakiego obrazu działa system")
+        raise ApiError("Can't tell which image the system runs from")
     repo, _ = split_image(current)
     image = f"{repo}:{CHANNELS[channel]['tag']}"
     if image == current:
-        raise ApiError(f"System już jest na kanale {CHANNELS[channel]['name']}")
-    return start_job("switch", f"Przejście na kanał {CHANNELS[channel]['name']}",
+        raise ApiError(f"The system is already on the {CHANNELS[channel]['name']} channel")
+    return start_job("switch", f"Switching to the {CHANNELS[channel]['name']} channel",
                      job_switch(image), BOOTC_STEPS).as_dict()
 
 
-ROLLBACK_STEPS = [("rollback", "Ustawienie poprzedniej wersji jako domyślnej"),
-                  ("reboot", "Ponowne uruchomienie")]
+ROLLBACK_STEPS = [("rollback", "Set the previous version as default"),
+                  ("reboot", "Restart")]
 
 
 def job_rollback(job):
@@ -2101,27 +2101,27 @@ def job_rollback(job):
     first), only the restart."""
     st = bootc_status()
     if not st.get("available"):
-        raise RuntimeError(st.get("error") or "bootc jest niedostępny")
+        raise RuntimeError(st.get("error") or "bootc is unavailable")
     prev = st.get("rollback")
     if not prev:
-        raise RuntimeError("Nie ma poprzedniej wersji")
-    job.step("rollback", f"Wersja {prev.get('version') or prev.get('digest', '')[7:19]}")
+        raise RuntimeError("There's no previous version")
+    job.step("rollback", f"Version {prev.get('version') or prev.get('digest', '')[7:19]}")
     if st.get("rollback_queued"):
-        job.add_log("Przywrócenie już ustawione: tylko restart")
+        job.add_log("Rollback already set: restart only")
     else:
         for line in run(["bootc", "rollback"], timeout=180).splitlines():
             job.add_log(line)
     job.result = bootc_status()
-    job.step("reboot", "Ekran na chwilę zgaśnie, potem uruchomi się poprzednia wersja")
+    job.step("reboot", "The screen goes dark for a moment, then the previous version starts")
     time.sleep(2)  # the page gets to show this step
     run(["systemctl", "reboot"], timeout=30)
     # Normally the end of this process. Still here: something holds it up.
     time.sleep(120)
-    raise RuntimeError("System nie uruchomił się ponownie — poprzednia wersja włączy się przy następnym starcie")
+    raise RuntimeError("The system didn't restart — the previous version will start on the next boot")
 
 
 def r_system_rollback(body, q):
-    return start_job("rollback", "Przywracanie poprzedniej wersji", job_rollback, ROLLBACK_STEPS).as_dict()
+    return start_job("rollback", "Restoring the previous version", job_rollback, ROLLBACK_STEPS).as_dict()
 
 
 DEFAULT_TIMEZONE = "Europe/Warsaw"  # the image's (build_files/05-base.sh)
@@ -2181,7 +2181,7 @@ def r_settings_reset(body, q):
 def r_power(body, q):
     action = body.get("action")
     if action not in ("reboot", "poweroff"):
-        raise ApiError("Nieznana akcja")
+        raise ApiError("Unknown action")
     # Answer first, act a moment later, so the page gets its reply.
     threading.Timer(1.0, subprocess.run, args=(["systemctl", action],)).start()
     return {"ok": True}
@@ -2193,23 +2193,23 @@ def r_job(body, q):
 
 def r_installer(body, q):
     if mode() != "installer":
-        raise ApiError("Dostępne tylko na nośniku instalacyjnym", HTTPStatus.NOT_FOUND)
+        raise ApiError("Only available on the installation drive", HTTPStatus.NOT_FOUND)
     return installer_state()
 
 
 def r_installer_start(body, q):
     if mode() != "installer":
-        raise ApiError("Dostępne tylko na nośniku instalacyjnym", HTTPStatus.NOT_FOUND)
+        raise ApiError("Only available on the installation drive", HTTPStatus.NOT_FOUND)
     name = str(body.get("disk", ""))
     disk = next((d for d in list_disks() if d["name"] == name), None)
     if not disk:
-        raise ApiError("Nie ma takiego dysku")
+        raise ApiError("No such disk")
     if disk["is_boot_medium"]:
-        raise ApiError("To jest nośnik, z którego uruchomiono instalator")
+        raise ApiError("This is the drive the installer was started from")
     payload = payload_info()
     if payload and payload.get("size") and disk["size"] < int(payload["size"]):
-        raise ApiError("Dysk jest za mały na system")
-    return start_job("install", f"Instalacja na {disk['path']}", job_install(disk["path"])).as_dict()
+        raise ApiError("The disk is too small for the system")
+    return start_job("install", f"Installing to {disk['path']}", job_install(disk["path"])).as_dict()
 
 
 ROUTES = {

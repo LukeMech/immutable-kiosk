@@ -215,7 +215,7 @@ class Splash:
             self.make_buffers(w, h)
             self.draw(full=True)
             if first:
-                milestone(f"pierwsza klatka ({w}x{h})")
+                milestone(f"first frame ({w}x{h})")
         self.flush()
 
     def on_frame(self, op, r):
@@ -328,7 +328,7 @@ class Splash:
 
 def main():
     def ended(*_):
-        milestone("koniec")
+        milestone("end")
         sys.exit(0)
     signal.signal(signal.SIGTERM, ended)
     try:

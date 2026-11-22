@@ -98,7 +98,7 @@ function holdButton(btn, fn) {
         timer = setTimeout(() => { cancel(); fn(); }, ms);
     });
     ["pointerup", "pointerleave", "pointercancel"].forEach(ev => btn.addEventListener(ev, () => {
-        if (timer) { cancel(); toast("Przytrzymaj przycisk dłużej"); }
+        if (timer) { cancel(); toast("Hold the button longer"); }
     }));
 }
 
@@ -111,17 +111,17 @@ const fmtTime = t => t ? new Date(t).toLocaleString(LOCALE()) : "—";
 
 let cfg = null;
 
-// "Ładowarka podłączona · bateria 72% (ładowanie)" -- parts that are unknown
+// "charger connected · battery 72% (charging)" -- parts that are unknown
 // are left out instead of shown as "—".
 function powerText(p) {
     const parts = [];
-    if (p.ac_online === true) parts.push("ładowarka podłączona");
-    else if (p.ac_online === false) parts.push("na baterii");
+    if (p.ac_online === true) parts.push("charger connected");
+    else if (p.ac_online === false) parts.push("on battery");
     if (p.battery != null) {
-        const st = { Charging: "ładowanie", Full: "naładowana", "Not charging": "nie ładuje" }[p.battery_status];
-        parts.push(`bateria ${p.battery}%${st ? ` (${st})` : ""}`);
+        const st = { Charging: "charging", Full: "full", "Not charging": "not charging" }[p.battery_status];
+        parts.push(`battery ${p.battery}%${st ? ` (${st})` : ""}`);
     }
-    return parts.length ? parts.join(" · ") : "brak danych";
+    return parts.length ? parts.join(" · ") : "no data";
 }
 
 // Extra scroll room at the bottom only while the on-screen keyboard is up.
@@ -153,7 +153,7 @@ window.kioskWaiting = on => { hmiWaiting = !!on; renderNetbar(); };
 /* ---------- HMI */
 let hmiDraft = null;
 
-let hmiTest = null;  // last "Sprawdź połączenie": {url, busy} or {url, ok, message}
+let hmiTest = null;  // last "Test connection": {url, busy} or {url, ok, message}
 
 // Same rules as kioskd's hmi_url(), so a saved address compares equal.
 function hmiDraftUrl() {
@@ -171,15 +171,15 @@ function hmiDraftUrl() {
 function renderHmiUrl() {
     const url = hmiDraftUrl();
     if (!url) {
-        setStatus("hmi-st", "warn", ICONS.warn, "Brak adresu HMI", "Podaj adres serwera HMI, żeby wyświetlić wizualizację.");
+        setStatus("hmi-st", "warn", ICONS.warn, "No HMI address", "Enter the HMI server's address to show the HMI.");
         return;
     }
     const unsaved = url !== (cfg && cfg.hmi_url);
     const t = hmiTest && hmiTest.url === url ? hmiTest : null;
-    const note = unsaved ? "Niezapisane — „Zapisz i otwórz HMI”" : "";
-    if (t && t.busy) setStatus("hmi-st", "busy", ICONS.busy, url, "Sprawdzanie połączenia…");
+    const note = unsaved ? "Not saved — “Save and open HMI”" : "";
+    if (t && t.busy) setStatus("hmi-st", "busy", ICONS.busy, url, "Testing connection…");
     else if (t) setStatus("hmi-st", t.ok ? "ok" : "err", t.ok ? ICONS.ok : ICONS.err, url, [t.message, note].filter(Boolean).join(" · "));
-    else setStatus("hmi-st", unsaved ? "new" : "", ICONS.screen, url, note || "Zapisany adres wizualizacji");
+    else setStatus("hmi-st", unsaved ? "new" : "", ICONS.screen, url, note || "Saved HMI address");
 }
 
 function readHmiForm() {
@@ -246,7 +246,7 @@ function initHmi() {
             retry_seconds: Number($("opt-retry").value) || 10,
         });
         shell("config-changed");
-        toast("Zapisano");
+        toast("Saved");
     }));
 }
 
@@ -262,29 +262,29 @@ function renderWifiStatus() {
     // Disconnect: only next to a live connection, never while something runs.
     $("wifi-off").hidden = !!o || !(w && w.enabled && d0 && /^(connected|connecting)/.test(d0.state));
     if (o) return setStatus("wifi-st", o.state, o.icon, o.title, o.sub);
-    if (!w) return setStatus("wifi-st", "busy", ICONS.busy, "Wczytywanie…");
+    if (!w) return setStatus("wifi-st", "busy", ICONS.busy, "Loading…");
     const d = w.device;
-    if (!d) return setStatus("wifi-st", "err", ICONS.wifiOff, "Brak karty Wi-Fi", "Tablet nie zgłasza żadnego adaptera Wi-Fi.");
-    if (!w.enabled) return setStatus("wifi-st", "off", ICONS.wifiOff, "Wi-Fi wyłączone", "Włącz przełącznikiem obok tytułu.");
-    if (d.state.startsWith("connecting")) return setStatus("wifi-st", "busy", ICONS.busy, `Łączenie z ${d.connection || "siecią"}…`, "");
+    if (!d) return setStatus("wifi-st", "err", ICONS.wifiOff, "No Wi-Fi adapter", "The tablet reports no Wi-Fi adapter.");
+    if (!w.enabled) return setStatus("wifi-st", "off", ICONS.wifiOff, "Wi-Fi is off", "Turn it on with the switch next to the title.");
+    if (d.state.startsWith("connecting")) return setStatus("wifi-st", "busy", ICONS.busy, d.connection ? `Connecting to ${d.connection}…` : "Connecting…", "");
     if (d.state.startsWith("connected")) {
         const n = w.networks.find(x => x.in_use);
-        const sub = [d.address, n ? `sygnał ${n.signal}%` : ""].filter(Boolean).join(" · ");
-        return setStatus("wifi-st", "ok", wifiIcon(n ? sigLevel(n.signal) : 3), `Połączono z ${n ? n.ssid : d.connection}`, sub);
+        const sub = [d.address, n ? `signal ${n.signal}%` : ""].filter(Boolean).join(" · ");
+        return setStatus("wifi-st", "ok", wifiIcon(n ? sigLevel(n.signal) : 3), `Connected to ${n ? n.ssid : d.connection}`, sub);
     }
-    setStatus("wifi-st", "warn", wifiIcon(0), "Nie połączono", w.networks.length ? "Wybierz sieć z listy poniżej." : "W pobliżu nie widać żadnej sieci.");
+    setStatus("wifi-st", "warn", wifiIcon(0), "Not connected", w.networks.length ? "Pick a network from the list below." : "No networks in range.");
 }
 
 // live: a change kioskd reported (initEvents) -- not while an action of this
 // page is still running (it reloads when it's done).
 async function loadWifi(rescan, live = false) {
     if (live && wifiOverride && wifiOverride.state === "busy") return;
-    if (rescan) wifiOverride = { state: "busy", icon: ICONS.busy, title: "Szukanie sieci…" };
+    if (rescan) wifiOverride = { state: "busy", icon: ICONS.busy, title: "Scanning for networks…" };
     renderWifiStatus();
     let w;
     try { w = await api("/wifi" + (rescan ? "?rescan=1" : "")); }
     catch (e) {
-        wifiOverride = { state: "err", icon: ICONS.err, title: "Nie udało się odczytać Wi-Fi", sub: e.message };
+        wifiOverride = { state: "err", icon: ICONS.err, title: "Couldn't read Wi-Fi", sub: e.message };
         renderWifiStatus();
         return;
     }
@@ -298,14 +298,14 @@ async function loadWifi(rescan, live = false) {
     if (live && [...list.querySelectorAll("input")].some(i => i.value || i === document.activeElement)) return;
     // The connected network is the status line above, not a row here.
     const others = w.networks.filter(n => !n.in_use);
-    list.innerHTML = others.length ? "" : `<li class="empty">${w.enabled ? "Nie znaleziono innych sieci." : "Wi-Fi jest wyłączone."}</li>`;
+    list.innerHTML = others.length ? "" : `<li class="empty">${w.enabled ? "No other networks found." : "Wi-Fi is off."}</li>`;
     for (const n of others) {
         const li = document.createElement("li");
-        const sec = n.security ? `zabezpieczona · ${esc(n.security)}` : "otwarta";
+        const sec = n.security ? `secured · ${esc(n.security)}` : "open";
         li.innerHTML = `<div class="item">
             <span class="ico">${wifiIcon(sigLevel(n.signal))}</span>
             <div class="name">${esc(n.ssid)}<div class="sub">${sec} · ${n.signal}%</div></div>
-            ${n.saved ? '<span class="badge">zapisana</span>' : ""}
+            ${n.saved ? '<span class="badge">saved</span>' : ""}
           </div>`;
         const item = li.querySelector(".item");
         list.appendChild(li);
@@ -314,13 +314,13 @@ async function loadWifi(rescan, live = false) {
         ex.hidden = openSsid !== n.ssid;
         item.classList.toggle("open", !ex.hidden);
         // A saved network connects with what NetworkManager remembers -- no
-        // password field unless "Inne hasło" asks for one.
+        // password field unless "Other password" asks for one.
         const remembered = n.saved && n.security;
-        ex.innerHTML = (remembered ? '<p class="hint">Zapisana — połączy się z zapamiętanym hasłem.</p>' : "") +
-            (n.security ? `<label class="pw"${remembered ? " hidden" : ""}>Hasło
+        ex.innerHTML = (remembered ? '<p class="hint">Saved — connects with the remembered password.</p>' : "") +
+            (n.security ? `<label class="pw"${remembered ? " hidden" : ""}>Password
                 <input type="password" autocomplete="off"></label>` : "") +
-            `<div class="actions"><button class="btn primary go">Połącz</button>` +
-            (remembered ? '<button class="btn other">Inne hasło</button>' : "") + `</div>`;
+            `<div class="actions"><button class="btn primary go">Connect</button>` +
+            (remembered ? '<button class="btn other">Other password</button>' : "") + `</div>`;
         const btn = ex.querySelector(".go");
         ex.querySelector(".other")?.addEventListener("click", e => {
             ex.querySelector(".pw").hidden = false;
@@ -331,14 +331,14 @@ async function loadWifi(rescan, live = false) {
         btn.addEventListener("click", () => busy(btn, async () => {
             const pw = ex.querySelector(".pw");
             const pass = pw && !pw.hidden ? pw.querySelector("input").value : "";
-            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Łączenie z ${n.ssid}…`, sub: "To może potrwać do minuty." };
+            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Connecting to ${n.ssid}…`, sub: "This can take up to a minute." };
             renderWifiStatus();
             try {
                 await api("/wifi/connect", { ssid: n.ssid, password: pass });
                 wifiOverride = null;
                 openSsid = null;
             } catch (e) {
-                wifiOverride = { state: "err", icon: ICONS.err, title: `Nie udało się połączyć z ${n.ssid}`, sub: e.message };
+                wifiOverride = { state: "err", icon: ICONS.err, title: `Couldn't connect to ${n.ssid}`, sub: e.message };
                 renderWifiStatus();
                 throw e;
             }
@@ -358,24 +358,24 @@ async function loadWifi(rescan, live = false) {
         li.appendChild(ex);
     }
     const saved = $("wifi-saved");
-    saved.innerHTML = w.saved.length ? "" : '<li class="empty">Brak zapisanych sieci.</li>';
+    saved.innerHTML = w.saved.length ? "" : '<li class="empty">No saved networks.</li>';
     for (const s of w.saved) {
         const li = document.createElement("li");
         li.innerHTML = `<div class="item static">
             <span class="ico${s.active ? " ok" : ""}">${wifiIcon(s.active ? 3 : 0)}</span>
-            <div class="name">${esc(s.ssid)}${s.active ? '<div class="sub">aktywna</div>' : ""}</div>
-            ${s.active ? "" : '<button class="btn primary go">Połącz</button>'}
-            <button class="btn danger hold" data-hold="1000">Zapomnij</button></div>`;
+            <div class="name">${esc(s.ssid)}${s.active ? '<div class="sub">active</div>' : ""}</div>
+            ${s.active ? "" : '<button class="btn primary go">Connect</button>'}
+            <button class="btn danger hold" data-hold="1000">Forget</button></div>`;
         // Saved: connects with the remembered password, nothing to type.
         const go = li.querySelector(".go");
         go?.addEventListener("click", () => busy(go, async () => {
-            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Łączenie z ${s.ssid}…`, sub: "To może potrwać do minuty." };
+            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Connecting to ${s.ssid}…`, sub: "This can take up to a minute." };
             renderWifiStatus();
             try {
                 await api("/wifi/connect", { ssid: s.ssid, password: "" });
                 wifiOverride = null;
             } catch (e) {
-                wifiOverride = { state: "err", icon: ICONS.err, title: `Nie udało się połączyć z ${s.ssid}`, sub: e.message };
+                wifiOverride = { state: "err", icon: ICONS.err, title: `Couldn't connect to ${s.ssid}`, sub: e.message };
                 renderWifiStatus();
                 throw e;
             }
@@ -384,7 +384,7 @@ async function loadWifi(rescan, live = false) {
         const b = li.querySelector(".hold");
         holdButton(b, () => busy(b, async () => {
             await api("/wifi/forget", { uuid: s.uuid });
-            toast(`Usunięto ${s.ssid}`);
+            toast(`Removed ${s.ssid}`);
             await loadWifi(false);
         }).catch(() => {}));
         saved.appendChild(li);
@@ -398,13 +398,13 @@ function initWifi() {
         busy(b, () => loadWifi(true)).catch(() => {}).finally(() => b.classList.remove("spin"));
     });
     holdButton($("wifi-off"), () => {
-        const name = (wifiLast && wifiLast.device && wifiLast.device.connection) || "sieci";
-        wifiOverride = { state: "busy", icon: ICONS.busy, title: `Rozłączanie z ${name}…` };
+        const name = wifiLast && wifiLast.device && wifiLast.device.connection;
+        wifiOverride = { state: "busy", icon: ICONS.busy, title: name ? `Disconnecting from ${name}…` : "Disconnecting…" };
         renderWifiStatus();
         api("/wifi/disconnect", {})
             .then(() => { wifiOverride = null; return loadWifi(false); })
             .catch(e => {
-                wifiOverride = { state: "err", icon: ICONS.err, title: "Nie udało się rozłączyć", sub: e.message };
+                wifiOverride = { state: "err", icon: ICONS.err, title: "Couldn't disconnect", sub: e.message };
                 renderWifiStatus();
             });
     });
@@ -413,13 +413,13 @@ function initWifi() {
     $("wifi-radio").addEventListener("change", e => {
         const sw = e.target, on = sw.checked;
         sw.disabled = true;
-        wifiOverride = { state: "busy", icon: ICONS.busy, title: on ? "Włączanie Wi-Fi…" : "Wyłączanie Wi-Fi…" };
+        wifiOverride = { state: "busy", icon: ICONS.busy, title: on ? "Turning Wi-Fi on…" : "Turning Wi-Fi off…" };
         renderWifiStatus();
         api("/wifi/radio", { enabled: on })
             .then(() => { wifiOverride = null; return loadWifi(on); })
             .catch(err => {
                 sw.checked = !on;
-                wifiOverride = { state: "err", icon: ICONS.err, title: on ? "Nie udało się włączyć Wi-Fi" : "Nie udało się wyłączyć Wi-Fi", sub: err.message };
+                wifiOverride = { state: "err", icon: ICONS.err, title: on ? "Couldn't turn Wi-Fi on" : "Couldn't turn Wi-Fi off", sub: err.message };
                 renderWifiStatus();
             })
             .finally(() => { sw.disabled = false; });
@@ -428,7 +428,7 @@ function initWifi() {
         const ssid = $("hid-ssid").value.trim();
         await api("/wifi/connect", { ssid, password: $("hid-pass").value, hidden: true });
         $("hid-pass").value = "";
-        toast(`Połączono z ${ssid}`);
+        toast(`Connected to ${ssid}`);
         await loadWifi(false);
     }).catch(() => {}));
 }
@@ -442,13 +442,13 @@ async function loadNet(live = false) {
     // A card being edited (static address) isn't rebuilt under the finger.
     if (live && box.querySelector(".card.dirty")) return;
     let n;
-    const lone = (state, icon, title, sub) => `<div class="card"><h2>Połączenie</h2>${statusHtml(state, icon, title, sub)}</div>`;
+    const lone = (state, icon, title, sub) => `<div class="card"><h2>Connection</h2>${statusHtml(state, icon, title, sub)}</div>`;
     try { n = await api("/network"); }
-    catch (e) { box.innerHTML = lone("err", ICONS.err, "Nie udało się odczytać sieci", e.message); return; }
+    catch (e) { box.innerHTML = lone("err", ICONS.err, "Couldn't read the network", e.message); return; }
     if (!n.connections.length) {
         // Nothing connected: the Wi-Fi card above already says so.
-        box.innerHTML = `<div class="card"><h2>Adres IP</h2>` + statusHtml("off", ICONS.ethernet, "Brak połączenia",
-            "Połącz się z siecią Wi-Fi poniżej albo podłącz kabel (adapter USB-Ethernet).") + `</div>`;
+        box.innerHTML = `<div class="card"><h2>IP address</h2>` + statusHtml("off", ICONS.ethernet, "No connection",
+            "Join a Wi-Fi network below or plug in a cable (USB-Ethernet adapter).") + `</div>`;
         return;
     }
     box.innerHTML = "";
@@ -458,30 +458,30 @@ async function loadNet(live = false) {
         const cur = c.current;
         const kind = c.type === "wifi" ? "Wi-Fi" : c.type === "ethernet" ? "Ethernet" : c.type;
         const has = cur.addresses.length > 0;
-        const how = c.method === "manual" ? "adres statyczny" : "adres z DHCP";
-        el.innerHTML = `<h2>Adres IP · ${esc(kind)}</h2>` +
+        const how = c.method === "manual" ? "static address" : "DHCP address";
+        el.innerHTML = `<h2>IP address · ${esc(kind)}</h2>` +
           statusHtml(has ? "ok" : "busy", has ? (c.type === "wifi" ? wifiIcon(3) : ICONS.ethernet) : ICONS.busy,
-                     c.name, has ? `${cur.addresses.join(", ")} · ${how}` : "Czekam na adres IP…") + `
+                     c.name, has ? `${cur.addresses.join(", ")} · ${how}` : "Waiting for an IP address…") + `
           <dl class="kv">
-            <dt>Brama</dt><dd>${esc(cur.gateway || "—")}</dd>
+            <dt>Gateway</dt><dd>${esc(cur.gateway || "—")}</dd>
             <dt>DNS</dt><dd>${esc(cur.dns.join(", ") || "—")}</dd>
-            <dt>Interfejs</dt><dd>${esc(c.device || "—")}</dd>
+            <dt>Interface</dt><dd>${esc(c.device || "—")}</dd>
           </dl>
-          <div class="sep"><h3>Adresowanie IPv4</h3>
-          <div class="seg"><button data-v="auto">Automatycznie (DHCP)</button><button data-v="manual">Statyczny adres</button></div>
+          <div class="sep"><h3>IPv4 addressing</h3>
+          <div class="seg"><button data-v="auto">Automatic (DHCP)</button><button data-v="manual">Static address</button></div>
           <div class="manual">
             <div class="grid2">
-              <label>Adres IP<input name="address" type="text" inputmode="decimal" placeholder="192.168.1.20"></label>
-              <label>Maska (prefiks)<input name="prefix" type="text" inputmode="numeric" placeholder="24"></label>
+              <label>IP address<input name="address" type="text" inputmode="decimal" placeholder="192.168.1.20"></label>
+              <label>Mask (prefix)<input name="prefix" type="text" inputmode="numeric" placeholder="24"></label>
             </div>
-            <label>Brama<input name="gateway" type="text" inputmode="decimal" placeholder="192.168.1.1"></label>
+            <label>Gateway<input name="gateway" type="text" inputmode="decimal" placeholder="192.168.1.1"></label>
             <div class="grid2">
               <label>DNS 1<input name="dns1" type="text" inputmode="decimal"></label>
               <label>DNS 2<input name="dns2" type="text" inputmode="decimal"></label>
             </div>
           </div>
           <p class="msg"></p>
-          <div class="actions"><button class="btn primary save">Zastosuj</button></div></div>`;
+          <div class="actions"><button class="btn primary save">Apply</button></div></div>`;
         let method = c.method === "manual" ? "manual" : "auto";
         const segEl = el.querySelector(".seg"), manual = el.querySelector(".manual");
         const f = name => el.querySelector(`[name=${name}]`);
@@ -501,7 +501,7 @@ async function loadNet(live = false) {
                 uuid: c.uuid, method, address: f("address").value, prefix: Number(f("prefix").value),
                 gateway: f("gateway").value, dns: [f("dns1").value, f("dns2").value],
             });
-            msg(m, "Zastosowano. Połączenie jest odnawiane…", "ok");
+            msg(m, "Applied. Reconnecting…", "ok");
             el.classList.remove("dirty");  // NetworkManager's events bring the new state
         }).catch(e => msg(m, e.message, "err")));
         box.appendChild(el);
@@ -515,13 +515,13 @@ async function saveCfg(part) {
     return cfg;
 }
 
-/* Accent colour (Ekran > Kolor akcentu): kioskd keeps the name, the page
+/* Accent colour (Display > Accent color): kioskd keeps the name, the page
    sets --accent (everything accent-tinted derives from it with color-mix)
    and --ik-accent for the on-screen keyboard. Each works with white text. */
 const ACCENTS = {
-    blue: ["Niebieski", "#2f81f7"], teal: ["Morski", "#17a2b8"], green: ["Zielony", "#2da44e"],
-    purple: ["Fioletowy", "#8957e5"], pink: ["Różowy", "#d6409f"], orange: ["Pomarańczowy", "#e16f24"],
-    graphite: ["Grafitowy", "#6e7681"],
+    blue: ["Blue", "#2f81f7"], teal: ["Teal", "#17a2b8"], green: ["Green", "#2da44e"],
+    purple: ["Purple", "#8957e5"], pink: ["Pink", "#d6409f"], orange: ["Orange", "#e16f24"],
+    graphite: ["Graphite", "#6e7681"],
 };
 function applyAccent(name) {
     const hex = (ACCENTS[name] || ACCENTS.blue)[1];
@@ -540,28 +540,28 @@ async function loadSplash() {
     try { st = await api("/splash"); } catch (_) { return; }
     $("splash-st").hidden = !st.state;
     const o = SPLASH_ORIENT[st.orientation] || st.orientation || "";
-    if (st.state === "working") setStatus("splash-st", "busy", ICONS.busy, "Obracanie ekranu startowego…",
-        `Zapisywanie orientacji ${o} w ustawieniach startu. Nie uruchamiaj tabletu ponownie, dopóki to trwa.`);
-    else if (st.state === "done") setStatus("splash-st", "ok", ICONS.ok, "Ekran startowy obrócony",
-        `Od następnego uruchomienia animacja startowa będzie w tej orientacji (${o}).`);
-    else if (st.state === "failed") setStatus("splash-st", "err", ICONS.err, "Nie udało się obrócić ekranu startowego",
+    if (st.state === "working") setStatus("splash-st", "busy", ICONS.busy, "Rotating the boot screen…",
+        `Saving orientation ${o} to the boot settings. Don't restart the tablet until it's done.`);
+    else if (st.state === "done") setStatus("splash-st", "ok", ICONS.ok, "Boot screen rotated",
+        `From the next start, the boot animation uses this orientation (${o}).`);
+    else if (st.state === "failed") setStatus("splash-st", "err", ICONS.err, "Couldn't rotate the boot screen",
         st.error || "");
 }
 
 // What kiosk-shell reports of the screen (cage's outputs and their modes):
-// the panel's modes for Rozdzielczość.
+// the panel's modes for Resolution.
 async function loadDisplay() {
     let d;
     try { d = await api("/display"); } catch (_) { return; }
     if (!d || !d.outputs) return;
-    // Rozdzielczość: the built-in panel's modes (the first output: kiosk-shell
+    // Resolution: the built-in panel's modes (the first output: kiosk-shell
     // lists the panel first), "WxH@R" when one size comes in several rates.
     const panel = d.outputs[0], modes = (panel && panel.modes) || [];
     $("res-wrap").hidden = !modes.length;
     if (!modes.length) return;
     const many = (m) => modes.filter(x => x.w === m.w && x.h === m.h).length > 1;
     const key = m => `${m.w}x${m.h}` + (many(m) ? `@${m.refresh}` : "");
-    const seen = new Set(), opts = [["", "Domyślna"]];
+    const seen = new Set(), opts = [["", "Default"]];
     for (const m of modes) {
         const k = key(m);
         if (seen.has(k)) continue;
@@ -586,10 +586,10 @@ function loadScreen() {
     renderAccent();
     loadSplash();
     loadDisplay();
-    const names = { portrait: "pion", landscape: "poziom", normal: "0°", 90: "90°", 180: "180°", 270: "270°" };
+    const names = { portrait: "portrait", landscape: "landscape", normal: "0°", 90: "90°", 180: "180°", 270: "270°" };
     seg($("rot"), cfg.rotation || "", v => saveCfg({ rotation: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
-    $("rot-hint").textContent = `Teraz: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
-        (cfg.rotation ? "" : " (domyślna dla tego urządzenia)");
+    $("rot-hint").textContent = `Now: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
+        (cfg.rotation ? "" : " (this device's default)");
     $("scale-val").textContent = Math.round((cfg.scale || 1) * 100) + "%";
     // No backlight device (e.g. "basic graphics" boot): no slider.
     const b = cfg.brightness ?? cfg.brightness_now;
@@ -599,14 +599,14 @@ function loadScreen() {
         $("bright-val").textContent = b + "%";
     }
     seg($("corner"), cfg.settings_corner, v => saveCfg({ settings_corner: v }).then(loadScreen).catch(e => toast(e.message, true)));
-    $("corner-hint").textContent = `Awaryjnie: przytrzymanie przez ${RECOVERY_HOLD_S} s przeciwległego rogu ` +
-        `(${CORNER_NAMES[recoveryCorner()]}) — w HMI i w ustawieniach — otwiera System → Odzyskiwanie.`;
+    $("corner-hint").textContent = `Emergency: holding the opposite corner (${CORNER_NAMES[recoveryCorner()]}) ` +
+        `for ${RECOVERY_HOLD_S} s — in the HMI or Settings — opens System → Recovery.`;
 }
 
 /* Recovery corner (kiosk-shell): the corner opposite the Settings one, held
    RECOVERY_HOLD_S over the HMI or Settings, opens the page with #recovery. */
 const RECOVERY_HOLD_S = 3;
-const CORNER_NAMES = { "top-left": "↖ lewy górny", "top-right": "↗ prawy górny", "bottom-left": "↙ lewy dolny", "bottom-right": "↘ prawy dolny" };
+const CORNER_NAMES = { "top-left": "↖ top left", "top-right": "↗ top right", "bottom-left": "↙ bottom left", "bottom-right": "↘ bottom right" };
 const recoveryCorner = () => ({ "top-left": "bottom-right", "top-right": "bottom-left", "bottom-left": "top-right", "bottom-right": "top-left" })[(cfg && cfg.settings_corner) || "top-right"];
 
 function openRecovery() {
@@ -674,7 +674,7 @@ function initScreen() {
 function renderJob(job, { box, stage, bar, detail }) {
     box.hidden = !job;
     if (!job) return;
-    stage.textContent = job.state === "failed" ? `${job.title}: błąd` : (job.stage || job.title);
+    stage.textContent = job.state === "failed" ? `${job.title}: failed` : (job.stage || job.title);
     const wrap = bar.parentElement;
     wrap.classList.toggle("indet", job.state === "running" && job.fraction == null);
     bar.style.width = ((job.state === "done" ? 1 : job.fraction || 0) * 100).toFixed(1) + "%";
@@ -724,7 +724,7 @@ function renderSteps(job, el) {
         // The active step's time runs on between kioskd's events.
         const took = s.state === "active"
             ? job.now - s.started + (job.at ? (performance.now() - job.at) / 1000 : 0) : s.took;
-        li.querySelector(".st").textContent = s.state === "skipped" ? "pominięto"
+        li.querySelector(".st").textContent = s.state === "skipped" ? "skipped"
             : took != null && s.state !== "pending" ? fmtDur(took) : "";
         const bar = li.querySelector(".progress");
         bar.hidden = s.state !== "active";
@@ -745,7 +745,7 @@ function renderSteps(job, el) {
     });
 }
 
-const CHANNEL_NAMES = { stable: "stabilny", dev: "testowy" };
+const CHANNEL_NAMES = { stable: "stable", dev: "testing" };
 let chanPick = null;  // a channel tapped but not switched to yet
 
 function renderChannel(running) {
@@ -757,19 +757,19 @@ function renderChannel(running) {
         b.classList.toggle("on", b.dataset.v === sel);
         b.disabled = running || !avail;
     });
-    let hint = "Stabilny: sprawdzone wydania. Testowy: każda zmiana od razu.";
+    let hint = "Stable: tested releases. Testing: every change right away.";
     if (chanPick) {
-        hint = `Pobierze kanał ${CHANNEL_NAMES[chanPick]}, włączy go po restarcie.` +
-            (chanPick === "stable" && cur === "dev" ? " Może być starszy." : "");
+        hint = `Downloads the ${CHANNEL_NAMES[chanPick]} channel and switches to it after a restart.` +
+            (chanPick === "stable" && cur === "dev" ? " It may be older." : "");
     } else if (avail && cur === "custom") {
-        hint = "Własny obraz: wybierz kanał, by wrócić do aktualizacji.";
+        hint = "Custom image: pick a channel to get updates again.";
     } else if (avail && s.channel !== s.next_channel) {
-        hint = `Po restarcie: kanał ${CHANNEL_NAMES[s.next_channel] || "własny"}.`;
+        hint = `After a restart: ${CHANNEL_NAMES[s.next_channel] || "custom"} channel.`;
     }
     $("chan-hint").textContent = hint;
     $("chan-switch").hidden = !chanPick;
     $("chan-switch").disabled = running;
-    if (chanPick) $("chan-switch").textContent = `Przytrzymaj: przejdź na kanał ${CHANNEL_NAMES[chanPick]}`;
+    if (chanPick) $("chan-switch").textContent = `Hold: switch to the ${CHANNEL_NAMES[chanPick]} channel`;
 }
 
 let sys = null;          // GET /system (bootc status + last check)
@@ -810,22 +810,17 @@ const AUTO_TRIES = 3;  // boot-counter's TRIES
 
 function fmtAgo(t) {
     const s = Date.now() / 1000 - t;
-    if (s < 90) return "przed chwilą";
-    if (s < 3600) return `${Math.round(s / 60)} min temu`;
-    return "o " + new Date(t * 1000).toLocaleTimeString(LOCALE(), { hour: "2-digit", minute: "2-digit" });
+    if (s < 90) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    return "at " + new Date(t * 1000).toLocaleTimeString(LOCALE(), { hour: "2-digit", minute: "2-digit" });
 }
 const fmtDate = t => t ? new Date(t).toLocaleDateString(LOCALE(), { day: "numeric", month: "long", year: "numeric" }) : "";
 
 /* Just enough Markdown for the release bodies build.yml writes: headings,
    lists (commits), tables (package changes), `code`, **bold**, links (text
-   only -- nothing on a kiosk opens them). */
-const MD_HEADINGS = {
-    "Package changes": "Zmiany pakietów", "Updated": "Zaktualizowane", "Added": "Dodane",
-    "Removed": "Usunięte", "Commits": "Zmiany", "Features": "Nowe funkcje", "Fixes": "Poprawki", "Other changes": "Inne zmiany", "Initial build": "Pierwsze wydanie",
-    "Notes": "Uwagi", "All images": "Wszystkie obrazy",
-    // table headers
-    "Package": "Pakiet", "Previous": "Było", "New": "Jest", "Version": "Wersja",
-};
+   only -- nothing on a kiosk opens them). Headings and table headers are
+   translated like the rest of the page; paragraphs, list items and table
+   cells (commit subjects, package names) are translate="no". */
 function md(src) {
     const inline = s => esc(s)
         .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -840,7 +835,7 @@ function md(src) {
         if ((m = l.match(/^(#{1,6})\s+(.*)$/))) {
             // No emoji font on the kiosk: drop them instead of showing boxes.
             const text = m[2].replace(/[\p{Extended_Pictographic}️‍]/gu, "").trim();
-            out += m[1].length <= 2 ? `<h4>${inline(MD_HEADINGS[text] || text)}</h4>` : `<h5>${inline(MD_HEADINGS[text] || text)}</h5>`;
+            out += m[1].length <= 2 ? `<h4>${inline(text)}</h4>` : `<h5>${inline(text)}</h5>`;
         } else if (/^\s*\|/.test(l)) {
             const rows = [];
             for (; i < lines.length && /^\s*\|/.test(lines[i]); i++) {
@@ -848,10 +843,10 @@ function md(src) {
             }
             i--;
             const [head, ...body] = rows;
-            out += `<div class="tbl"><table><thead><tr>${head.map(c => `<th>${inline(MD_HEADINGS[c] || c)}</th>`).join("")}</tr></thead><tbody>` +
+            out += `<div class="tbl"><table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody translate="no">` +
                 body.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("") + "</tbody></table></div>";
         } else if (/^\s*[-*]\s+/.test(l)) {
-            out += "<ul>";
+            out += '<ul translate="no">';
             for (; i < lines.length && /^\s*[-*]\s+/.test(lines[i]); i++) {
                 // "- 22d3877 Subject": the commit's short hash, small and grey.
                 const item = inline(lines[i].replace(/^\s*[-*]\s+/, ""))
@@ -861,7 +856,7 @@ function md(src) {
             i--;
             out += "</ul>";
         } else if (l.trim()) {
-            out += `<p>${inline(l)}</p>`;
+            out += `<p translate="no">${inline(l)}</p>`;
         }
     }
     return out;
@@ -873,39 +868,39 @@ function renderUpdate() {
     // A check is just a spinner; an update or a switch shows its steps
     // (the update's first one is the same check).
     const checking = running && job.kind === "check";
-    const restoring = running && job.kind === "rollback";  // shown in Przywracanie
+    const restoring = running && job.kind === "rollback";  // shown in Recovery
     const working = running && !checking && !restoring;
     let state, title, sub = "";
     // A running job first: while bootc works, its status may be stale or
     // briefly unavailable -- that's not a failure to show.
     if (working) {
         state = "busy";
-        title = job.kind === "switch" ? `${job.title}…` : "Aktualizowanie systemu…";
-        sub = job.kind === "upgrade" && s && s.update ? `Wersja ${versionName(s.update)}`
-            : "Działa normalnie dalej — nowa wersja włączy się po restarcie.";
+        title = job.kind === "switch" ? `${job.title}…` : "Updating the system…";
+        sub = job.kind === "upgrade" && s && s.update ? `Version ${versionName(s.update)}`
+            : "Keeps working as usual — the new version starts after a restart.";
     } else if (checking) {
-        state = "busy"; title = "Sprawdzanie aktualizacji…";
-        sub = s && s.booted ? `Teraz działa ${versionName(s.booted)}` : "";
+        state = "busy"; title = "Checking for updates…";
+        sub = s && s.booted ? `Now running ${versionName(s.booted)}` : "";
     } else if (restoring) {
-        state = "busy"; title = "Przywracanie poprzedniej wersji…";
-        sub = "Postęp w karcie „Odzyskiwanie”.";
+        state = "busy"; title = "Restoring the previous version…";
+        sub = "Progress in the “Recovery” card.";
     } else if (!s) {
-        state = "busy"; title = "Wczytywanie…";
+        state = "busy"; title = "Loading…";
     } else if (!s.available) {
-        state = "err"; title = "Aktualizacje są niedostępne"; sub = s.error || "";
+        state = "err"; title = "Updates unavailable"; sub = s.error || "";
     } else if (s.update) {
-        state = "new"; title = `Dostępna aktualizacja: ${versionName(s.update)}`;
-        sub = `Teraz działa ${versionName(s.booted)}`;
+        state = "new"; title = `Update available: ${versionName(s.update)}`;
+        sub = `Now running ${versionName(s.booted)}`;
     } else if (s.staged) {
-        state = "ready"; title = `Wersja ${versionName(s.staged)} czeka na restart`;
-        sub = `Teraz działa ${versionName(s.booted)}.`;
+        state = "ready"; title = `Version ${versionName(s.staged)} is waiting for a restart`;
+        sub = `Now running ${versionName(s.booted)}.`;
     } else if (s.checked && s.checked.error) {
-        state = "err"; title = "Nie udało się sprawdzić aktualizacji"; sub = s.checked.error;
+        state = "err"; title = "Couldn't check for updates"; sub = s.checked.error;
     } else if (s.checked && s.checked.time) {
-        state = "ok"; title = "System jest aktualny";
-        sub = `${versionName(s.booted)}${s.channel === "dev" ? " (testowa)" : ""} · sprawdzono ${fmtAgo(s.checked.time)}`;
+        state = "ok"; title = "System is up to date";
+        sub = `${versionName(s.booted)}${s.channel === "dev" ? " (testing)" : ""} · checked ${fmtAgo(s.checked.time)}`;
     } else {
-        state = "ok"; title = `Wersja ${versionName(s.booted)}`; sub = "Aktualizacje nie były jeszcze sprawdzane";
+        state = "ok"; title = `Version ${versionName(s.booted)}`; sub = "Not checked for updates yet";
     }
     setStatus("upd", state, ICONS[state], title, sub);
     // The bar only while there's progress to show -- a check is just a spinner.
@@ -913,8 +908,8 @@ function renderUpdate() {
     renderSteps(job && job.kind === "rollback" ? job : null, $("rb-steps"));
     renderChannel(running);
     const avail = !!(s && s.available);
-    // One row: [Aktualizuj | Uruchom ponownie] [↻]. Restart replaces
-    // "Aktualizuj" once a version waits for it and nothing newer is out.
+    // One row: [Update | Restart] [↻]. Restart replaces
+    // "Update" once a version waits for it and nothing newer is out.
     const waiting = !running && avail && !!s.staged && !s.update;
     $("sys-upgrade").disabled = running || !(avail && s.update);
     $("sys-upgrade").hidden = waiting;
@@ -924,23 +919,24 @@ function renderUpdate() {
     $("sys-switch").disabled = running;
     $("sys-rollback").disabled = running || !(avail && s.rollback);
     $("sys-rollback").textContent = avail && s.rollback_queued
-        ? "Przytrzymaj: uruchom ponownie teraz" : "Przytrzymaj: przywróć poprzednią wersję";
+        ? "Hold: restart now" : "Hold: restore previous version";
     const fb = s && s.fallback;
-    if (!s) setStatus("rb-st", "busy", ICONS.busy, "Wczytywanie…");
-    else if (restoring) setStatus("rb-st", "busy", ICONS.busy, "Przywracanie poprzedniej wersji…",
-        s.rollback ? `Wraca do ${versionName(s.rollback)}` : "");
+    if (!s) setStatus("rb-st", "busy", ICONS.busy, "Loading…");
+    else if (restoring) setStatus("rb-st", "busy", ICONS.busy, "Restoring the previous version…",
+        s.rollback ? `Going back to ${versionName(s.rollback)}` : "");
     else if (job && job.kind === "rollback" && job.state === "failed")
-        setStatus("rb-st", "err", ICONS.err, "Nie udało się przywrócić", job.detail || "");
-    else if (avail && s.rollback_queued) setStatus("rb-st", "ready", ICONS.ready, "Poprzednia wersja włączy się po restarcie",
-        `${versionName(s.rollback)} jest ustawiona jako domyślna; do restartu działa ${versionName(s.booted)}.`);
-    else if (!avail) setStatus("rb-st", "err", ICONS.err, "Przywracanie niedostępne", s.error || "");
-    else if (fb) setStatus("rb-st", "warn", ICONS.warn, "Nowa wersja się nie uruchomiła",
-        `Wrócono do ${rawVersion(fb.running) || "poprzedniej"} (${fmtTime(fb.time * 1000)}).`);
-    else if (s.rollback) setStatus("rb-st", "", ICONS.ready, `Poprzednia wersja: ${versionName(s.rollback)}`,
-        `Teraz działa ${versionName(s.booted)}.`);
-    else setStatus("rb-st", "off", ICONS.ready, "Brak poprzedniej wersji", `Teraz działa ${versionName(s.booted)}.`);
-    $("rb-hint").textContent = `Sama wraca po ${AUTO_TRIES} nieudanych startach. Skrót: ${RECOVERY_HOLD_S} s w rogu ` +
-        `${CORNER_NAMES[recoveryCorner()]}. Ręcznie: Shift przy starcie.`;
+        setStatus("rb-st", "err", ICONS.err, "Couldn't restore", job.detail || "");
+    else if (avail && s.rollback_queued) setStatus("rb-st", "ready", ICONS.ready, "The previous version starts after a restart",
+        `${versionName(s.rollback)} is set as the default; ${versionName(s.booted)} runs until the restart.`);
+    else if (!avail) setStatus("rb-st", "err", ICONS.err, "Restore unavailable", s.error || "");
+    else if (fb) setStatus("rb-st", "warn", ICONS.warn, "The new version didn't start",
+        rawVersion(fb.running) ? `Went back to ${rawVersion(fb.running)} (${fmtTime(fb.time * 1000)}).`
+            : `Went back to the previous version (${fmtTime(fb.time * 1000)}).`);
+    else if (s.rollback) setStatus("rb-st", "", ICONS.ready, `Previous version: ${versionName(s.rollback)}`,
+        `Now running ${versionName(s.booted)}.`);
+    else setStatus("rb-st", "off", ICONS.ready, "No previous version", `Now running ${versionName(s.booted)}.`);
+    $("rb-hint").textContent = `Goes back by itself after ${AUTO_TRIES} failed starts. Shortcut: ${RECOVERY_HOLD_S} s in the ` +
+        `${CORNER_NAMES[recoveryCorner()]} corner. Manually: Shift at boot.`;
     renderNotes();
 }
 
@@ -954,29 +950,28 @@ function renderNotes() {
     box.hidden = false;
     if (box.dataset.key === key) return;  // keeps what's open/closed
     box.dataset.key = key;
-    box.innerHTML = `<h3>${news.length ? "Co nowego" : "Zmiany w tej wersji"}</h3>` + list.map((r, i) => `
+    box.innerHTML = `<h3>${news.length ? "What's new" : "Changes in this version"}</h3>` + list.map((r, i) => `
         <details class="rel"${news.length && i === 0 ? " open" : ""}>
           <summary><span class="tag">${esc(r.tag)}</span><span class="date">${esc(fmtDate(r.date))}</span></summary>
-          <div class="md">${r.notes ? md(r.notes) : '<p class="hint">Brak opisu.</p>'}</div>
+          <div class="md">${r.notes ? md(r.notes) : '<p class="hint">No description.</p>'}</div>
         </details>`).join("");
 }
 
 // Settings > System: the parts worth naming (kioskd reads their versions).
-const COMPONENTS = [["kernel", "Jądro Linux"], ["mesa", "Mesa (grafika)"], ["gtk", "GTK"],
+const COMPONENTS = [["kernel", "Linux kernel"], ["mesa", "Mesa (graphics)"], ["gtk", "GTK"],
     ["webkit", "WebKitGTK"], ["cage", "cage"], ["bootc", "bootc"], ["systemd", "systemd"]];
 
 function renderSysInfo() {
     const info = $("sys-info"), s = sys;
     if (!s || !s.available) {
-        info.innerHTML = `<dt>bootc</dt><dd>${esc((s && s.error) || "niedostępny")}</dd>`;
+        info.innerHTML = `<dt>bootc</dt><dd>${esc((s && s.error) || "unavailable")}</dd>`;
         return;
     }
     const b = s.booted || {};
     info.innerHTML = `
-        <dt>Wersja</dt><dd>${esc(versionName(b))}</dd>
-        <dt>Obraz</dt><dd>${esc(b.image || "—")}</dd>
-        <dt>Zbudowany</dt><dd>${esc(fmtTime(b.timestamp))}</dd>
-        ${s.rollback ? `<dt>Poprzednia</dt><dd>${esc(versionName(s.rollback))}</dd>` : ""}
+        <dt>Version</dt><dd>${esc(versionName(b))}</dd>
+        <dt>Image</dt><dd>${esc(b.image || "—")}</dd>
+        <dt>Built</dt><dd>${esc(fmtTime(b.timestamp))}</dd>
         ${COMPONENTS.filter(([k]) => s.components && s.components[k])
             .map(([k, label]) => `<dt>${label}</dt><dd>${esc(s.components[k])}</dd>`).join("")}`;
     if (!$("sys-image").value) $("sys-image").value = b.image || "";
@@ -1002,8 +997,8 @@ function followSysJob() {
         sysWasRunning = !!(sysJob && sysJob.state === "running");
         renderUpdate();
         if (was && !sysWasRunning) {
-            if (sysJob && sysJob.state === "failed" && sysJob.kind !== "check") toast(sysJob.detail || "Błąd aktualizacji", true);
-            else if (sysJob && sysJob.kind === "upgrade" && sysJob.result && !sysJob.result.update && !sysJob.result.staged) toast("System jest aktualny");
+            if (sysJob && sysJob.state === "failed" && sysJob.kind !== "check") toast(sysJob.detail || "Update failed", true);
+            else if (sysJob && sysJob.kind === "upgrade" && sysJob.result && !sysJob.result.update && !sysJob.result.staged) toast("System is up to date");
             loadSystem();
         } else if (!sysWasRunning) {
             maybeAutoCheck();
@@ -1051,7 +1046,7 @@ async function refreshDevice() {
     $("dev-model").textContent = i.device.product || "—";
     $("dev-vendor").textContent = i.device.vendor || "—";
     $("dev-cpu").textContent = i.device.cpu || "—";
-    $("dev-mem").textContent = i.device.memory_mb ? `${(i.device.memory_mb / 1024).toFixed(1).replace(".", ",")} GB` : "—";
+    $("dev-mem").textContent = i.device.memory_mb ? `${(i.device.memory_mb / 1024).toLocaleString(LOCALE(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB` : "—";
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {
         h.value = i.hostname;
@@ -1064,7 +1059,7 @@ async function refreshDevice() {
     }
 }
 
-/* Top bar: battery and clock, next to "Wróć do HMI". */
+/* Top bar: battery and clock, next to "Back to HMI". */
 function batteryIcon(p) {
     const lvl = Math.max(0, Math.min(100, p.battery));
     const charging = p.battery_status === "Charging" || (p.ac_online === true && p.battery_status !== "Full");
@@ -1120,24 +1115,24 @@ function renderNetbar() {
     nb.classList.toggle("waiting", hmiWaiting);
     if (hmiWaiting) {
         nb.hidden = false;
-        nb.innerHTML = `${ICONS.busy}<span>${n ? "Łączenie z HMI…" : "Czekam na sieć…"}</span>`;
-        nb.title = n ? `${n.name}: HMI jeszcze nie odpowiada, kiosk przełączy się na nie samo`
-            : "Kiosk przełączy się na HMI, gdy będzie sieć i HMI odpowie";
+        nb.innerHTML = `${ICONS.busy}<span>${n ? "Connecting to HMI…" : "Waiting for network…"}</span>`;
+        nb.title = n ? `${n.name}: the HMI isn't answering yet, the kiosk will switch to it by itself`
+            : "The kiosk switches to the HMI once there's a network and the HMI answers";
         return;
     }
     nb.hidden = !n;
     if (n) {
         const icon = n.type === "wifi" ? wifiIcon(n.signal != null ? sigLevel(n.signal) : 3) : ICONS.ethernet;
         nb.innerHTML = `${icon}<span>${esc(n.type === "wifi" ? n.name : "Ethernet")}</span>`;
-        nb.title = n.type === "wifi" && n.signal != null ? `${n.name} · sygnał ${n.signal}%` : n.name;
+        nb.title = n.type === "wifi" && n.signal != null ? `${n.name} · signal ${n.signal}%` : n.name;
     }
 }
 
 let tzZones = null, tzCurrent = null;
 const TZ_REGIONS = {
-    Africa: "Afryka", America: "Ameryka", Antarctica: "Antarktyda", Arctic: "Arktyka", Asia: "Azja",
-    Atlantic: "Atlantyk", Australia: "Australia", Europe: "Europa", Indian: "Ocean Indyjski",
-    Pacific: "Pacyfik", Other: "Inne",
+    Africa: "Africa", America: "America", Antarctica: "Antarctica", Arctic: "Arctic", Asia: "Asia",
+    Atlantic: "Atlantic", Australia: "Australia", Europe: "Europe", Indian: "Indian Ocean",
+    Pacific: "Pacific", Other: "Other",
 };
 const tzSplit = z => { const k = z.indexOf("/"); return k < 0 ? ["Other", z] : [z.slice(0, k), z.slice(k + 1)]; };
 
@@ -1156,27 +1151,27 @@ function renderTz(region) {
     $("tz-region").innerHTML = regions.map(r =>
         `<option value="${esc(r)}"${r === region ? " selected" : ""}>${esc(TZ_REGIONS[r] || r)}</option>`).join("");
     const chosen = region === curRegion ? tzCurrent : "";
-    $("tz-city").innerHTML = (chosen ? "" : '<option value="" selected>— wybierz —</option>') +
+    $("tz-city").innerHTML = (chosen ? "" : '<option value="" selected>— choose —</option>') +
         tzZones.filter(z => tzSplit(z)[0] === region).map(z =>
             `<option value="${esc(z)}"${z === chosen ? " selected" : ""}>${esc(tzSplit(z)[1].replace(/_/g, " ").replace(/\//g, " / "))}</option>`).join("");
 }
 
 // Short labels: the legend is one line under the bar.
 const BOOT_PHASES = {
-    firmware: ["UEFI", "#6e7681"], loader: ["GRUB", "#d29922"], kernel: ["Jądro", "#db6d28"],
-    initrd: ["initramfs", "#a371f7"], userspace: ["Usługi", "#2f81f7"], hmi: ["HMI", "#3fb950"],
+    firmware: ["UEFI", "#6e7681"], loader: ["GRUB", "#d29922"], kernel: ["Kernel", "#db6d28"],
+    initrd: ["initramfs", "#a371f7"], userspace: ["Services", "#2f81f7"], hmi: ["HMI", "#3fb950"],
 };
-// Non-breaking space: "13,3 s" never splits across lines (legend, timeline).
+// Non-breaking space: "13.3 s" never splits across lines (legend, timeline).
 const secs = (v, d = 1) => v.toLocaleString(LOCALE(), { minimumFractionDigits: d, maximumFractionDigits: d }) + " s";
 
 let bootLoaded = false;
 async function loadBoot() {
     // First load reads this boot's journal -- seconds on the Atom: a spinner,
     // like the update check. Later ones come from kioskd's cache.
-    if (!bootLoaded) setStatus("boot-st", "busy", ICONS.busy, "Wczytywanie czasu uruchamiania…", "Czytam dziennik tego startu");
+    if (!bootLoaded) setStatus("boot-st", "busy", ICONS.busy, "Loading boot time…", "Reading this boot's journal");
     let b;
     try { b = await api("/boot"); bootLoaded = true; }
-    catch (e) { setStatus("boot-st", "err", ICONS.err, "Brak danych o starcie", e.message); return; }
+    catch (e) { setStatus("boot-st", "err", ICONS.err, "No boot data", e.message); return; }
     const ph = Object.fromEntries((b.phases || []).map(p => [p.name, p.sec]));
     const before = (ph.firmware || 0) + (ph.loader || 0);   // before the kernel's clock starts
     const kernelToDone = (ph.kernel || 0) + (ph.initrd || 0) + (ph.userspace || 0);
@@ -1187,13 +1182,13 @@ async function loadBoot() {
     const total = segs.reduce((a, [, v]) => a + v, 0);
     const ready = before + kernelToDone;
     if (b.hmi_shown != null) {
-        setStatus("boot-st", "", ICONS.clock, `HMI po ${secs(before + b.hmi_shown)} od włączenia`,
-                  `system gotowy po ${secs(ready)}, z tego ${secs(before)} przed startem jądra (UEFI + GRUB)`);
+        setStatus("boot-st", "", ICONS.clock, `HMI after ${secs(before + b.hmi_shown)} from power-on`,
+                  `system ready after ${secs(ready)}, ${secs(before)} of it before the kernel started (UEFI + GRUB)`);
     } else if (b.total) {
-        setStatus("boot-st", "", ICONS.clock, `System gotowy po ${secs(ready)}`,
-                  "HMI jeszcze się nie wyświetliło (brak adresu albo serwer nie odpowiada)");
+        setStatus("boot-st", "", ICONS.clock, `System ready after ${secs(ready)}`,
+                  "The HMI hasn't shown yet (no address, or the server isn't answering)");
     } else {
-        setStatus("boot-st", "busy", ICONS.busy, "Start jeszcze trwa", b.error || "");
+        setStatus("boot-st", "busy", ICONS.busy, "Still booting", b.error || "");
     }
     $("boot-bar").hidden = $("boot-legend").hidden = !total;
     $("boot-bar").innerHTML = segs.map(([k, v]) =>
@@ -1203,7 +1198,7 @@ async function loadBoot() {
 
     // Timeline (seconds since the kernel started) and the slowest units.
     const marks = [...(b.milestones || [])];
-    if (b.hmi_shown != null) marks.push({ t: b.hmi_shown, label: "HMI widoczne", hmi: true });
+    if (b.hmi_shown != null) marks.push({ t: b.hmi_shown, label: "HMI visible", hmi: true });
     marks.sort((x, y) => x.t - y.t);
     const KEY = /switch-root|sysinit|graphical|cage/;
     $("boot-timeline").innerHTML = marks.map(m =>
@@ -1217,7 +1212,7 @@ async function loadBoot() {
     // Critical chains: what local-fs and the kiosk waited for, step by step.
     // A step starting long after the one it waited for is the gap's cause.
     $("boot-chains").innerHTML = (b.chains || []).filter(c => c.steps && c.steps.length).map(c =>
-        `<h3>Na co czekał start: ${esc(c.title.toLowerCase())}</h3><ul class="chain">` +
+        `<h3>What the boot waited for: ${esc(c.title)}</h3><ul class="chain">` +
         c.steps.map((s, i) =>
             `<li style="--d:${Math.min(i, 8)}"><span class="t">${s.at != null ? secs(s.at) : ""}</span>` +
             `<span class="u">${esc(s.unit)}</span>` +
@@ -1226,15 +1221,15 @@ async function loadBoot() {
     $("boot-more").hidden = !marks.length && !slow.length;
 
     const problems = [
-        ...(b.failed && b.failed.length ? [`Nie uruchomiły się: ${b.failed.join(", ")}`] : []),
-        ...(b.journal_error ? [`Brak przebiegu startu (journalctl: ${b.journal_error})`] : []),
+        ...(b.failed && b.failed.length ? [`Failed to start: ${b.failed.join(", ")}`] : []),
+        ...(b.journal_error ? [`No boot timeline (journalctl: ${b.journal_error})`] : []),
     ];
     $("boot-failed").textContent = problems.join(" · ");
     $("boot-failed").hidden = !problems.length;
 }
 
 function initSystem() {
-    // "Aktualizuj" checks first (kioskd's upgrade job runs the check), then
+    // "Update" checks first (kioskd's upgrade job runs the check), then
     // downloads only if there's still something newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
@@ -1254,13 +1249,13 @@ function initSystem() {
     holdButton($("sys-rollback"), () => api("/system/rollback", {})
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
-    const power = action => () => api("/power", { action }).then(() => toast(action === "reboot" ? "Ponowne uruchamianie…" : "Wyłączanie…"))
+    const power = action => () => api("/power", { action }).then(() => toast(action === "reboot" ? "Restarting…" : "Shutting down…"))
         .catch(e => toast(e.message, true));
     holdButton($("sys-reboot-now"), power("reboot"));
     holdButton($("pw-reboot"), power("reboot"));
     // kioskd restarts the kiosk a second later: it comes up like a new one.
     holdButton($("pw-reset"), () => api("/settings/reset", {})
-        .then(() => toast("Ustawienia domyślne przywrócone — kiosk uruchamia się od nowa"))
+        .then(() => toast("Resetting everything — the kiosk restarts like after installation"))
         .catch(e => toast(e.message, true)));
     holdButton($("pw-off"), power("poweroff"));
 
@@ -1270,7 +1265,7 @@ function initSystem() {
             cfg = c;
             $("sys-repo").value = cfg.releases_repo;
             $("sys-repo").blur();
-            toast(`Lista zmian z ${cfg.releases_repo}`);
+            toast(`Changelog from ${cfg.releases_repo}`);
             $("upd-notes").dataset.key = "";
             return loadNotes();
         })
@@ -1287,7 +1282,7 @@ function initSystem() {
         hostSaved = r.hostname;
         $("host-name").value = r.hostname;
         $("host-name").blur();
-        toast(`Nazwa hosta: ${r.hostname}. Router zobaczy ją przy następnym połączeniu.`);
+        toast(`Host name: ${r.hostname}. The router will see it on its next connection.`);
     }).then(() => { $("host-save").disabled = true; }).catch(() => {}));
 
     $("tz-region").addEventListener("change", e => renderTz(e.target.value));
@@ -1298,7 +1293,7 @@ function initSystem() {
             tzCurrent = r.timezone;
             setClock(r.time);
             renderTz();
-            toast(`Strefa czasowa: ${r.timezone}`);
+            toast(`Time zone: ${r.timezone}`);
         }).catch(err => { toast(err.message, true); renderTz(); });
     });
 
@@ -1379,8 +1374,8 @@ async function loadInstaller() {
     const p = st.payload;
     $("inst-payload").innerHTML = p ? `
         <dt>System</dt><dd>${esc(p.image || "immutable-kiosk")}</dd>
-        <dt>Wersja</dt><dd>${esc(p.version || "—")}</dd>
-        <dt>Rozmiar</dt><dd>${p.size ? fmtSize(p.size) : "—"}</dd>` : `<dt>Błąd</dt><dd>Brak obrazu systemu na nośniku</dd>`;
+        <dt>Version</dt><dd>${esc(p.version || "—")}</dd>
+        <dt>Size</dt><dd>${p.size ? fmtSize(p.size) : "—"}</dd>` : `<dt>Error</dt><dd>No system image on the drive</dd>`;
 
     const list = $("inst-disks");
     list.innerHTML = "";
@@ -1389,19 +1384,19 @@ async function loadInstaller() {
     for (const d of st.disks) {
         const li = document.createElement("li");
         const ok = usable.includes(d);
-        const why = d.is_boot_medium ? "nośnik instalacyjny" : !ok ? "za mały" : d.internal ? "wewnętrzny" : "zewnętrzny";
+        const why = d.is_boot_medium ? "installation drive" : !ok ? "too small" : d.internal ? "internal" : "external";
         li.innerHTML = `<div class="item ${d.name === chosenDisk ? "on" : ""} ${ok ? "" : "off"}">
             <div class="name">${esc(d.model || d.name)} <span class="sub">${esc(d.path)}</span>
               <div class="sub">${fmtSize(d.size)} · ${esc(why)}</div></div>
-            ${d.name === chosenDisk ? '<span class="badge ok">wybrany</span>' : ""}</div>`;
+            ${d.name === chosenDisk ? '<span class="badge ok">selected</span>' : ""}</div>`;
         if (ok) li.addEventListener("click", () => { chosenDisk = d.name; loadInstaller(); });
         list.appendChild(li);
     }
-    if (!st.disks.length) list.innerHTML = '<li class="empty">Nie znaleziono dysków.</li>';
+    if (!st.disks.length) list.innerHTML = '<li class="empty">No disks found.</li>';
 
     const pw = st.power;
     $("inst-power").hidden = pw.ac_online !== false;
-    $("inst-power").textContent = `Tablet działa na baterii${pw.battery != null ? ` (${pw.battery}%)` : ""}. Podłącz ładowarkę przed instalacją.`;
+    $("inst-power").textContent = `The tablet is on battery${pw.battery != null ? ` (${pw.battery}%)` : ""}. Plug in the charger before installing.`;
     $("inst-go").disabled = !p || !chosenDisk;
 }
 
@@ -1413,16 +1408,16 @@ function renderInstallJob(job) {
     $("inst-progress").hidden = false;
     $("inst-log").textContent = job.log.join("\n");
     const done = job.state === "done", failed = job.state === "failed";
-    $("inst-title").textContent = done ? "Zainstalowano ✔" : failed ? "Instalacja nieudana" : "Instalowanie…";
-    $("inst-note").textContent = done ? "Wyjmij pendrive, potem uruchom tablet ponownie."
-        : failed ? job.detail : "Nie wyłączaj tabletu i nie wyjmuj pendrive'a.";
+    $("inst-title").textContent = done ? "Installed ✔" : failed ? "Installation failed" : "Installing…";
+    $("inst-note").textContent = done ? "Remove the USB drive, then restart the tablet."
+        : failed ? job.detail : "Don't turn off the tablet or remove the USB drive.";
     $("inst-done").hidden = !done;
     $("inst-failed").hidden = !failed;
 }
 
 async function initInstaller() {
     $("installer").hidden = false;
-    document.title = "Instalator";
+    document.title = "Installer";
     holdButton($("inst-go"), async () => {
         msg($("inst-msg"), "");
         try {
