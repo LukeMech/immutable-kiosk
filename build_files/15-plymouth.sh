@@ -19,14 +19,9 @@ set -ouex pipefail
 
 # Weak dependencies are off for the whole build (00-pre-build.sh): Plymouth's
 # own themes, fonts and the label plugin stay out. plymouth-graphics-libs
-# hard-requires "system-logos"; left to itself dnf picks fedora-logos (Fedora
-# branding, 1.5 MB) -- generic-logos, the unbranded provider meant for
-# remixes, is asked for instead. Its files go below all the same.
-dnf install -y plymouth plymouth-plugin-script generic-logos
-if rpm -q fedora-logos >/dev/null 2>&1; then
-    echo "error: fedora-logos came in after all" >&2
-    exit 1
-fi
+# hard-requires "system-logos" (dnf brings the release's own, fedora-logos):
+# the package stays for that, its files and directories go below.
+dnf install -y plymouth plymouth-plugin-script
 
 THEME=/usr/share/plymouth/themes/immutable-kiosk
 mkdir -p "${THEME}"
@@ -98,11 +93,19 @@ EOF
 # Plymouth's built-in text fallbacks.
 find /usr/share/plymouth/themes -mindepth 1 -maxdepth 1 -type d \
     ! -name immutable-kiosk ! -name text ! -name details -exec rm -rf {} +
-# generic-logos' files: the package has to stay installed for the
-# dependency above, nothing here shows any of it.
-rpm -ql generic-logos | while read -r f; do
+# The logo package (whatever provides system-logos -- fedora-logos today):
+# installed for the dependency above, nothing here shows any of it. Its files
+# go (the license stays), then the directories only it owns, now empty --
+# deepest first; one another package shares, or the license's, stays.
+LOGOS=$(rpm -q --whatprovides system-logos --qf '%{NAME}\n' | head -1)
+rpm -ql "${LOGOS}" | while read -r f; do
     case "${f}" in /usr/share/licenses/*) continue ;; esac
     if [[ -f "${f}" || -L "${f}" ]]; then rm -f "${f}"; fi
+done
+rpm -ql "${LOGOS}" | sort -r | while read -r d; do
+    if [[ -d "${d}" && "$(rpm -qf "${d}" --qf '%{NAME}\n' | sort -u)" == "${LOGOS}" ]]; then
+        rmdir "${d}" 2>/dev/null || true
+    fi
 done
 
 # Default theme for plymouthd and for dracut's plymouth module (the x86
