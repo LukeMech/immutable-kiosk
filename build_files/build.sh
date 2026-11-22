@@ -17,18 +17,23 @@ fi
 # Device table, read at runtime by kiosk-shell (default rotation per model).
 install -Dm0644 /ctx/images/devices.toml /usr/share/immutable-kiosk/devices.toml
 
-for hook in /ctx/*.sh; do
-    [[ -e "${hook}" ]] || continue
-    case "$(basename "${hook}")" in
-        build.sh | post-build.sh) continue ;;
-    esac
-    bash "${hook}"
-done
-
-for hook in "${VARIANT_DIR}/build_files"/*.sh; do
-    [[ -e "${hook}" ]] || continue
-    bash "${hook}"
-done
+# Hooks: NN-name.sh (bash) or NN-name.py (python3), in one sorted order --
+# a .py hook can sit between two .sh ones. python3 comes with 10-kiosk.sh,
+# so shared .py hooks need a number above 10 (variant hooks run after all
+# shared ones).
+run_hooks() {
+    local hook
+    for hook in $(printf '%s\n' "$@" | LC_ALL=C sort); do
+        [[ -e "${hook}" ]] || continue
+        case "$(basename "${hook}")" in
+            build.sh | post-build.sh) continue ;;
+            *.py) python3 "${hook}" ;;
+            *) bash "${hook}" ;;
+        esac
+    done
+}
+run_hooks /ctx/*.sh /ctx/*.py
+run_hooks "${VARIANT_DIR}/build_files"/*.sh "${VARIANT_DIR}/build_files"/*.py
 
 bash /ctx/post-build.sh
 
