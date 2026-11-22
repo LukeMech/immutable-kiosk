@@ -109,20 +109,6 @@ NO_VIEWPORT_JS = """(function () {
     document.addEventListener("DOMContentLoaded", drop);
     drop();
 })();"""
-# The page tells kiosk-shell its devicePixelRatio, and again every time it
-# changes (a media query on the current value fires): see on_ratio.
-RATIO_JS = """(function () {
-    const h = window.webkit && window.webkit.messageHandlers.kioskRatio;
-    if (!h) return;
-    let mq = null;
-    const tell = () => {
-        h.postMessage(window.devicePixelRatio);
-        if (mq) mq.removeEventListener("change", tell);
-        mq = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-        mq.addEventListener("change", tell);
-    };
-    tell();
-})();"""
 DATA = Path(GLib.get_user_data_dir()) / "immutable-kiosk"
 CACHE = Path(GLib.get_user_cache_dir()) / "immutable-kiosk"
 
@@ -353,6 +339,14 @@ class KioskShell(Gtk.Application):
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        # 96 dpi, said outright. WebKitGTK zooms every page by its "font DPI"
+        # over 96: GTK's gtk-xft-dpi, or -- when that isn't set -- the
+        # monitor's own, from its size in mm. The 408's panel is 172x108 mm at
+        # 1280x800: 189 dpi, every page ~2x too big (devicePixelRatio 1.966,
+        # laid out 650 px wide). Nothing in a bare cage session sets
+        # gtk-xft-dpi; set here, before any web view, it holds: a value the
+        # application sets wins over the session's.
+        Gtk.Settings.get_default().set_property("gtk-xft-dpi", 96 * 1024)
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
@@ -572,10 +566,6 @@ class KioskShell(Gtk.Application):
         ucm = WebKit.UserContentManager()
         ucm.register_script_message_handler("kiosk", None)
         ucm.connect("script-message-received::kiosk", self.on_settings_message)
-        self.watch_ratio(ucm, "settings")
-        ucm.add_script(WebKit.UserScript.new(
-            RATIO_JS, WebKit.UserContentInjectedFrames.TOP_FRAME,
-            WebKit.UserScriptInjectionTime.START, None, None))
         view = WebKit.WebView(user_content_manager=ucm,
                               network_session=WebKit.NetworkSession.new_ephemeral())
         self.common_view_setup(view)
@@ -590,7 +580,6 @@ class KioskShell(Gtk.Application):
         ucm = WebKit.UserContentManager()
         ucm.register_script_message_handler("kioskNav", None)
         ucm.connect("script-message-received::kioskNav", self.on_hmi_nav)
-        self.watch_ratio(ucm, "hmi")
         view = WebKit.WebView(user_content_manager=ucm, network_session=self.hmi_session)
         self.common_view_setup(view)
         view.connect("load-failed", self.on_hmi_load_failed)
@@ -700,9 +689,6 @@ class KioskShell(Gtk.Application):
         ucm.add_script(WebKit.UserScript.new(
             NO_VIEWPORT_JS, WebKit.UserContentInjectedFrames.ALL_FRAMES,
             WebKit.UserScriptInjectionTime.START, None, None))
-        ucm.add_script(WebKit.UserScript.new(
-            RATIO_JS, WebKit.UserContentInjectedFrames.TOP_FRAME,
-            WebKit.UserScriptInjectionTime.START, None, None))
         if cfg.get("osk_in_hmi", True) and OSK_JS.exists():
             ucm.add_script(WebKit.UserScript.new(
                 OSK_JS.read_text(), WebKit.UserContentInjectedFrames.ALL_FRAMES,
@@ -728,9 +714,7 @@ class KioskShell(Gtk.Application):
 
     def apply_scale(self):
         """Screen scaling = WebKit zoom: Settings (and its keyboard) at the
-        scale, the HMI at scale x its own zoom (the HMI tab's setting) --
-        both divided by the pixel ratio WebKit gives the page on its own
-        (see on_ratio)."""
+        scale, the HMI at scale x its own zoom (the HMI tab's setting)."""
         if not hasattr(self, "settings"):
             return  # before setup(): it applies the scale itself
         scale = screen_scale(self.cfg)
@@ -738,46 +722,9 @@ class KioskShell(Gtk.Application):
             zoom = float(self.cfg.get("zoom", 1.0))
         except (TypeError, ValueError):
             zoom = 1.0
-        ratio = getattr(self, "ratio", {})
-        self.set_zoom(self.settings, scale / ratio.get("settings", 1.0), "settings")
+        self.set_zoom(self.settings, scale, "settings")
         if self.hmi:
-            self.set_zoom(self.hmi, scale * zoom / ratio.get("hmi", 1.0), "hmi")
-
-    def watch_ratio(self, ucm, name):
-        ucm.register_script_message_handler("kioskRatio", None)
-        ucm.connect("script-message-received::kioskRatio", lambda _m, value: self.on_ratio(name, value))
-
-    def on_ratio(self, name, value):
-        """WebKit's own pixel ratio for the page: its devicePixelRatio over
-        the zoom set. On the 408 in landscape WebKit settles on 1.97 by
-        itself -- the panel's ~189 dpi over 96 -- with GTK, the window and
-        the compositor all at scale 1: every page laid out ~650 px wide and
-        drawn twice the size ("right for a moment, then big"). Portrait and
-        main had 1. Cancelled through the zoom, so 1 CSS px is 1 screen px
-        again in any orientation.
-
-        The page reports every change of its devicePixelRatio (RATIO_JS),
-        so it's cancelled the moment it appears -- no timers. Our own zoom
-        change reports back the same ratio (devicePixelRatio follows the
-        zoom), so nothing loops."""
-        view = self.settings if name == "settings" else self.hmi
-        if view is None:
-            return
-        try:
-            dpr = float(value.to_double())
-        except (TypeError, ValueError):
-            return
-        zoom = view.get_zoom_level()
-        if not (0 < dpr < float("inf")) or zoom <= 0:
-            return
-        own = round(dpr / zoom, 3)
-        own = own if 0.5 <= own <= 4 else 1.0
-        if not hasattr(self, "ratio"):
-            self.ratio = {}
-        if abs(own - self.ratio.get(name, 1.0)) > 0.01:
-            log(f"pixel ratio ({name}): WebKit's own {own}, zoom compensates")
-            self.ratio[name] = own
-            self.apply_scale()
+            self.set_zoom(self.hmi, scale * zoom, "hmi")
 
     @staticmethod
     def set_zoom(view, level, name):
