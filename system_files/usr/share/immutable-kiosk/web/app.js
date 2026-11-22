@@ -591,7 +591,7 @@ function loadScreen() {
     }
     seg($("corner"), cfg.settings_corner, v => saveCfg({ settings_corner: v }).then(loadScreen).catch(e => toast(e.message, true)));
     $("corner-hint").textContent = `Awaryjnie: przytrzymanie przez ${RECOVERY_HOLD_S} s przeciwległego rogu ` +
-        `(${CORNER_NAMES[recoveryCorner()]}) — w HMI i w ustawieniach — otwiera System → Przywracanie i zasilanie.`;
+        `(${CORNER_NAMES[recoveryCorner()]}) — w HMI i w ustawieniach — otwiera System → Odzyskiwanie.`;
 }
 
 /* Recovery corner (kiosk-shell): the corner opposite the Settings one, held
@@ -884,7 +884,7 @@ function renderUpdate() {
         sub = s && s.booted ? `Teraz działa ${versionName(s.booted)}` : "";
     } else if (restoring) {
         state = "busy"; title = "Przywracanie poprzedniej wersji…";
-        sub = "Postęp w karcie „Przywracanie i zasilanie”.";
+        sub = "Postęp w karcie „Odzyskiwanie”.";
     } else if (!s) {
         state = "busy"; title = "Wczytywanie…";
     } else if (!s.available) {

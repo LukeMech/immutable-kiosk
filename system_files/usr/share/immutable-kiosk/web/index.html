@@ -279,8 +279,9 @@
         </div>
         <p class="msg warn" id="boot-failed" hidden></p>
       </div>
+      <!-- Recovery: undoing things, held longer (3 s) than power (1.5 s). -->
       <div class="card" id="recovery-card">
-        <h2>Przywracanie i zasilanie</h2>
+        <h2>Odzyskiwanie</h2>
         <div class="status" id="rb-st">
           <div class="status-icon" id="rb-st-icon"></div>
           <div class="status-text">
@@ -290,12 +291,17 @@
         </div>
         <ol class="steps" id="rb-steps" hidden></ol>
         <div class="actions col">
-          <button class="btn hold" data-hold="1500" id="sys-rollback">Przytrzymaj: przywróć poprzednią wersję</button>
-          <button class="btn hold" data-hold="1500" id="pw-reboot">Przytrzymaj: uruchom ponownie</button>
-          <button class="btn danger hold" data-hold="2500" id="pw-reset">Przytrzymaj: przywróć ustawienia domyślne</button>
-          <button class="btn danger hold" data-hold="2000" id="pw-off">Przytrzymaj: wyłącz</button>
+          <button class="btn hold" data-hold="3000" id="sys-rollback">Przytrzymaj: przywróć poprzednią wersję</button>
+          <button class="btn danger hold" data-hold="3000" id="pw-reset">Przytrzymaj: przywróć ustawienia domyślne</button>
         </div>
         <p class="hint" id="rb-hint" style="margin:14px 0 0"></p>
+      </div>
+      <div class="card" id="power-card">
+        <h2>Zasilanie</h2>
+        <div class="actions col">
+          <button class="btn hold" data-hold="1500" id="pw-reboot">Przytrzymaj: uruchom ponownie</button>
+          <button class="btn danger hold" data-hold="1500" id="pw-off">Przytrzymaj: wyłącz</button>
+        </div>
       </div>
     </section>
   </main>
