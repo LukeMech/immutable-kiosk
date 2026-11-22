@@ -895,6 +895,38 @@ def boot_journal():
             "failed": sorted(set(failed))}
 
 
+# What PID 1 itself does before it starts any unit -- in the initrd and again
+# after switch-root -- as systemd records it (manager properties, CLOCK_MONOTONIC
+# in µs). On the tablet 6.5 s passed between switch-root and the first unit.
+MANAGER_PHASES = [
+    ("InitRDSecurity", "initrd", "PID 1: polityka SELinux"),
+    ("InitRDGenerators", "initrd", "PID 1: generatory"),
+    ("InitRDUnitsLoad", "initrd", "PID 1: wczytanie jednostek"),
+    ("Security", "system", "PID 1: polityka SELinux"),
+    ("Generators", "system", "PID 1: generatory"),
+    ("UnitsLoad", "system", "PID 1: wczytanie jednostek"),
+]
+
+
+def manager_phases():
+    props = [f"{p}{edge}TimestampMonotonic" for p, _, _ in MANAGER_PHASES for edge in ("Start", "Finish")]
+    try:
+        out = run(["systemctl", "show", *[a for p in props for a in ("-p", p)]], timeout=10)
+    except ApiError:
+        return []
+    v = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    phases = []
+    for name, phase, label in MANAGER_PHASES:
+        try:
+            start = int(v.get(f"{name}StartTimestampMonotonic", 0))
+            finish = int(v.get(f"{name}FinishTimestampMonotonic", 0))
+        except ValueError:
+            continue
+        if start and finish >= start:
+            phases.append({"unit": label, "start": start / 1e6, "dur": (finish - start) / 1e6, "phase": phase})
+    return phases
+
+
 def boot_timing():
     if "done" in BOOT_CACHE:
         out = dict(BOOT_CACHE["done"])
@@ -912,6 +944,9 @@ def boot_timing():
         # Timeline and slowest units come from the journal (initrd included);
         # systemd-analyze blame/critical-chain added nothing Settings shows.
         out.update(boot_journal())
+        # PID 1's own phases ranked among the units: what fills the gap
+        # between switch-root and the first unit that starts.
+        out["slowest"] = sorted(out.get("slowest", []) + manager_phases(), key=lambda u: -u["dur"])[:15]
         # Nothing about this boot changes once it has finished.
         if out.get("total") and "journal_error" not in out:
             BOOT_CACHE["done"] = dict(out)
