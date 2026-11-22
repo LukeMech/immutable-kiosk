@@ -546,15 +546,12 @@ async function loadSplash() {
         st.error || "");
 }
 
-// What kiosk-shell reports of the screen: cage's outputs (mode, rotation,
-// scale) and GTK's window -- for a picture of the wrong size or rotation.
+// What kiosk-shell reports of the screen (cage's outputs and their modes):
+// the panel's modes for Rozdzielczość.
 async function loadDisplay() {
     let d;
     try { d = await api("/display"); } catch (_) { return; }
-    if (!d || !d.outputs) { $("disp-info").textContent = ""; return; }
-    const outs = d.outputs.map(o => `${o.name} ${o.mode[0]}×${o.mode[1]}, obrót ${o.transform}, skala ${o.scale}`);
-    $("disp-info").textContent = `Wyświetlacz: ${outs.join("; ") || "brak wyjść"} · okno ${d.window[0]}×${d.window[1]}` +
-        (d.monitor ? `, monitor w GTK ${d.monitor[0]}×${d.monitor[1]}` : "") + `, skala GTK ${d.gtk_scale}`;
+    if (!d || !d.outputs) return;
     // Rozdzielczość: the built-in panel's modes (the first output: kiosk-shell
     // lists the panel first), "WxH@R" when one size comes in several rates.
     const panel = d.outputs[0], modes = (panel && panel.modes) || [];

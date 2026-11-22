@@ -520,6 +520,16 @@ class KioskShell(Gtk.Application):
 
     def common_view_setup(self, view):
         s = view.get_settings()
+        # WebKit honours <meta name="viewport" content="width=device-width">
+        # on a touch screen -- and after cage (re)started in landscape it
+        # took "device-width" as the panel's portrait 800 px: every page laid
+        # out 800 px wide and stretched to 1280 (fine in portrait, fine after
+        # rotating while running). A kiosk page is as wide as the window.
+        feats = WebKit.Settings.get_all_features()
+        for i in range(feats.get_length()):
+            f = feats.get(i)
+            if f.get_identifier() == "ShouldIgnoreMetaViewport":
+                s.set_feature_enabled(f, True)
         s.set_enable_developer_extras(False)
         s.set_javascript_can_open_windows_automatically(False)
         s.set_enable_back_forward_navigation_gestures(False)
