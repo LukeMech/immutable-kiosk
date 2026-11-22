@@ -884,15 +884,21 @@ function renderTz(region) {
             `<option value="${esc(z)}"${z === chosen ? " selected" : ""}>${esc(tzSplit(z)[1].replace(/_/g, " ").replace(/\//g, " / "))}</option>`).join("");
 }
 
+// Short labels: the legend is one line under the bar.
 const BOOT_PHASES = {
-    firmware: ["Firmware (UEFI)", "#6e7681"], loader: ["Bootloader (GRUB)", "#d29922"], kernel: ["Jądro", "#db6d28"],
-    initrd: ["initramfs", "#a371f7"], userspace: ["Usługi systemu", "#2f81f7"], hmi: ["Do pokazania HMI", "#3fb950"],
+    firmware: ["UEFI", "#6e7681"], loader: ["GRUB", "#d29922"], kernel: ["Jądro", "#db6d28"],
+    initrd: ["initramfs", "#a371f7"], userspace: ["Usługi", "#2f81f7"], hmi: ["HMI", "#3fb950"],
 };
-const secs = (v, d = 1) => v.toLocaleString("pl-PL", { minimumFractionDigits: d, maximumFractionDigits: d }) + " s";
+// Non-breaking space: "13,3 s" never splits across lines (legend, timeline).
+const secs = (v, d = 1) => v.toLocaleString("pl-PL", { minimumFractionDigits: d, maximumFractionDigits: d }) + " s";
 
+let bootLoaded = false;
 async function loadBoot() {
+    // First load reads this boot's journal -- seconds on the Atom: a spinner,
+    // like the update check. Later ones come from kioskd's cache.
+    if (!bootLoaded) setStatus("boot-st", "busy", ICONS.busy, "Wczytywanie czasu uruchamiania…", "Czytam dziennik tego startu");
     let b;
-    try { b = await api("/boot"); }
+    try { b = await api("/boot"); bootLoaded = true; }
     catch (e) { setStatus("boot-st", "err", ICONS.err, "Brak danych o starcie", e.message); return; }
     const ph = Object.fromEntries((b.phases || []).map(p => [p.name, p.sec]));
     const before = (ph.firmware || 0) + (ph.loader || 0);   // before the kernel's clock starts
@@ -902,11 +908,13 @@ async function loadBoot() {
     const segs = Object.keys(BOOT_PHASES).filter(k => ph[k] != null).map(k => [k, ph[k]]);
     if (b.hmi_shown != null && b.hmi_shown > kernelToDone) segs.push(["hmi", b.hmi_shown - kernelToDone]);
     const total = segs.reduce((a, [, v]) => a + v, 0);
+    const ready = before + kernelToDone;
     if (b.hmi_shown != null) {
         setStatus("boot-st", "", ICONS.clock, `HMI po ${secs(before + b.hmi_shown)} od włączenia`,
-                  `${secs(b.hmi_shown)} od startu jądra` + (b.total ? ` · system gotowy po ${b.total}` : ""));
+                  `system gotowy po ${secs(ready)}, z tego ${secs(before)} przed startem jądra (UEFI + GRUB)`);
     } else if (b.total) {
-        setStatus("boot-st", "", ICONS.clock, `System gotowy po ${b.total}`, "HMI jeszcze się nie wyświetliło");
+        setStatus("boot-st", "", ICONS.clock, `System gotowy po ${secs(ready)}`,
+                  "HMI jeszcze się nie wyświetliło (brak adresu albo serwer nie odpowiada)");
     } else {
         setStatus("boot-st", "busy", ICONS.busy, "Start jeszcze trwa", b.error || "");
     }
@@ -914,7 +922,7 @@ async function loadBoot() {
     $("boot-bar").innerHTML = segs.map(([k, v]) =>
         `<i style="flex:${v} 1 0;background:${BOOT_PHASES[k][1]}"></i>`).join("");
     $("boot-legend").innerHTML = segs.map(([k, v]) =>
-        `<div><i style="background:${BOOT_PHASES[k][1]}"></i>${esc(BOOT_PHASES[k][0])}<b>${secs(v)}</b></div>`).join("");
+        `<span><i style="background:${BOOT_PHASES[k][1]}"></i>${esc(BOOT_PHASES[k][0])} <b>${secs(v)}</b></span>`).join("");
 
     // Timeline (seconds since the kernel started) and the slowest units.
     const marks = [...(b.milestones || [])];
@@ -931,14 +939,12 @@ async function loadBoot() {
         `<span class="meter"><i style="width:${(u.dur / max * 100).toFixed(1)}%"></i></span></li>`).join("");
     $("boot-more").hidden = !marks.length && !slow.length;
 
-    const sect = (title, lines) => lines && lines.length ? [title, ...lines, ""] : [];
-    $("boot-detail").textContent = [
-        ...sect("Nieudane jednostki:", b.failed),
-        ...sect("systemd-analyze blame (bez urządzeń):", b.blame),
-        ...sect("Łańcuch do kiosku (@ = kiedy ruszyła, + = ile trwała):", b.chain),
-        ...sect("Łańcuch do sysinit.target:", b.chain_sysinit),
-        ...(b.journal_error ? [`journalctl: ${b.journal_error}`] : []),
-    ].join("\n").trim() || "brak danych";
+    const problems = [
+        ...(b.failed && b.failed.length ? [`Nie uruchomiły się: ${b.failed.join(", ")}`] : []),
+        ...(b.journal_error ? [`Brak przebiegu startu (journalctl: ${b.journal_error})`] : []),
+    ];
+    $("boot-failed").textContent = problems.join(" · ");
+    $("boot-failed").hidden = !problems.length;
 }
 
 function initSystem() {

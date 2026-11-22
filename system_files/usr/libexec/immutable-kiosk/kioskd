@@ -882,16 +882,8 @@ def boot_timing():
             out["total"] = m.group(1).strip() if m else ""
         except (ApiError, IndexError) as e:
             out["error"] = str(e)  # "Bootup is not yet finished" until graphical.target
-        try:
-            # Services, mounts, sockets -- not .device units (see boot_journal).
-            blame = run(["systemd-analyze", "blame", "--no-pager"], timeout=20).splitlines()
-            out["blame"] = [ln.strip() for ln in blame if not ln.strip().endswith((".device", ".slice"))][:15]
-            out["chain"] = run(["systemd-analyze", "critical-chain", "--no-pager", "immutable-kiosk-cage.service"],
-                               timeout=20).rstrip().splitlines()
-            out["chain_sysinit"] = run(["systemd-analyze", "critical-chain", "--no-pager", "sysinit.target"],
-                                       timeout=20).rstrip().splitlines()
-        except ApiError as e:
-            out.setdefault("error", str(e))
+        # Timeline and slowest units come from the journal (initrd included);
+        # systemd-analyze blame/critical-chain added nothing Settings shows.
         out.update(boot_journal())
         # Nothing about this boot changes once it has finished.
         if out.get("total") and "journal_error" not in out:
