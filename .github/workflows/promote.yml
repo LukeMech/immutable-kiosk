@@ -1,0 +1,126 @@
+name: Promote to stable
+# A dev pre-release becomes the stable release, without a rebuild: the exact
+# image that ran on the dev channel. For every variant :latest is moved to
+# the release's version tag (same digest -- the signature build.yml made for
+# it still holds), the pre-release becomes the latest release, and its ISOs
+# are made again from :latest (a dev ISO installs a kiosk that follows :dev).
+#
+# Runs when:
+#   - dev is merged into main (build.yml: main's tree is a pre-release's);
+#   - a pre-release is turned into a release on GitHub (uncheck
+#     "Set as a pre-release");
+#   - by hand, Actions -> Promote to stable (empty tag: the newest pre-release).
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Pre-release tag (empty: the newest pre-release)"
+        type: string
+        default: ""
+      media:
+        description: "Rebuild its installer ISOs from :latest"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
+
+jobs:
+  promote:
+    name: Move :latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve the release
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAG}" ]]; then
+            TAG=$(gh release list --limit 20 --json tagName,isPrerelease,isDraft \
+                    --jq '[.[] | select(.isPrerelease and (.isDraft | not))][0].tagName // ""')
+            [[ -n "${TAG}" ]] || { echo "error: no pre-release to promote" >&2; exit 1; }
+          fi
+          gh release view "${TAG}" --json tagName >/dev/null
+          echo "Promoting ${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move :latest to the release's images
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${IMAGE_REGISTRY,,}"
+          mapfile -t VARIANTS < <(python3 -c '
+          import tomllib
+          with open("images/variants.toml", "rb") as f:
+              print("\n".join(sorted(v["suffix"] for v in tomllib.load(f).values())))
+          ')
+          SHA=$(git rev-parse --short=7 "${TAG}^{commit}")
+          for VARIANT in "${VARIANTS[@]}"; do
+            REPO="${REGISTRY}/immutable-kiosk-${VARIANT}"
+            # Releases from before the channels have no version tag, only
+            # latest-<sha> (back to one of those: dispatch with its tag).
+            DIGEST=""
+            for REF in "${TAG}" "dev-${SHA}" "latest-${SHA}"; do
+              DIGEST=$(skopeo inspect --format '{{.Digest}}' "docker://${REPO}:${REF}" 2>/dev/null) && break
+              DIGEST=""
+            done
+            [[ -n "${DIGEST}" ]] || { echo "error: no ${REPO} image for ${TAG}" >&2; exit 1; }
+            skopeo copy --all --preserve-digests "docker://${REPO}@${DIGEST}" "docker://${REPO}:latest"
+            NOW=$(skopeo inspect --format '{{.Digest}}' "docker://${REPO}:latest")
+            if [[ "${NOW}" != "${DIGEST}" ]]; then
+              echo "error: ${REPO}:latest is ${NOW}, not ${DIGEST} (the signed one)" >&2
+              exit 1
+            fi
+            echo "${REPO}:latest -> ${TAG} (${DIGEST})"
+          done
+
+      - name: Make it the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          NAME=$(gh release view "${TAG}" --json name --jq .name)
+          # Without build.yml's "> Wersja testowa..." lead.
+          gh release view "${TAG}" --json body --jq .body | sed '/^> /d' | sed '/./,$!d' > notes.md
+          gh release edit "${TAG}" --prerelease=false --latest --title "${NAME% (dev)}" --notes-file notes.md
+
+  media:
+    name: Installer ISOs from :latest
+    needs: promote
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.media }}
+    uses: ./.github/workflows/build-media.yml
+    with:
+      publish: true
+      tag: ${{ needs.promote.outputs.tag }}
+      image_tag: latest
+    permissions:
+      contents: write
