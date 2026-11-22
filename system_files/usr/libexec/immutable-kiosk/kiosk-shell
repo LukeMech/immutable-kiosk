@@ -337,6 +337,14 @@ class KioskShell(Gtk.Application):
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
+        # Let GTK hear about it before WebKit starts: a round trip to cage,
+        # then the events it brought (the monitor's new geometry). Without
+        # this the web process started with the monitor still 800x1280 and
+        # laid the landscape pages out 800 px wide, stretched 1.6x.
+        Gdk.Display.get_default().sync()
+        ctx = GLib.MainContext.default()
+        while ctx.pending():
+            ctx.iteration(False)
         milestone("kiosk-shell: konfiguracja i obrót")
 
         self.win = Gtk.ApplicationWindow(application=self, title="Kiosk")
@@ -405,8 +413,10 @@ class KioskShell(Gtk.Application):
             log(f"window scale {scale}: WebKit zoom compensates")
             self.device_scale = scale
             self.apply_scale()
+        monitor = Gdk.Display.get_default().get_monitor_at_surface(surface)
+        geo = monitor.get_geometry() if monitor else None
         info = {"gtk_scale": scale, "window": [self.win.get_width(), self.win.get_height()],
-                "outputs": outputs}
+                "monitor": [geo.width, geo.height] if geo else None, "outputs": outputs}
 
         def report():
             try:
