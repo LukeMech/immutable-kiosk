@@ -1,11 +1,8 @@
 #!/bin/sh
-# cage's client: kiosk-splash first (cage shows black until it draws), then
-# kiosk-shell's last rotation (the splash follows it), then exec kiosk-shell
-# (it ends the splash; cage exits with it).
+# cage's client: kiosk-shell's last rotation (fast, and the splash's text
+# must not come up sideways), kiosk-splash, then exec kiosk-shell (it ends
+# the splash; cage exits with it).
 echo "kiosk-session: milestone: kiosk-session: start (cage up)" >&2
-/usr/libexec/immutable-kiosk/kiosk-splash &
-KIOSK_SPLASH_PID=$!
-export KIOSK_SPLASH_PID
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/immutable-kiosk"
 if [ -r "$CACHE/outputs" ]; then
     # Rotation only, never a mode: a modeset blanks the DSI panel for a second.
@@ -14,5 +11,7 @@ if [ -r "$CACHE/outputs" ]; then
             wlr-randr --output "$name" --transform "$transform" --scale 1 2>/dev/null
     done < "$CACHE/outputs"
 fi
-echo "kiosk-session: milestone: kiosk-session: rotation applied" >&2
+/usr/libexec/immutable-kiosk/kiosk-splash &
+KIOSK_SPLASH_PID=$!
+export KIOSK_SPLASH_PID
 exec /usr/libexec/immutable-kiosk/kiosk-shell

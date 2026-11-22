@@ -3,15 +3,19 @@
 
 cage clears the screen when it takes over from the boot splash, and
 kiosk-shell needs seconds before its first frame. This client (started by
-kiosk-session) continues the boot splash's "orbit" animation from the rest
-pose it stopped in, until kiosk-shell's first page ends it (SIGTERM).
+kiosk-session) continues the boot splash's progress bar where it stopped
+("Starting the kiosk…"), creeping on until kiosk-shell's first page ends
+it (SIGTERM).
 
 The Wayland protocol by hand, standard library only (fast to start):
-wl_shm buffers, a fullscreen xdg_toplevel, frame callbacks. The frames are
-pre-drawn by build_files/16-plymouth-images.py; kiosk-session has applied
-the rotation already.
+wl_shm buffers, a fullscreen xdg_toplevel, frame callbacks. The bar's
+pieces and label come from build_files/16-plymouth-images.py, composited as
+plymouth draws them; kiosk-session has applied the rotation already.
 """
 
+import base64
+import json
+import math
 import mmap
 import os
 import signal
@@ -19,11 +23,9 @@ import socket
 import struct
 import sys
 import time
-import zlib
 
-FRAMES = "/usr/share/immutable-kiosk/splash-orbit.bin"
+DATA = "/usr/share/immutable-kiosk/splash-bar.json"
 BG = bytes((0, 0, 0, 0xff))               # black, as the boot splash
-INTRO_FPS = 50                            # the intro frames' rate
 GIVE_UP_S = 180                           # kiosk-shell never ended it
 XRGB8888 = 1
 
@@ -37,18 +39,15 @@ def milestone(label):
     log("milestone:", f"kiosk-splash: {label}")
 
 
-def load_frames():
-    """(size, intro frames, loop frames, loop period in s, the first frame,
-    the rest's decompressor): only the first frame is unpacked up front
-    (~20 MB in all), the rest once it is on screen (load_rest)."""
-    with open(FRAMES, "rb") as f:
-        data = f.read()
-    if data[:4] != b"IKS2":
-        raise ValueError("not a splash-orbit file")
-    size, intro, loop, period_ms = struct.unpack_from("<HHHH", data, 4)
-    d = zlib.decompressobj()
-    first = d.decompress(data[12:], size * size * 4)
-    return size, intro, loop, period_ms / 1000, first, d
+def load_bar():
+    with open(DATA) as f:
+        d = json.load(f)
+    for part in ("track", "fill"):
+        for end in ("l", "r"):
+            d[part][end] = base64.b64decode(d[part][end])
+        d[part]["m"] = bytes((d[part]["m"][2], d[part]["m"][1], d[part]["m"][0], 255))
+    d["label"]["bgrx"] = base64.b64decode(d["label"]["bgrx"])
+    return d
 
 
 def pack(fmt, args):
@@ -88,7 +87,7 @@ class Reader:
 
 class Splash:
     def __init__(self):
-        self.size, self.intro, self.loop, self.period, self.frames, self.rest = load_frames()
+        self.bar = load_bar()
         name = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
         path = name if name.startswith("/") else os.path.join(os.environ["XDG_RUNTIME_DIR"], name)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -106,7 +105,8 @@ class Splash:
         self.pool = self.fd = self.mm = None
         self.cur = 0
         self.frame_cb = None
-        self.t0 = None  # the first frame drawn: the intro starts then
+        self.t0 = None                # the first frame drawn: the creep starts then
+        self.last_fw = None           # the fill's width in each buffer
 
     # -- wire
     def new(self, handler=None):
@@ -211,7 +211,6 @@ class Splash:
             self.draw(full=True)
             if first:
                 milestone(f"first frame ({w}x{h})")
-                self.load_rest()
         self.flush()
 
     def on_frame(self, op, r):
@@ -250,19 +249,49 @@ class Splash:
             self.req(self.pool, 0, "niiiiu", bid, idx * one, w, h, w * 4, XRGB8888)
             self.buffers.append([bid, False])
 
-    def load_rest(self):
-        if self.rest is None:
-            return
-        d, self.rest = self.rest, None
-        frames = self.frames + d.decompress(d.unconsumed_tail) + d.flush()
-        if len(frames) != self.size * self.size * 4 * (self.intro + self.loop):
-            log("truncated splash-orbit file: the first frame only")
-            return
-        self.frames = frames
+    def geometry(self):
+        """The bar's and label's place: the same formulas as plymouth's script."""
+        b, w, h = self.bar["bar"], self.width, self.height
+        bw = int(min(w * b["frac"], b["max"]) / 2) * 2
+        bx, by = (w - bw) // 2, h // 2 - b["h"] // 2
+        lab = self.bar["label"]
+        return bw, bx, by, (w - lab["w"]) // 2, by + b["h"] + b["gap"]
+
+    def put(self, buf, x, y, w, rows):
+        """rows: w*len pixels of BGRX, row by row, at (x, y) in buffer buf."""
+        stride, base = self.width * 4, buf * self.width * self.height * 4
+        for r in range(len(rows) // (w * 4)):
+            o = base + (y + r) * stride + x * 4
+            self.mm[o:o + w * 4] = rows[r * w * 4:(r + 1) * w * 4]
+
+    def draw_static(self, buf):
+        """The track and the label, as plymouth left them."""
+        b, cap = self.bar["bar"], self.bar["bar"]["cap"]
+        bw, bx, by, lx, ly = self.geometry()
+        t = self.bar["track"]
+        self.put(buf, bx, by, cap, t["l"])
+        self.put(buf, bx + cap, by, bw - 2 * cap, t["m"] * ((bw - 2 * cap) * b["h"]))
+        self.put(buf, bx + bw - cap, by, cap, t["r"])
+        lab = self.bar["label"]
+        if lx >= 0 and ly + lab["h"] <= self.height:
+            self.put(buf, lx, ly, lab["w"], lab["bgrx"])
+
+    def draw_fill(self, buf, fw):
+        b, cap = self.bar["bar"], self.bar["bar"]["cap"]
+        bw, bx, by, _, _ = self.geometry()
+        f = self.bar["fill"]
+        self.put(buf, bx, by, cap, f["l"])
+        if fw > 2 * cap:
+            self.put(buf, bx + cap, by, fw - 2 * cap, f["m"] * ((fw - 2 * cap) * b["h"]))
+        self.put(buf, bx + fw - cap, by, cap, f["r"])
 
     def draw(self, full=False):
         if not self.buffers:
             return
+        if full:
+            for buf in range(2):
+                self.draw_static(buf)
+            self.last_fw = [None, None]
         idx = self.cur ^ 1
         if self.buffers[idx][1]:         # still the compositor's: try next frame
             idx = self.cur
@@ -270,32 +299,28 @@ class Splash:
                 self.request_frame()
                 self.req(self.surface, 6)
                 return
-        s, w = self.size, self.width
         now = time.monotonic()
         if self.t0 is None:
             self.t0 = now
-        el = now - self.t0
-        if el < self.intro / INTRO_FPS:
-            k = int(el * INTRO_FPS)
-        else:
-            k = self.intro + int((el - self.intro / INTRO_FPS) / self.period * self.loop) % self.loop
-        x0, y0 = max(0, (w - s) // 2), max(0, (self.height - s) // 2)
-        base = idx * w * self.height * 4 + (y0 * w + x0) * 4
-        src = k * s * s * 4
-        if src + s * s * 4 > len(self.frames):
-            src = 0                      # not unpacked (yet): the first frame
-        row = min(s, w - x0) * 4
-        for y in range(min(s, self.height - y0)):
-            o = base + y * w * 4
-            self.mm[o:o + row] = self.frames[src + y * s * 4:src + y * s * 4 + row]
+        d = self.bar
+        frac = d["end"] - (d["end"] - d["start"]) * math.exp(-(now - self.t0) / d["tau"])
+        bw, bx, by, _, _ = self.geometry()
+        cap, bh = d["bar"]["cap"], d["bar"]["h"]
+        fw = 2 * cap + int((bw - 2 * cap) * frac)
+        if not full and fw == self.last_fw[idx] and fw == self.last_fw[idx ^ 1]:
+            self.request_frame()         # nothing new: just wait for the next frame
+            self.req(self.surface, 6)
+            return
+        self.draw_fill(idx, fw)
+        self.last_fw[idx] = fw
         bid = self.buffers[idx][0]
         self.req(self.surface, 1, "oii", bid, 0, 0)               # attach
         if full:
-            self.req(self.surface, 2, "iiii", 0, 0, w, self.height)  # damage
+            self.req(self.surface, 2, "iiii", 0, 0, self.width, self.height)  # damage
         elif self.compositor_version >= 4:
-            self.req(self.surface, 9, "iiii", x0, y0, s, s)       # damage_buffer
+            self.req(self.surface, 9, "iiii", bx, by, bw, bh)     # damage_buffer
         else:
-            self.req(self.surface, 2, "iiii", x0, y0, s, s)
+            self.req(self.surface, 2, "iiii", bx, by, bw, bh)
         self.buffers[idx][1] = True
         self.cur = idx
         self.request_frame()
