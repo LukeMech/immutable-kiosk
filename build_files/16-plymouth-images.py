@@ -31,8 +31,8 @@ DATA = "/usr/share/immutable-kiosk/splash-embers.json"
 
 COLORS = [(255, 214, 120), (255, 140, 40), (230, 62, 28)]     # yellow, orange, red
 SIZES = [13, 23, 37]                                          # glow sizes, px (odd)
-STEP = 13                                                     # word: px between embers
-EXTRA = 50                                                    # fire-only embers
+STEP = 22                                                     # word: px between embers
+EXTRA = 26                                                    # fire-only embers
 FORM_TICKS = 75                                               # hand-over: 1.5 s to form
 # The cycle, in ticks: fire, gathering into the word, the word, breaking up.
 FIRE, GATHER, HOLD, SCATTER = 250, 75, 25, 75
@@ -70,7 +70,7 @@ rnd = random.Random(2026)   # fixed: the same fire in every build
 embers = []
 for point in word_points("WAIT") + [None] * EXTRA:
     tx, ty = point or (0.0, 0.0)
-    size = rnd.choice([0, 0, 0, 1, 1, 2])
+    size = rnd.choice([1, 1, 2] if point is not None else [0, 0, 0, 1, 1, 2])  # the word: bigger glows
     if point is not None:                         # a hand-drawn look, not a ruler's
         tx, ty = tx + rnd.uniform(-2.5, 2.5), ty + rnd.uniform(-2.5, 2.5)
     embers.append({
@@ -192,6 +192,7 @@ handover = -1;
 u = 0;
 e = 0;
 bedb = 0;
+bt = -1;
 hbed = 0;
 c = 0;
 v = 0;
@@ -210,9 +211,11 @@ fun status_callback (status)
 }}
 Plymouth.SetUpdateStatusFunction(status_callback);
 
-fun refresh_callback ()
+# Drawn at 25 frames a second (every other refresh, two ticks at a time):
+# plymouth's script interpreter can't keep up with 50 on an Atom, and its
+# ticks are frames -- a slow frame slows the whole animation down.
+fun frame ()
 {{
-    t = t + 1;
     fade = Math.Min(t / 40, 1);
     # Where in the cycle: fire, gathering, the word, breaking up.
     c = t - Math.Int(t / CYCLE) * CYCLE;
@@ -230,7 +233,12 @@ fun refresh_callback ()
         bedb = 0.18;
     else
         bedb = 0.18 + (flick - 0.18) * (c - {FIRE + GATHER + HOLD}) / {SCATTER};
-    bed_s.SetOpacity(bedb);
+    # The bed covers the whole width: its glow changes 12.5 times a second.
+    if (Math.Int(t / 4) != bt)
+    {{
+        bt = Math.Int(t / 4);
+        bed_s.SetOpacity(bedb);
+    }}
     for (i = 0; i < N; i = i + 1)
     {{
         q = t * sp[i] + ph[i];
@@ -310,6 +318,13 @@ fun refresh_callback ()
         s[i].SetPosition(X + cx[i] - hf[i], Y + cy[i] - hf[i], 1);
         s[i].SetOpacity(cb[i]);
     }}
+}}
+
+fun refresh_callback ()
+{{
+    t = t + 1;
+    if (t - Math.Int(t / 2) * 2 == 0)
+        frame();
 }}
 Plymouth.SetRefreshFunction(refresh_callback);
 """
