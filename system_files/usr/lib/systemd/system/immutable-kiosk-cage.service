@@ -29,6 +29,10 @@ ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do for c in /sys/class/drm/card[0-
 ExecStartPre=-+/usr/bin/plymouth deactivate
 PAMName=immutable-kiosk
 Environment=XDG_SESSION_TYPE=wayland
+# "user-light": a seat session without the per-user service manager
+# (user@.service). pam_systemd waited for that to start -- 4.7 s on the 408
+# at boot, black screen included. Nothing in the kiosk uses it.
+Environment=XDG_SESSION_CLASS=user-light
 # -d: no client-side decorations.
 ExecStart=/usr/bin/cage -d -- /usr/libexec/immutable-kiosk/kiosk-session
 Restart=always
