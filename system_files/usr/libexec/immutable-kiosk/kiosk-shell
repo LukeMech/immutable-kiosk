@@ -351,7 +351,12 @@ class KioskShell(Gtk.Application):
         splash = Gtk.Box(halign=Gtk.Align.FILL, valign=Gtk.Align.FILL)
         splash.add_css_class("splash")
         self.stack.add_named(splash, "splash")
-        self.setup()
+        # WebKit comes in only once the window is on the screen (painted):
+        # a view created and loading before that never got its size -- the
+        # page measured 0x0, the zoom came out NaN, and in landscape the
+        # pages ended up ~1.6x too big after every start (measured under a
+        # headless cage: created after the window, 1280x800 at zoom 1.0).
+        # The window is see-through meanwhile; kiosk-splash animates below.
         self.win.fullscreen()
         self.win.connect("map", self.on_first_map)
         self.win.present()
@@ -366,6 +371,7 @@ class KioskShell(Gtk.Application):
         def painted(_clock):
             clock.disconnect(state["id"])
             milestone("kiosk-shell: ekran startowy (pierwsza klatka okna)")
+            GLib.idle_add(self.setup_once)
             self.watch_display()
         state["id"] = clock.connect("after-paint", painted)
 
@@ -415,6 +421,12 @@ class KioskShell(Gtk.Application):
             except (OSError, ValueError) as e:
                 log("display report:", e)
         threading.Thread(target=report, daemon=True).start()
+        return GLib.SOURCE_REMOVE
+
+    def setup_once(self):
+        if not getattr(self, "set_up", False):
+            self.set_up = True
+            self.setup()
         return GLib.SOURCE_REMOVE
 
     def setup(self):
@@ -689,6 +701,8 @@ class KioskShell(Gtk.Application):
         scale, the HMI at scale x its own zoom (the HMI tab's setting) --
         both divided by the scale GTK really draws our window at, so a page
         is the same size whatever the compositor's scale is."""
+        if not hasattr(self, "settings"):
+            return  # before setup(): it applies the scale itself
         scale = screen_scale(self.cfg) / (self.device_scale or 1.0)
         self.settings.set_zoom_level(scale)
         if self.hmi:

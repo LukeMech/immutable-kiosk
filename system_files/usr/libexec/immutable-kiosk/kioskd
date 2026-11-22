@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
     "settings_corner": "top-right",
     # Settings' accent colour (Ekran > Kolor akcentu), one of ACCENTS.
     "accent": "blue",
-    # Settings' language (static/web/i18n.js translates the page): pl, en.
+    # Settings' language (web/i18n.js translates the Polish page): en, pl.
     "language": "en",
     # Backlight in percent, applied by kioskd at start and on change. None =
     # never touched (systemd-backlight's restored value stays).
@@ -783,7 +783,7 @@ def start_job(kind, title, target, steps=()):
 # counts there) that bootc's own stages move along.
 BOOTC_STEPS = [("pull", "Pobieranie"), ("local", "Przygotowanie lokalne")]
 UPGRADE_STEPS = [("check", "Sprawdzenie nowej wersji")] + BOOTC_STEPS
-LOCAL_EXPECT_S = 90  # about what "local" takes on the Atom: ~60 s writing, ~30 s bootc's stages
+LOCAL_EXPECT_S = 95  # what "local" takes on the 408: ~60 s writing, ~35 s bootc's stages (1 min 34 s measured)
 # bootc's stages, by subtask id or description.
 BOOTC_STAGES = {"merging": "Scalanie obrazu", "deploying": "Wdrażanie nowej wersji",
                 "bound_images": "Pobieranie powiązanych obrazów", "bound images": "Pobieranie powiązanych obrazów",
