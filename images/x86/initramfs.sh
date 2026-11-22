@@ -28,8 +28,15 @@
 #                   CPU's microcode (16 MB, uncompressed). Ours carries only
 #                   the Atom families this image is for (early_microcode).
 #
-# Panel PCs with other storage (SATA, NVMe, USB) still boot: kernel driver
-# selection (dracut's kernel-modules, hostonly=no) isn't touched.
+#   OMIT_DRIVERS:   of the ~700 kernel modules hostonly=no packs (xz-compressed
+#                   already, so they're most of the file), the ones for hardware
+#                   and filesystems these devices never boot from: server HBAs,
+#                   InfiniBand, network filesystems, Wi-Fi, crypto accelerators,
+#                   USB-C, watchdogs, vendor HID drivers... Their firmware goes
+#                   with them (dracut adds firmware only for included modules).
+#
+# Panel PCs with other storage (SATA/AHCI, NVMe, USB) still boot: the drivers
+# that find a root there stay, and the build fails if one goes (NEED_KMODS).
 #
 # A bad initramfs can't brick a device: the previous deployment keeps its own,
 # and one that can't mount the root reboots (rd.emergency=reboot) until GRUB
@@ -61,6 +68,73 @@ OMIT=(
     walinuxagent fips fips-crypto-policies openssl nss-softokn
     virtiofs nvdimm kernel-modules-extra
     hwdb i18n
+)
+
+# Kernel modules left out (dracut --omit-drivers: each entry is a regex
+# matched against the whole module name, with - read as _). Nothing here is
+# needed to find and mount the root; the real root loads whatever the
+# hardware needs from /usr/lib/modules later, as usual.
+OMIT_DRIVERS=(
+    # GPU: early KMS held up the root mount (see the top).
+    i915
+    # Server/legacy SCSI HBAs, FC, SAS, iSCSI, InfiniBand, SCSI targets.
+    '3w_.*' BusLogic a100u2w aacraid advansys 'aic7.*' am53c974 arcmsr atp870u
+    bfa bnx2fc csiostor dc395x dmx3191d efct esas2r esp_scsi 'fcoe' 'libfc.*'
+    'fdomain.*' fnic hpsa hptiop initio ipr ips isci leapraid libsas lpfc
+    'megaraid.*' mpi3mr 'mpt.*' mvsas mvumi myrb myrs pm80xx pmcraid qedf
+    'qla.*' raid_class scsi_debug 'scsi_transport_(fc|sas|spi|srp|iscsi)'
+    smartpqi snic stex sym53c8xx vmw_pvscsi wd719x 'libiscsi.*'
+    iscsi_boot_sysfs 'scsi_dh_.*' tcm_loop 'target_core_.*'
+    'ib_.*' iw_cm 'rdma_.*' 'rtrs_.*' 'cnic' 'cxgb.*' 'qed.*'
+    # Hypervisor guests other than KVM's virtio (that one stays, for testing).
+    'xen_.*' 'hv_.*' hyperv_keyboard vmw_pvscsi vboxsf
+    # Block/RAID/NVMe-over-fabrics nobody boots from here.
+    aoe brd drbd mtip32xx nbd null_blk rbd 'rnbd_.*' rnull_mod ublk_drv zloop
+    bcache dm_multipath nvme_fc nvme_fabrics 'nvmet.*'
+    # Filesystems: the root is btrfs (+ overlay/erofs for composefs); the
+    # installer ISO needs isofs/squashfs; vfat/exfat/ext4 stay too.
+    9p '9pnet.*' kafs binfmt_misc cachefiles ceph libceph ecryptfs f2fs fuse
+    virtiofs hfs hfsplus jffs2 jfs minix netfs grace 'nfs_.*' xfs ntfs ntfs3
+    orangefs romfs 'cifs.*' smb_compress udf zonefs ramoops 'mac_.*'
+    'nls_cp[^4].*' nls_euc_jp 'nls_iso8859_[23456789]' 'nls_iso8859_1[345]'
+    'nls_koi8_.*'
+    # Network and Wi-Fi stacks (SDIO Wi-Fi came in with the MMC drivers).
+    mac80211 cfg80211 rfkill rxrpc sunrpc tls dns_resolver udp_tunnel
+    ip6_udp_tunnel 'mt76.*' 'mt79.*' 'mt792x_.*'
+    # Crypto accelerators and ciphers only dm-crypt/IPsec/krb5 use.
+    'qat_.*' intel_qat 'ccp.*' chcr iaa_crypto 'atmel_.*' 'padlock_.*'
+    virtio_crypto 'aegis128.*' 'blowfish.*' 'camellia.*' 'cast[56c].*'
+    'serpent.*' 'twofish.*' adiantum hctr2 'krb5.*' ecrdsa_generic
+    streebog_generic tcrypt wp512 rmd160 md4 des_generic essiv xctr xcbc
+    pcrypt crypto_user 'async_.*' 'idxd.*'
+    # Firewire, Thunderbolt, UFS, USB-C/Type-C muxes and PD controllers.
+    'firewire_.*' thunderbolt 'ufshcd.*' cdns_pltfrm 'typec.*' 'tcpci.*' tcpm
+    'ucsi.*' cros_ec_ucsi hd3ss3220 fsa4480 gpio_sbu_mux intel_pmc_mux it5205
+    nb7vpq904m pi3usb30532 ps883x ptn36502 tusb1046 rt1719 stusb160x fusb302
+    tps6598x wusb3801
+    # Watchdogs (37 of them), Chromebook/Surface/ASUS platform drivers.
+    '.*_wdt' i6300esb ib700wdt ibmasr hpwdt nv_tco 'pcwd_.*' softdog
+    sp5100_tco wdt_pci 'cros_.*' 'surface_.*' asus_wmi
+    # HID: vendor-specific drivers, sensor hubs, touch controllers -- nothing
+    # to type into during boot (rd.shell=0). hid, hid_generic, usbhid stay.
+    'hid_[^g].*' 'hid_g[^e].*' 'hid_ge[^n].*' amd_sfh 'intel_ish.*'
+    'intel_ishtp.*' 'intel_quick.*' intel_thc uhid wacom 'i2c_hid.*'
+    applespi charlieplex_keypad cypress_sf 'qt10[57]0' tm2_touchkey rmi_core
+    altera_ps2 arc_ps2
+    # Card readers other than the SoC's SDHCI; parallel ATA and old SATA HBAs;
+    # USB storage quirk drivers for 2000s card readers; pin controllers of
+    # other SoCs (none of it finds a root here).
+    'alcor.*' 'rtsx_.*' 'cb710.*' 'tifm_.*' toshsd via_sdmmc vub300 wbsd ushc
+    sdricoh_cs sdhci_xenon_driver sdio_uart 'pata_.*' pdc_adma acard_ahci
+    'sata_(mv|nv|promise|qstor|sil|sil24|sis|svw|sx4|uli|via|vsc)'
+    microtek 'ums_.*' 'pinctrl_.*'
+)
+# ...and what must still be there (in the initramfs or built in): eMMC on the
+# Atom SoCs, SATA/AHCI, NVMe, USB sticks, the ostree/composefs root, and the
+# installer ISO's isofs/squashfs.
+NEED_KMODS=(
+    mmc_block 'sdhci[-_]acpi' 'sdhci[-_]pci' sdhci btrfs overlay erofs loop
+    ahci nvme 'usb[-_]storage' uas sd_mod isofs squashfs
 )
 
 # Microcode loaded at the very start of boot: Bay Trail (06-37), Cherry
@@ -112,12 +186,19 @@ ADD=()
 if [[ ${#EXTRA[@]} -gt 0 ]]; then
     ADD=(--add " ${EXTRA[*]} ")
 fi
-DRACUT_NO_XATTR=1 dracut --force --zstd --reproducible --no-hostonly \
+# zstd -19: a few % smaller than dracut's default level for the same
+# decompression speed (only the build takes longer).
+# From an empty directory: dracut word-splits the omit list unquoted, so a
+# pattern like 'mpt.*' would otherwise glob against files in the cwd.
+EMPTY=$(mktemp -d)
+(cd "${EMPTY}" && DRACUT_NO_XATTR=1 dracut --force --reproducible --no-hostonly \
+    --compress "zstd -19 -q -T0" \
     --no-early-microcode \
     --omit " ${OMIT[*]} " \
-    --omit-drivers " i915 xfs " \
+    --omit-drivers " ${OMIT_DRIVERS[*]} " \
     "${ADD[@]}" \
-    "${IMG}" "${KVER}"
+    "${IMG}" "${KVER}")
+rmdir "${EMPTY}"
 
 # Our early cpio: uncompressed, in front of the compressed main archive,
 # with kernel/x86/microcode/GenuineIntel.bin -- the layout dracut's own has.
@@ -163,8 +244,9 @@ for m in "${CRITICAL_DRACUT[@]}"; do
     fi
 done
 
-# Root filesystem stack: whatever the stock initramfs had must still be there.
-for k in overlay erofs btrfs; do
+# What finds and mounts a root (NEED_KMODS): whatever of it the stock
+# initramfs had must still be there -- OMIT_DRIVERS' regexes must not catch it.
+for k in "${NEED_KMODS[@]}"; do
     if has_kmod /tmp/initramfs-stock.list "${k}" && ! has_kmod /tmp/initramfs-new.list "${k}"; then
         echo "error: kernel module '${k}' was in the stock initramfs and is gone from ours" >&2
         exit 1
