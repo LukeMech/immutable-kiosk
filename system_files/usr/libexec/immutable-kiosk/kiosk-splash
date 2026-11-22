@@ -38,16 +38,17 @@ def milestone(label):
 
 
 def load_frames():
-    """(size, intro frames, loop frames, loop period in s, the frames)."""
+    """(size, intro frames, loop frames, loop period in s, the first frame,
+    the rest's decompressor): only the first frame is unpacked up front
+    (~20 MB in all), the rest once it is on screen (load_rest)."""
     with open(FRAMES, "rb") as f:
         data = f.read()
     if data[:4] != b"IKS2":
         raise ValueError("not a splash-orbit file")
     size, intro, loop, period_ms = struct.unpack_from("<HHHH", data, 4)
-    frames = zlib.decompress(data[12:])
-    if len(frames) != size * size * 4 * (intro + loop):
-        raise ValueError("truncated splash-orbit file")
-    return size, intro, loop, period_ms / 1000, frames
+    d = zlib.decompressobj()
+    first = d.decompress(data[12:], size * size * 4)
+    return size, intro, loop, period_ms / 1000, first, d
 
 
 def pack(fmt, args):
@@ -87,7 +88,7 @@ class Reader:
 
 class Splash:
     def __init__(self):
-        self.size, self.intro, self.loop, self.period, self.frames = load_frames()
+        self.size, self.intro, self.loop, self.period, self.frames, self.rest = load_frames()
         name = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
         path = name if name.startswith("/") else os.path.join(os.environ["XDG_RUNTIME_DIR"], name)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -210,6 +211,7 @@ class Splash:
             self.draw(full=True)
             if first:
                 milestone(f"first frame ({w}x{h})")
+                self.load_rest()
         self.flush()
 
     def on_frame(self, op, r):
@@ -248,6 +250,16 @@ class Splash:
             self.req(self.pool, 0, "niiiiu", bid, idx * one, w, h, w * 4, XRGB8888)
             self.buffers.append([bid, False])
 
+    def load_rest(self):
+        if self.rest is None:
+            return
+        d, self.rest = self.rest, None
+        frames = self.frames + d.decompress(d.unconsumed_tail) + d.flush()
+        if len(frames) != self.size * self.size * 4 * (self.intro + self.loop):
+            log("truncated splash-orbit file: the first frame only")
+            return
+        self.frames = frames
+
     def draw(self, full=False):
         if not self.buffers:
             return
@@ -270,6 +282,8 @@ class Splash:
         x0, y0 = max(0, (w - s) // 2), max(0, (self.height - s) // 2)
         base = idx * w * self.height * 4 + (y0 * w + x0) * 4
         src = k * s * s * 4
+        if src + s * s * 4 > len(self.frames):
+            src = 0                      # not unpacked (yet): the first frame
         row = min(s, w - x0) * 4
         for y in range(min(s, self.height - y0)):
             o = base + y * w * 4
