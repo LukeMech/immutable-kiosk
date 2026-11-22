@@ -221,7 +221,6 @@ kind = -1;
 prog = 0;
 
 label_s = Sprite();
-label_s.SetOpacity(0);
 fun show_label (img)
 {{
     label_s.SetImage(img);
@@ -238,8 +237,6 @@ fr = Sprite(load("fill-r.png"));
 tl.SetPosition(BX, BY, 1);
 tm.SetPosition(BX + CAP, BY, 1);
 tr.SetPosition(BX + BW - CAP, BY, 1);
-tl.SetOpacity(0); tm.SetOpacity(0); tr.SetOpacity(0);
-fl.SetOpacity(0); fm.SetOpacity(0); fr.SetOpacity(0);
 
 # The fill from x0 to x1, px into the bar (x1 - x0 at least two caps).
 fun set_fill (x0, x1)
@@ -294,14 +291,6 @@ fun refresh_callback ()
         else
             show_label(Image(pre + "label-updates.png"));
     }}
-    # Fades in over the first half second.
-    if (t <= 25)
-    {{
-        level = t / 25;
-        label_s.SetOpacity(level);
-        tl.SetOpacity(level); tm.SetOpacity(level); tr.SetOpacity(level);
-        fl.SetOpacity(level); fm.SetOpacity(level); fr.SetOpacity(level);
-    }}
     if (kind == 1)
     {{
         # Loading: a segment sliding through the bar.
@@ -353,6 +342,9 @@ with open(DATA, "w") as f:
         "cap_l": alphas(left), "cap_r": alphas(right),
         "labels": {lang: {"w": w, "h": h, "a": alphas(cov)}
                    for (lang, name), (w, h, cov) in labels.items() if name == f"label-{len(STAGES) - 1}"},
+        # The first stage's, for GRUB's picture of the first frame (kioskd).
+        "first": {lang: {"w": w, "h": h, "a": alphas(cov)}
+                  for (lang, name), (w, h, cov) in labels.items() if name == "label-0"},
         "accents": {k: list(v) for k, v in ACCENTS.items()}, "default_accent": "blue",
         "overrides": OVERRIDES,
         "start": HANDOVER, "end": END, "tau": TAU,
