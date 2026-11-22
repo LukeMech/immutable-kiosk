@@ -210,11 +210,12 @@ def apply_output(cfg):
         log("output cache:", e)
     # Touch follows the panel: kioskd sets libinput's calibration matrix
     # (udev) and restarts cage once if it changed -- see kioskd r_touch_set.
+    # The built-in panel's name lets kioskd turn the boot splash too.
     # In the background: at start-up this runs before the first frame.
     if touch_transform:
         def set_touch():
             try:
-                r = api_post("/api/touch", {"transform": touch_transform})
+                r = api_post("/api/touch", {"transform": touch_transform, "output": panel})
                 if r.get("restart"):
                     log(f"touch matrix changed to transform {touch_transform}, cage restarts")
             except (OSError, ValueError) as e:
