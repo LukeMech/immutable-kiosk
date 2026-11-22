@@ -1,11 +1,4 @@
-# Automatic rollback (boot-counter) only works if a broken boot ends in a
-# reboot -- every reboot spends one of GRUB's tries:
-#   panic=10:         reboot 10 s after a kernel panic instead of hanging;
-#   rd.shell=0
-#   rd.emergency=reboot: an initramfs that can't find/mount the root (e.g.
-#                     a driver missing from the slim one) reboots instead
-#                     of waiting forever in an emergency shell nobody can
-#                     type into on a tablet.
-# Debugging such a boot: edit the entry in GRUB (USB keyboard, Esc) and drop
-# these / add rd.shell rd.debug.
+# Auto-rollback (boot-counter) needs failed boots to reboot: after a kernel
+# panic, and instead of an initramfs emergency shell nobody can type into.
+# To debug, edit the GRUB entry (USB keyboard, Esc) and drop these.
 kargs = ["panic=10", "rd.shell=0", "rd.emergency=reboot"]

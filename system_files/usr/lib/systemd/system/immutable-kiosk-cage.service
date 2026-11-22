@@ -1,67 +1,46 @@
-# cage on tty1 as the kiosk user, started by systemd directly -- no display
-# manager, no greeter. Follows cage's own wiki ("Starting Cage on boot with
-# systemd"): a PAM session gives the logind session that lets an
-# unprivileged user open the DRM and input devices on seat0.
-#
-# Not after systemd-user-sessions: that one waits for network.target (and
-# with it Wi-Fi), so the kiosk did too. Its PAM stack (immutable-kiosk) has
-# no pam_nologin, the only thing systemd-user-sessions unlocks. No network
-# at start: kiosk-shell shows Settings and switches to the HMI when it loads.
+# cage on tty1 as kiosk, no display manager (per cage's wiki): the PAM session
+# gives the logind session needed for DRM/input on seat0.
+# Not after systemd-user-sessions (waits for network); the immutable-kiosk
+# PAM stack omits pam_nologin instead.
 [Unit]
 Description=Kiosk (cage + kiosk-shell) on tty1
 After=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
-# The boot splash hands the screen over to cage the way GDM does it:
-# plymouth-quit (the generic "stop the splash" at multi-user) is replaced by
-# `plymouth deactivate` right before cage starts -- plymouth lets go of the
-# GPU but its last frame (the word its embers formed, see ExecStartPre)
-# stays on the screen through the login session and cage's start, until
-# cage's first frame (kiosk-splash, see ExecStart, right after it). kioskd sends `plymouth quit --retain-splash` once the kiosk has
-# drawn. (quit here took ~2 s and left the screen black from then on.)
+# Splash handover like GDM: `plymouth deactivate` (ExecStartPre) instead of
+# plymouth-quit keeps its last frame up until cage draws; kioskd sends
+# `plymouth quit --retain-splash` once the kiosk has drawn.
 After=plymouth-start.service plymouth-quit.service
 Conflicts=plymouth-quit.service
 ConditionPathExists=/dev/tty0
-# Never give up: with the default limit (5 starts in 10 s) a few early
-# failures left the unit dead, and tty1 showed a login prompt instead.
+# Never give up (the default start limit could leave tty1 without a kiosk).
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=kiosk
 WorkingDirectory=/var/home/kiosk
-# i915 on Bay Trail can come up after this unit starts (slower still from a
-# USB stick over OTG): cage then finds no GPU and exits -- or, now that the
-# kiosk starts early, finds the firmware's framebuffer (simpledrm, also a
-# /dev/dri/card*) in the GPU's place, with its own mode. Wait up to 30 s for
-# a card whose driver isn't simple-framebuffer; after that, start anyway and
-# let Restart= retry. ($$: systemd expands $ itself.)
+# i915 can appear after this starts; cage would then fail or take simpledrm.
+# Wait up to 30 s for a non-simple-framebuffer card, then start anyway.
+# ($$: systemd expands $ itself.)
 ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do for c in /sys/class/drm/card[0-9]; do d=$$(readlink -f "$$c/device/driver"); [ -n "$$d" ] && [ "$${d##*/}" != simple-framebuffer ] && exit 0; done; sleep 0.5; done; echo "no GPU (only a firmware framebuffer) after 30 s" >&2'
-# "handover": the boot splash's embers gather into the word WAIT (1.5 s,
-# the theme's script), then plymouth lets go of the GPU with that still on
-# the screen -- what kiosk-splash starts from: a pause that looks meant.
-# "+": as root (the rest of the unit runs as kiosk); "-": no splash
-# running is fine.
+# "handover": the splash forms the word WAIT (1.5 s), then releases the GPU
+# with it on screen for kiosk-splash to continue. "+": as root; "-": no splash is fine.
 ExecStartPre=-+/bin/sh -c '/usr/bin/plymouth update --status=handover && sleep 1.6; /usr/bin/plymouth deactivate'
 PAMName=immutable-kiosk
 Environment=XDG_SESSION_TYPE=wayland
-# -d: no client-side decorations. kiosk-session: the last rotation, then
-# kiosk-splash (on screen at once) and kiosk-shell over it -- cage's black
-# first frame lasts a fraction of a second, not all of kiosk-shell's start.
+# -d: no client-side decorations.
 ExecStart=/usr/bin/cage -d -- /usr/libexec/immutable-kiosk/kiosk-session
 Restart=always
 RestartSec=2
 UtmpIdentifier=tty1
 UtmpMode=user
 TTYPath=/dev/tty1
-# No TTYReset / TTYVTDisallocate: both put tty1 back into text mode (and
-# clear it) as cage's process starts -- after plymouth deactivated, so its
-# still frame gave way to a black console for the ~2 s until cage drew.
-# tty1 stays in the graphics mode plymouth left it in.
+# No TTYReset/TTYVTDisallocate: they'd switch tty1 to text mode and blank
+# plymouth's frame before cage draws.
 TTYVHangup=yes
 StandardInput=tty-fail
 StandardOutput=journal
-# Also on the console: while cage runs it owns the screen, so this is only
-# seen when cage/kiosk-shell dies -- exactly when the error is needed.
+# Console output only shows when cage dies -- exactly when it's needed.
 StandardError=journal+console
 
 [Install]

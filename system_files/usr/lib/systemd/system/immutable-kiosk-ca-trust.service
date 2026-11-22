@@ -1,8 +1,6 @@
-# Stands in for atomic-update-ca-trust.service (masked in 05-base.sh): same
-# job -- regenerate /etc's CA bundles after an image update, since the 3-way
-# merge keeps the old generated files -- but after the kiosk is up, at idle
-# priority, and only when the trust sources changed. On the tablet the
-# original held sysinit.target for 15 s on every first boot after an update.
+# Replaces atomic-update-ca-trust.service (masked in 05-base.sh), which held
+# sysinit.target ~15 s after updates: runs after the kiosk is up, at idle
+# priority, only when the trust sources changed.
 [Unit]
 Description=immutable-kiosk: refresh the CA trust store after an update
 ConditionPathExists=/usr/bin/update-ca-trust

@@ -1,6 +1,5 @@
-/* immutable-kiosk Settings / Installer page. Talks to kioskd (same origin,
-   /api/*, header X-Kiosk: 1) and to kiosk-shell through the "kiosk" WebKit
-   message handler. Plain DOM, no framework, no network beyond localhost. */
+/* Settings / Installer page. Talks to kioskd (/api/*, header X-Kiosk: 1) and
+   to kiosk-shell via the "kiosk" WebKit message handler. */
 "use strict";
 
 const $ = id => document.getElementById(id);
@@ -40,9 +39,9 @@ function msg(el, text, kind = "") {
     el.className = "msg" + (kind ? " " + kind : "");
 }
 
-/* Icons (24x24, stroked) -- the status lines and list rows share them. */
+/* 24x24 stroked icons, shared by status lines and list rows. */
 const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-const wifiIcon = level => svg(  // level 0-3: how many arcs are lit
+const wifiIcon = level => svg(  // level 0-3: lit arcs
     `<circle cx="12" cy="19" r="1.3" fill="currentColor" stroke="none"/>` +
     ['M8.6 15.6a4.8 4.8 0 0 1 6.8 0', 'M5.6 12.6a9 9 0 0 1 12.8 0', 'M2.6 9.4a13.3 13.3 0 0 1 18.8 0']
         .map((d, i) => `<path d="${d}"${i < level ? "" : ' opacity=".28"'}/>`).join(""));
@@ -62,7 +61,7 @@ const ICONS = {
     battery: svg('<rect x="2.5" y="7" width="17" height="10" rx="2"/><path d="M22 10.5v3"/>'),
 };
 
-/* Fill a status line (see .status in app.css): <id>, <id>-icon, -title, -sub. */
+/* Fills a .status line: elements <id>, <id>-icon, -title, -sub. */
 function setStatus(id, state, icon, title, sub = "") {
     $(id).className = "status" + (state ? " " + state : "");
     $(id + "-icon").innerHTML = icon;
@@ -111,8 +110,7 @@ const fmtTime = t => t ? new Date(t).toLocaleString(LOCALE()) : "—";
 
 let cfg = null;
 
-// "charger connected · battery 72% (charging)" -- parts that are unknown
-// are left out instead of shown as "—".
+// "charger connected · battery 72% (charging)"; unknown parts are omitted.
 function powerText(p) {
     const parts = [];
     if (p.ac_online === true) parts.push("charger connected");
@@ -124,7 +122,7 @@ function powerText(p) {
     return parts.length ? parts.join(" · ") : "no data";
 }
 
-// Extra scroll room at the bottom only while the on-screen keyboard is up.
+// Extra bottom scroll room while the on-screen keyboard is up.
 window.addEventListener("kiosk-osk", e => document.body.classList.toggle("osk-open", e.detail.open));
 let currentTab = "hmi";
 
@@ -132,21 +130,19 @@ function showTab(name) {
     currentTab = name;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
     document.querySelectorAll(".tab").forEach(s => { s.hidden = s.id !== "tab-" + name; });
-    const net = () => { loadWifi(false); loadNet(); };  // Wi-Fi and IP: one tab
+    const net = () => { loadWifi(false); loadNet(); };
     ({ hmi: loadHmi, net, screen: loadScreen, system: loadSystem })[name]();
 }
 
-// kiosk-shell calls these when Settings is shown / the HMI replaces it. The
-// page keeps running behind the HMI (document.hidden stays false there), so
-// live updates check settingsVisible -- no nmcli under the HMI.
+// Called by kiosk-shell. The page keeps running behind the HMI (document.hidden
+// stays false), so live updates check settingsVisible.
 let settingsVisible = true;
 window.kioskShown = () => {
     settingsVisible = true;
     if (cfg && cfg.mode !== "installer") { showTab(currentTab); refreshDevice(); }
 };
 window.kioskHidden = () => { settingsVisible = false; };
-// kiosk-shell: at start the HMI couldn't be reached, so Settings is shown
-// until it can (then the HMI replaces it) -- the top bar says so.
+// kiosk-shell: HMI unreachable at start; Settings shows until it answers.
 let hmiWaiting = false;
 window.kioskWaiting = on => { hmiWaiting = !!on; renderNetbar(); };
 
@@ -197,7 +193,7 @@ async function loadHmi() {
     $("hmi-path").value = hmiDraft.path;
     seg($("hmi-scheme"), hmiDraft.scheme, v => {
         hmiDraft.scheme = v;
-        // Switching protocol on a TwinCAT default port follows to the other default.
+        // On a TwinCAT default port, follow to the other protocol's default.
         if (v === "http" && String(hmiDraft.port) === "1020") $("hmi-port").value = "1010";
         if (v === "https" && String(hmiDraft.port) === "1010") $("hmi-port").value = "1020";
         seg($("hmi-scheme"), v);
@@ -254,12 +250,12 @@ function initHmi() {
 const sigLevel = s => s >= 70 ? 3 : s >= 45 ? 2 : 1;
 let openSsid = null;
 let wifiLast = null;      // last GET /wifi
-let wifiOverride = null;  // {state, icon, title, sub} while connecting / after a failed connect
+let wifiOverride = null;  // {state, icon, title, sub}: replaces the status line
 
 function renderWifiStatus() {
     const w = wifiLast, o = wifiOverride;
     const d0 = w && w.device;
-    // Disconnect: only next to a live connection, never while something runs.
+    // Disconnect: only for a live connection, never mid-action.
     $("wifi-off").hidden = !!o || !(w && w.enabled && d0 && /^(connected|connecting)/.test(d0.state));
     if (o) return setStatus("wifi-st", o.state, o.icon, o.title, o.sub);
     if (!w) return setStatus("wifi-st", "busy", ICONS.busy, "Loading…");
@@ -275,8 +271,7 @@ function renderWifiStatus() {
     setStatus("wifi-st", "warn", wifiIcon(0), "Not connected", w.networks.length ? "Pick a network from the list below." : "No networks in range.");
 }
 
-// live: a change kioskd reported (initEvents) -- not while an action of this
-// page is still running (it reloads when it's done).
+// live: from a kioskd event; skipped while this page's own action runs.
 async function loadWifi(rescan, live = false) {
     if (live && wifiOverride && wifiOverride.state === "busy") return;
     if (rescan) wifiOverride = { state: "busy", icon: ICONS.busy, title: "Scanning for networks…" };
@@ -291,12 +286,11 @@ async function loadWifi(rescan, live = false) {
     if (wifiOverride && wifiOverride.state === "busy") wifiOverride = null;
     wifiLast = w;
     $("wifi-radio").checked = w.enabled;
-    $("wifi-radio-box").hidden = !w.device;  // shown once the real state is known
+    $("wifi-radio-box").hidden = !w.device;
     renderWifiStatus();
     const list = $("wifi-list");
-    // A password being typed in an opened network stays: the list waits.
+    // Don't rebuild under a password being typed.
     if (live && [...list.querySelectorAll("input")].some(i => i.value || i === document.activeElement)) return;
-    // The connected network is the status line above, not a row here.
     const others = w.networks.filter(n => !n.in_use);
     list.innerHTML = others.length ? "" : `<li class="empty">${w.enabled ? "No other networks found." : "Wi-Fi is off."}</li>`;
     for (const n of others) {
@@ -313,8 +307,7 @@ async function loadWifi(rescan, live = false) {
         ex.className = "expand";
         ex.hidden = openSsid !== n.ssid;
         item.classList.toggle("open", !ex.hidden);
-        // A saved network connects with what NetworkManager remembers -- no
-        // password field unless "Other password" asks for one.
+        // Saved: NetworkManager's stored password, unless "Other password".
         const remembered = n.saved && n.security;
         ex.innerHTML = (remembered ? '<p class="hint">Saved — connects with the remembered password.</p>' : "") +
             (n.security ? `<label class="pw"${remembered ? " hidden" : ""}>Password
@@ -351,7 +344,6 @@ async function loadWifi(rescan, live = false) {
             });
             ex.hidden = !ex.hidden;
             item.classList.toggle("open", !ex.hidden);
-            // The keyboard only when there's a password to type.
             const pw = ex.querySelector(".pw");
             if (!ex.hidden && pw && !pw.hidden) pw.querySelector("input").focus();
         });
@@ -366,7 +358,6 @@ async function loadWifi(rescan, live = false) {
             <div class="name">${esc(s.ssid)}${s.active ? '<div class="sub">active</div>' : ""}</div>
             ${s.active ? "" : '<button class="btn primary go">Connect</button>'}
             <button class="btn danger hold" data-hold="1000">Forget</button></div>`;
-        // Saved: connects with the remembered password, nothing to type.
         const go = li.querySelector(".go");
         go?.addEventListener("click", () => busy(go, async () => {
             wifiOverride = { state: "busy", icon: ICONS.busy, title: `Connecting to ${s.ssid}…`, sub: "This can take up to a minute." };
@@ -408,8 +399,7 @@ function initWifi() {
                 renderWifiStatus();
             });
     });
-    // nmcli takes a few seconds to switch the radio: say so at once, and
-    // keep the switch still until it has.
+    // nmcli takes seconds to switch the radio: show busy, lock the switch.
     $("wifi-radio").addEventListener("change", e => {
         const sw = e.target, on = sw.checked;
         sw.disabled = true;
@@ -439,14 +429,13 @@ const statusHtml = (state, icon, title, sub) => `<div class="status ${state}"><d
 
 async function loadNet(live = false) {
     const box = $("net-list");
-    // A card being edited (static address) isn't rebuilt under the finger.
+    // Don't rebuild a card being edited.
     if (live && box.querySelector(".card.dirty")) return;
     let n;
     const lone = (state, icon, title, sub) => `<div class="card"><h2>Connection</h2>${statusHtml(state, icon, title, sub)}</div>`;
     try { n = await api("/network"); }
     catch (e) { box.innerHTML = lone("err", ICONS.err, "Couldn't read the network", e.message); return; }
     if (!n.connections.length) {
-        // Nothing connected: the Wi-Fi card above already says so.
         box.innerHTML = `<div class="card"><h2>IP address</h2>` + statusHtml("off", ICONS.ethernet, "No connection",
             "Join a Wi-Fi network below or plug in a cable (USB-Ethernet adapter).") + `</div>`;
         return;
@@ -515,9 +504,8 @@ async function saveCfg(part) {
     return cfg;
 }
 
-/* Accent colour (Display > Accent color): kioskd keeps the name, the page
-   sets --accent (everything accent-tinted derives from it with color-mix)
-   and --ik-accent for the on-screen keyboard. Each works with white text. */
+/* kioskd stores the accent name; the page sets --accent (other tints derive
+   via color-mix) and --ik-accent (OSK). All must work with white text. */
 const ACCENTS = {
     blue: ["Blue", "#2f81f7"], teal: ["Teal", "#17a2b8"], green: ["Green", "#2da44e"],
     purple: ["Purple", "#8957e5"], pink: ["Pink", "#d6409f"], orange: ["Orange", "#e16f24"],
@@ -548,14 +536,11 @@ async function loadSplash() {
         st.error || "");
 }
 
-// What kiosk-shell reports of the screen (cage's outputs and their modes):
-// the panel's modes for Resolution.
 async function loadDisplay() {
     let d;
     try { d = await api("/display"); } catch (_) { return; }
     if (!d || !d.outputs) return;
-    // Resolution: the built-in panel's modes (the first output: kiosk-shell
-    // lists the panel first), "WxH@R" when one size comes in several rates.
+    // Panel = first output; "@R" only when a size has several rates.
     const panel = d.outputs[0], modes = (panel && panel.modes) || [];
     $("res-wrap").hidden = !modes.length;
     if (!modes.length) return;
@@ -581,7 +566,7 @@ function loadScreen() {
     $("rot-hint").textContent = `Now: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
         (cfg.rotation ? "" : " (this device's default)");
     $("scale-val").textContent = Math.round((cfg.scale || 1) * 100) + "%";
-    // No backlight device (e.g. "basic graphics" boot): no slider.
+    // No backlight device: no slider.
     const b = cfg.brightness ?? cfg.brightness_now;
     $("bright-card").hidden = cfg.brightness_now == null;
     if (b != null) {
@@ -593,8 +578,8 @@ function loadScreen() {
         `for ${RECOVERY_HOLD_S} s — in the HMI or Settings — opens System → Recovery.`;
 }
 
-/* Recovery corner (kiosk-shell): the corner opposite the Settings one, held
-   RECOVERY_HOLD_S over the HMI or Settings, opens the page with #recovery. */
+/* Recovery corner (kiosk-shell): opposite the Settings corner; held
+   RECOVERY_HOLD_S it opens the page with #recovery. */
 const RECOVERY_HOLD_S = 3;
 const CORNER_NAMES = { "top-left": "↖ top left", "top-right": "↗ top right", "bottom-left": "↙ bottom left", "bottom-right": "↘ bottom right" };
 const recoveryCorner = () => ({ "top-left": "bottom-right", "top-right": "bottom-left", "bottom-left": "top-right", "bottom-right": "top-left" })[(cfg && cfg.settings_corner) || "top-right"];
@@ -608,7 +593,7 @@ function openRecovery() {
         behavior: "smooth",
     });
     go();
-    setTimeout(go, 900);  // System's cards above fill in asynchronously and push it down
+    setTimeout(go, 900);  // cards above load async and push it down
     card.classList.remove("flash");
     void card.offsetWidth;  // restart the animation
     card.classList.add("flash");
@@ -616,7 +601,7 @@ function openRecovery() {
 window.addEventListener("hashchange", () => { if (location.hash === "#recovery") openRecovery(); });
 
 function initScreen() {
-    // Applied at once, saved after; on failure back to what's saved.
+    // Apply at once, then save; revert on failure.
     $("accent").addEventListener("click", e => {
         const b = e.target.closest("button");
         if (!b) return;
@@ -625,23 +610,20 @@ function initScreen() {
         api("/config", { accent: b.dataset.v }).then(c => { cfg = c; })
             .catch(err => { toast(err.message, true); applyAccent(cfg.accent); renderAccent(); });
     });
-    // Whole-screen scaling in 10% steps (WebKit zoom in kiosk-shell: sharp at
-    // any value).
+    // Whole-screen scale (WebKit zoom in kiosk-shell, sharp at any value).
     const scaleStep = d => saveCfg({ scale: Math.min(2, Math.max(1, Math.round(((cfg.scale || 1) + d) * 10) / 10)) })
         .then(loadScreen).catch(e => toast(e.message, true));
     $("scale-minus").addEventListener("click", () => scaleStep(-0.1));
     $("scale-plus").addEventListener("click", () => scaleStep(0.1));
 
-    // HMI zoom (card in the HMI tab).
     const zoomStep = d => saveCfg({ zoom: Math.min(3, Math.max(0.5, Math.round((cfg.zoom + d) * 10) / 10)) })
         .then(c => { $("zoom-val").textContent = Math.round(c.zoom * 100) + "%"; })
         .catch(e => toast(e.message, true));
     $("zoom-minus").addEventListener("click", () => zoomStep(-0.1));
     $("zoom-plus").addEventListener("click", () => zoomStep(0.1));
 
-    // Brightness follows the finger: applied while dragging (throttled, one
-    // request in flight), the last value always sent. Straight to kioskd, not
-    // saveCfg: kiosk-shell has nothing to reload for it.
+    // Sent while dragging, one request in flight, last value always sent.
+    // Not saveCfg: kiosk-shell has nothing to reload.
     let sending = false, pending = null;
     const send = async () => {
         if (sending || pending == null) return;
@@ -672,8 +654,7 @@ function renderJob(job, { box, stage, bar, detail }) {
     detail.textContent = job.detail || "";
 }
 
-// The running job: fetched when kioskd says it changed (the "job" event,
-// see listen) -- no polling.
+// Refetched on kioskd's "job" event (see listen), no polling.
 let jobTick = null;
 function followJob(onUpdate) {
     const tick = async () => {
@@ -686,15 +667,14 @@ function followJob(onUpdate) {
     tick();
 }
 
-// "12 s", "3 min 5 s" (non-breaking: never split from its number).
+// "12 s", "3 min 5 s" with non-breaking spaces.
 function fmtDur(s) {
     s = Math.max(0, Math.round(s));
     return s < 60 ? `${s}\u00a0s` : `${Math.floor(s / 60)}\u00a0min ${s % 60}\u00a0s`;
 }
 const STEP_ICONS = { done: ICONS.ok, active: ICONS.busy, failed: ICONS.err };
 
-// kioskd's job.steps as a chain. Kept as DOM between updates (several a second):
-// rebuilt, the bars would restart their animation each time.
+// Updated in place, not rebuilt: rebuilding restarts the bar animations.
 function renderSteps(job, el) {
     const steps = (job && job.steps) || [];
     const show = steps.length > 0 && (job.state === "running" || job.state === "failed");
@@ -711,16 +691,14 @@ function renderSteps(job, el) {
             li.querySelector(".dot").innerHTML = STEP_ICONS[s.state] || "";
         }
         li.querySelector(".sl").textContent = s.label;
-        // The active step's time runs on between kioskd's events.
         const took = s.state === "active"
             ? job.now - s.started + (job.at ? (performance.now() - job.at) / 1000 : 0) : s.took;
         li.querySelector(".st").textContent = s.state === "skipped" ? "skipped"
             : took != null && s.state !== "pending" ? fmtDur(took) : "";
         const bar = li.querySelector(".progress");
         bar.hidden = s.state !== "active";
-        // A paced step (no byte count): from its floor towards the end over
-        // about the expected time, slowing down near it -- never full before
-        // kioskd says the step is done.
+        // Paced step (no byte count): eases from floor towards 1 over about
+        // the expected time; never full before kioskd says done.
         let fraction = s.fraction;
         if (s.state === "active" && s.pace) {
             const now = job.now + (job.at ? (performance.now() - job.at) / 1000 : 0);
@@ -763,17 +741,14 @@ function renderChannel(running) {
 }
 
 let sys = null;          // GET /system (bootc status + last check)
-let sysJob = null;       // last update-ish job (check / upgrade / switch)
+let sysJob = null;       // last update-related job
 let sysWasRunning = false;
-let sysNotes = null;     // GET /system/changelog (GitHub releases)
+let sysNotes = null;     // GET /system/changelog
 const UPDATE_JOBS = ["check", "upgrade", "switch", "rollback"];
 const CHECK_EVERY = 15 * 60;  // s: opening System checks again after this
 
-// A version label, readable without a matching GitHub release:
-//   "v45.20261122.1-778b844" (CI builds carry their release tag) -> "v45.20261122.1"
-//   "v45.3f30f95" (dev builds: the tag is the commit) -> as it is
-//   "latest.20261121-22d3877" (older builds) -> "v45.20261121-22d3877"
-//     (Fedora version from kioskd; the date+commit still says which build)
+// Readable label without a matching release: "v45.20261122.1-778b844" ->
+// "v45.20261122.1"; old "latest.20261121-22d3877" -> "v45.20261121-22d3877".
 function labelVersion(v) {
     if (!v) return "";
     let m = /^(v\d+\.\d{8}(?:\.\d+)?)-[0-9a-f]{7,}$/.exec(v);
@@ -806,11 +781,8 @@ function fmtAgo(t) {
 }
 const fmtDate = t => t ? new Date(t).toLocaleDateString(LOCALE(), { day: "numeric", month: "long", year: "numeric" }) : "";
 
-/* Just enough Markdown for the release bodies build.yml writes: headings,
-   lists (commits), tables (package changes), `code`, **bold**, links (text
-   only -- nothing on a kiosk opens them). Headings and table headers are
-   translated like the rest of the page; paragraphs, list items and table
-   cells (commit subjects, package names) are translate="no". */
+/* Minimal Markdown for build.yml's release bodies (links become text). Only
+   headings and table headers get translated; the rest is translate="no". */
 function md(src) {
     const inline = s => esc(s)
         .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -823,7 +795,7 @@ function md(src) {
         const l = lines[i];
         let m;
         if ((m = l.match(/^(#{1,6})\s+(.*)$/))) {
-            // No emoji font on the kiosk: drop them instead of showing boxes.
+            // No emoji font on the kiosk: drop them.
             const text = m[2].replace(/[\p{Extended_Pictographic}️‍]/gu, "").trim();
             out += m[1].length <= 2 ? `<h4>${inline(text)}</h4>` : `<h5>${inline(text)}</h5>`;
         } else if (/^\s*\|/.test(l)) {
@@ -838,7 +810,6 @@ function md(src) {
         } else if (/^\s*[-*]\s+/.test(l)) {
             out += '<ul translate="no">';
             for (; i < lines.length && /^\s*[-*]\s+/.test(lines[i]); i++) {
-                // "- 22d3877 Subject": the commit's short hash, small and grey.
                 const item = inline(lines[i].replace(/^\s*[-*]\s+/, ""))
                     .replace(/^([0-9a-f]{7,12}) /, '<span class="sha">$1</span>');
                 out += `<li>${item}</li>`;
@@ -855,14 +826,12 @@ function md(src) {
 function renderUpdate() {
     const s = sys, job = sysJob;
     const running = !!(job && job.state === "running");
-    // A check is just a spinner; an update or a switch shows its steps
-    // (the update's first one is the same check).
+    // A check is just a spinner; update/switch show their steps.
     const checking = running && job.kind === "check";
     const restoring = running && job.kind === "rollback";  // shown in Recovery
     const working = running && !checking && !restoring;
     let state, title, sub = "";
-    // A running job first: while bootc works, its status may be stale or
-    // briefly unavailable -- that's not a failure to show.
+    // A running job wins: bootc's status may be stale or unavailable meanwhile.
     if (working) {
         state = "busy";
         title = job.kind === "switch" ? `${job.title}…` : "Updating the system…";
@@ -893,13 +862,11 @@ function renderUpdate() {
         state = "ok"; title = `Version ${versionName(s.booted)}`; sub = "Not checked for updates yet";
     }
     setStatus("upd", state, ICONS[state], title, sub);
-    // The bar only while there's progress to show -- a check is just a spinner.
     renderSteps(job && (job.kind === "upgrade" || job.kind === "switch") ? job : null, $("job-steps"));
     renderSteps(job && job.kind === "rollback" ? job : null, $("rb-steps"));
     renderChannel(running);
     const avail = !!(s && s.available);
-    // One row: [Update | Restart] [↻]. Restart replaces
-    // "Update" once a version waits for it and nothing newer is out.
+    // Restart replaces Update once a version is staged and nothing newer is out.
     const waiting = !running && avail && !!s.staged && !s.update;
     $("sys-upgrade").disabled = running || !(avail && s.update);
     $("sys-upgrade").hidden = waiting;
@@ -947,7 +914,7 @@ function renderNotes() {
         </details>`).join("");
 }
 
-// Settings > System: the parts worth naming (kioskd reads their versions).
+// Components whose versions System shows (read by kioskd).
 const COMPONENTS = [["kernel", "Linux kernel"], ["mesa", "Mesa (graphics)"], ["gtk", "GTK"],
     ["webkit", "WebKitGTK"], ["cage", "cage"], ["bootc", "bootc"], ["systemd", "systemd"]];
 
@@ -967,9 +934,8 @@ function renderSysInfo() {
     if (!$("sys-image").value) $("sys-image").value = b.image || "";
 }
 
-// Opening System checks on its own when the last check is old. Entering
-// Settings reloads System too, and both arrived before the first check had
-// recorded its time: two checks in a row. One automatic check a minute.
+// Auto-check on opening System if the last check is stale; at most once a
+// minute (entering Settings also reloads System).
 let autoCheckAt = 0;
 function maybeAutoCheck() {
     if (!sys || !sys.available || sysWasRunning || currentTab !== "system") return;
@@ -1026,8 +992,7 @@ async function loadSystem() {
     loadNotes();
 }
 
-/* Device: live power and clock (every ~5 s while System is open), time zone,
-   host name. Static markup, only values change -- fields keep their input. */
+/* Static markup, only values change, so fields keep their input. */
 let hostSaved = null;
 async function refreshDevice() {
     const i = await api("/info").catch(() => null);
@@ -1049,7 +1014,7 @@ async function refreshDevice() {
     }
 }
 
-/* Top bar: battery and clock, next to "Back to HMI". */
+/* Top bar: battery and clock. */
 function batteryIcon(p) {
     const lvl = Math.max(0, Math.min(100, p.battery));
     const charging = p.battery_status === "Charging" || (p.ac_online === true && p.battery_status !== "Full");
@@ -1071,8 +1036,7 @@ function renderClock() {
     const hh = String(Math.floor(t / 3600)).padStart(2, "0"), mm = String(Math.floor(t / 60) % 60).padStart(2, "0");
     $("clock").textContent = `${hh}:${mm}`;
 }
-// kioskd's clock, not the browser's: WebKit keeps the time zone it started
-// with, so a zone changed in Settings would show up only after a restart.
+// kioskd's clock, not the browser's: WebKit keeps its startup time zone.
 function setClock(time) {
     const m = /(\d\d):(\d\d):(\d\d)$/.exec(time || "");
     if (!m) return;
@@ -1097,8 +1061,7 @@ function renderBar(i) {
     renderNetbar();
 }
 
-// Network, while connected: Wi-Fi signal + name, or Ethernet. While the
-// kiosk waits for its HMI: what it waits for -- the network, or the HMI.
+// Wi-Fi signal + name or Ethernet; while waiting for the HMI, what it waits for.
 let barNet = null;
 function renderNetbar() {
     const n = barNet, nb = $("netbar");
@@ -1146,27 +1109,25 @@ function renderTz(region) {
             `<option value="${esc(z)}"${z === chosen ? " selected" : ""}>${esc(tzSplit(z)[1].replace(/_/g, " ").replace(/\//g, " / "))}</option>`).join("");
 }
 
-// Short labels: the legend is one line under the bar.
+// Short labels: the legend is one line.
 const BOOT_PHASES = {
     firmware: ["UEFI", "#6e7681"], loader: ["GRUB", "#d29922"], kernel: ["Kernel", "#db6d28"],
     initrd: ["initramfs", "#a371f7"], userspace: ["Services", "#2f81f7"], hmi: ["HMI", "#3fb950"],
 };
-// Non-breaking space: "13.3 s" never splits across lines (legend, timeline).
+// Non-breaking space: "13.3 s" never wraps.
 const secs = (v, d = 1) => v.toLocaleString(LOCALE(), { minimumFractionDigits: d, maximumFractionDigits: d }) + " s";
 
 let bootLoaded = false;
 async function loadBoot() {
-    // First load reads this boot's journal -- seconds on the Atom: a spinner,
-    // like the update check. Later ones come from kioskd's cache.
+    // First load reads the journal (slow): spinner. Later ones hit kioskd's cache.
     if (!bootLoaded) setStatus("boot-st", "busy", ICONS.busy, "Loading boot time…", "Reading this boot's journal");
     let b;
     try { b = await api("/boot"); bootLoaded = true; }
     catch (e) { setStatus("boot-st", "err", ICONS.err, "No boot data", e.message); return; }
     const ph = Object.fromEntries((b.phases || []).map(p => [p.name, p.sec]));
-    const before = (ph.firmware || 0) + (ph.loader || 0);   // before the kernel's clock starts
+    const before = (ph.firmware || 0) + (ph.loader || 0);   // UEFI + GRUB
     const kernelToDone = (ph.kernel || 0) + (ph.initrd || 0) + (ph.userspace || 0);
-    // Bar: the phases systemd measured, then whatever the HMI took after
-    // graphical.target (first paint is reported by kiosk-shell).
+    // systemd's phases, then the HMI's first paint (kiosk-shell) after them.
     const segs = Object.keys(BOOT_PHASES).filter(k => ph[k] != null).map(k => [k, ph[k]]);
     if (b.hmi_shown != null && b.hmi_shown > kernelToDone) segs.push(["hmi", b.hmi_shown - kernelToDone]);
     const total = segs.reduce((a, [, v]) => a + v, 0);
@@ -1186,7 +1147,6 @@ async function loadBoot() {
     $("boot-legend").innerHTML = segs.map(([k, v]) =>
         `<span><i style="background:${BOOT_PHASES[k][1]}"></i>${esc(BOOT_PHASES[k][0])} <b>${secs(v)}</b></span>`).join("");
 
-    // Timeline (seconds since the kernel started) and the slowest units.
     const marks = [...(b.milestones || [])];
     if (b.hmi_shown != null) marks.push({ t: b.hmi_shown, label: "HMI visible", hmi: true });
     marks.sort((x, y) => x.t - y.t);
@@ -1199,8 +1159,7 @@ async function loadBoot() {
         `<li class="${u.phase}"><span class="d">${secs(u.dur)}</span><span class="u">${esc(u.unit)}</span>` +
         `<span class="badge${u.phase === "initrd" ? " new" : ""}">${u.phase === "initrd" ? "initramfs" : `@${secs(u.start)}`}</span>` +
         `<span class="meter"><i style="width:${(u.dur / max * 100).toFixed(1)}%"></i></span></li>`).join("");
-    // Critical chains: what local-fs and the kiosk waited for, step by step.
-    // A step starting long after the one it waited for is the gap's cause.
+    // Critical chains: what local-fs and the kiosk waited for.
     $("boot-chains").innerHTML = (b.chains || []).filter(c => c.steps && c.steps.length).map(c =>
         `<h3>What the boot waited for: ${esc(c.title)}</h3><ul class="chain">` +
         c.steps.map((s, i) =>
@@ -1219,8 +1178,7 @@ async function loadBoot() {
 }
 
 function initSystem() {
-    // "Update" checks first (kioskd's upgrade job runs the check), then
-    // downloads only if there's still something newer.
+    // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
     $("chan").addEventListener("click", e => {
@@ -1235,7 +1193,7 @@ function initSystem() {
     holdButton($("sys-switch"), () => api("/system/switch", { image: $("sys-image").value.trim() })
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
-    // A job: bootc rollback, then the restart (kioskd), steps in the card.
+    // A kioskd job: bootc rollback, then restart.
     holdButton($("sys-rollback"), () => api("/system/rollback", {})
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
@@ -1243,13 +1201,12 @@ function initSystem() {
         .catch(e => toast(e.message, true));
     holdButton($("sys-reboot-now"), power("reboot"));
     holdButton($("pw-reboot"), power("reboot"));
-    // kioskd restarts the kiosk a second later: it comes up like a new one.
+    // kioskd restarts the kiosk a second later, as freshly installed.
     holdButton($("pw-reset"), () => api("/settings/reset", {})
         .then(() => toast("Resetting everything — the kiosk restarts like after installation"))
         .catch(e => toast(e.message, true)));
     holdButton($("pw-off"), power("poweroff"));
 
-    // Held, like the image switch next to it.
     holdButton($("sys-repo-save"), () => api("/config", { releases_repo: $("sys-repo").value })
         .then(c => {
             cfg = c;
@@ -1261,7 +1218,7 @@ function initSystem() {
         })
         .catch(e => toast(e.message, true)));
 
-    // Language: kioskd keeps it; the page reloads in it (i18n.js translates).
+    // Saved in kioskd; i18n.use reloads the page in it.
     seg($("lang"), cfg.language || "en", v => {
         if (v === (cfg.language || "en")) return;
         saveCfg({ language: v }).then(c => i18n.use(c.language)).catch(e => toast(e.message, true));
@@ -1287,9 +1244,8 @@ function initSystem() {
         }).catch(err => { toast(err.message, true); renderTz(); });
     });
 
-    // The top bar's clock ticks locally; kioskd's events bring everything else.
+    // Ticked locally: the bar clock and a running step's time.
     setInterval(renderClock, 1000);
-    // So does a running update step's time.
     setInterval(() => {
         if (sysJob && sysJob.state === "running") {
             renderSteps(sysJob.kind === "rollback" ? null : sysJob, $("job-steps"));
@@ -1298,10 +1254,8 @@ function initSystem() {
     }, 1000);
 }
 
-/* Live updates, the page's only way of hearing about changes: kioskd says
-   what changed (GET /api/events, Server-Sent Events) and handlers[topic]
-   reloads that part. EventSource reconnects by itself (kioskd restarted);
-   what changed meanwhile is caught up with onReconnect. */
+/* Live updates via SSE (/api/events): kioskd names changed topics and
+   handlers[topic] reloads that part. onReconnect catches up after a drop. */
 function listen(handlers, onReconnect) {
     let opened = false;
     const es = new EventSource("/api/events");
@@ -1316,8 +1270,7 @@ function listen(handlers, onReconnect) {
     });
 }
 
-// Settings: the top bar always, a tab's contents while it's open; nothing
-// under the HMI (kioskShown reloads on the way back) but a job's progress.
+// Under the HMI only job progress updates; kioskShown reloads on return.
 function initEvents() {
     const vis = fn => () => { if (settingsVisible) fn(); };
     const net = () => {
@@ -1348,7 +1301,7 @@ async function initSettings() {
     initWifi();
     initScreen();
     initSystem();
-    refreshDevice();  // the top bar's battery and clock right away
+    refreshDevice();
     initEvents();
     if (location.hash === "#recovery") openRecovery(); else showTab("hmi");
 }
@@ -1422,9 +1375,8 @@ async function initInstaller() {
         loadInstaller();
     });
     await loadInstaller();
-    // Page reloaded mid-install (kiosk-shell restarted): pick the job back up.
+    // Resume a job already running (page reloaded mid-install).
     followJob(renderInstallJob);
-    // Disks come and go (USB), the charger too: kioskd's events, no polling.
     const refresh = () => { if (!$("inst-choose").hidden) loadInstaller(); };
     listen({ disks: refresh, power: refresh, job: () => jobTick?.() }, () => { refresh(); jobTick?.(); });
 }

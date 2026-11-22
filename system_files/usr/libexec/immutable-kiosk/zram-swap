@@ -1,6 +1,5 @@
 #!/bin/sh
-# immutable-kiosk-zram.service: zram swap of half the RAM, zstd, priority 100
-# (zram-generator's settings here before).
+# immutable-kiosk-zram.service: zram swap of half the RAM, zstd, priority 100.
 set -eu
 modprobe zram
 mem_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)

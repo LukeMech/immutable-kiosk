@@ -1,5 +1,4 @@
-# Automatic rollback: a trial boot of a new version that never brings the
-# kiosk up reboots after 10 min, so the try counts (see boot-counter).
+# Automatic rollback: reboot a trial boot whose kiosk isn't up in 10 min.
 [Unit]
 Description=immutable-kiosk: reboot a new version that never comes up
 ConditionPathExists=!/run/initramfs/live

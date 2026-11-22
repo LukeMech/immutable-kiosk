@@ -1,23 +1,13 @@
 #!/usr/bin/python3 -IS
 """kiosk-splash -- the start-up screen in cage, up within a fraction of a second.
 
-cage clears the screen the moment it takes it over from the boot splash,
-and kiosk-shell (Python + GTK + WebKit) needs seconds on an Atom before its
-first frame. This client is first on screen instead (kiosk-session starts
-it right before kiosk-shell): the boot splash's animation, "embers",
-carried on. It starts from the picture the boot splash froze on at the
-hand-over -- its embers forming the word WAIT --, holds it a moment, then
-lets the word break up back into the fire. kiosk-shell's window stays
-see-through over it until the first page is rendered, then ends it
-(SIGTERM).
+kiosk-shell needs seconds before its first frame; meanwhile this continues
+the boot splash's "embers" animation from its frozen WAIT frame. kiosk-shell
+SIGTERMs it once its first page is rendered.
 
-The Wayland protocol by hand, standard library only (no pywayland, no GTK:
-importing those would cost the time this is here to hide): wl_shm buffers,
-an xdg_toplevel cage shows fullscreen, frame callbacks for the animation.
-The fire is drawn at a third of the screen's size and scaled up by cage
-(wp_viewporter): pure Python can add up ~170 glows that size every frame,
-and a fire takes the softness well. The embers' parameters and shapes come
-from build_files/16-plymouth-images.py, as the boot splash's script did.
+Raw Wayland, stdlib only (toolkit imports would cost the time this hides).
+Drawn at 1/Q size and scaled up by cage (wp_viewporter) so pure Python keeps
+up. Ember data comes from build_files/16-plymouth-images.py.
 """
 
 import json
@@ -32,7 +22,7 @@ import time
 
 DATA = "/usr/share/immutable-kiosk/splash-embers.json"
 TICK = 50                                 # the fire's clock: plymouth's refresh rate
-# The cycle, in ticks -- the boot splash's own (16-plymouth-images.py):
+# The boot splash's cycle, in ticks:
 FIRE, GATHER, HOLD, SCATTER = 250, 75, 25, 75   # 5 s fire, 1.5 s to the word, 0.5 s, 1.5 s
 CYCLE = FIRE + GATHER + HOLD + SCATTER
 BED_HANDOVER = 0.18                       # the bed's brightness under the word
@@ -59,8 +49,7 @@ class Fire:
         self.bw, self.bh = -(-w // q), -(-h // q)
         self.embers = data["embers"]
         colors, sizes = data["colors"], data["sizes"]
-        # Glows, small: (dx, dy, r, g, b) contributions -- the boot splash's
-        # glow shape (soft edge, hot centre), premultiplied, added up.
+        # Glow sprites: premultiplied (dx, dy, b, g, r), soft edge, hot centre.
         self.sprites = {}
         for c, (r, g, b) in enumerate(colors):
             for s, n in enumerate(sizes):
@@ -76,8 +65,7 @@ class Fire:
                             pts.append((x - lo // 2, y - lo // 2,
                                         (b + (255 - b) * hot) * a, (g + (255 - g) * hot) * a, (r + (255 - r) * hot) * a))
                 self.sprites[c, s] = pts
-        # The bed along the bottom: whole frames of black + bed at a few
-        # brightnesses -- picking one is the frame's starting point.
+        # Pre-rendered base frames: black + bed at BED_STEPS brightnesses.
         bd = data["bed"]
         bh = max(1, round(bd["screen_h"] / q))
         top = self.bh - bh
@@ -106,9 +94,7 @@ class Fire:
 
     def at(self, em, t, c, alive=0.0):
         """An ember at tick t, c ticks into the cycle: (x, y, brightness).
-        The cycle (the boot splash's too): fire, the word gathering, the
-        word, the word breaking up. Each ember flies on its own: a late
-        start (dl), a path bent through (kx, ky)."""
+        Each ember has its own delay (dl) and path bend (kx, ky)."""
         w, h = self.w, self.h
         fx, fy, fb = self.fire_at(em, t)
         if c < FIRE:
@@ -148,13 +134,10 @@ class Fire:
         return BED_HANDOVER + (f - BED_HANDOVER) * (c - FIRE - GATHER - HOLD) / SCATTER
 
     def frame(self, el):
-        """The frame `el` seconds after the start. The cycle starts at the
-        word -- the boot splash froze on it --, which then breaks up into
-        the fire, gathers again every while, and so on."""
+        """The frame `el` seconds in; starts at the word, as the boot splash ended."""
         t = el * TICK
         c = (t + FIRE + GATHER) % CYCLE
-        # The word is alive while it waits: each ember wobbles and twinkles
-        # a little -- from nothing, so the first frame is the boot splash's.
+        # The word wobbles a little, eased in so frame 1 matches the boot splash.
         alive = min(1.0, el / 0.4)
         return self.compose([self.at(em, t, c, alive) for em in self.embers], self.bed_at(t, c))
 
@@ -344,7 +327,7 @@ class Splash:
         self.req(self.xdg_surface, 4, "u", serial)   # ack_configure
         w, h = self.pending or (0, 0)
         if w <= 0 or h <= 0:
-            # No size from cage (yet): the output's, turned as it is.
+            # No size from cage yet: the output's, rotated.
             w, h = self.output_size or (1280, 800)
             if self.output_transform in (1, 3, 5, 7):
                 w, h = h, w
@@ -376,7 +359,7 @@ class Splash:
             self.mm.close()
             os.close(self.fd)
         self.width, self.height = w, h
-        # Without wp_viewporter there's no scaling: full size, slowly.
+        # Without wp_viewporter: full size, slowly.
         self.fire = Fire(self.data, w, h, Q if self.viewport else 1)
         bw, bh = self.fire.bw, self.fire.bh
         if self.viewport:
@@ -462,7 +445,7 @@ def main():
     try:
         Splash().run()
     except (OSError, ValueError, RuntimeError, KeyError, ConnectionError) as e:
-        # Never worth more than a log line: kiosk-shell comes up regardless.
+        # Non-fatal: kiosk-shell comes up regardless.
         log(e)
         sys.exit(1)
 

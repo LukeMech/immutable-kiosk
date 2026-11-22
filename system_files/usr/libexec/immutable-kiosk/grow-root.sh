@@ -1,23 +1,12 @@
 #!/bin/bash
-#
-# Grows root (and its btrfs fs) to fill the disk -- the disk image the
-# installer writes is smaller than any real eMMC, so a fresh install has
-# something to grow. Taken verbatim from immutable-sbc.
-#
-# Targets /var, not / -- confirmed / isn't a direct mount here (composefs+overlay root,
-# resize fails "not a btrfs filesystem"); /var is the real mount (also /sysroot, /etc).
-#
-# Safe to run again: growpart's "NOCHANGE" exit isn't an error here, and
-# `btrfs filesystem resize max` is a no-op once already maxed. Runs until it
-# has succeeded once, then the stamp below keeps the unit from starting.
+# Grows the root partition and its btrfs to fill the disk (the installed image
+# is smaller than the eMMC). Idempotent. Uses /var: / is composefs+overlay.
 
 set -euo pipefail
 
-# /var is a bind mount -- findmnt reports its SOURCE as "device[/subpath]" (confirmed),
-# and lsblk rejects that ("not a block device"); strip it to get the plain path.
+# Strip findmnt's "[/subpath]" suffix, which lsblk rejects.
 ROOT_SOURCE=$(findmnt -no SOURCE /var | sed -E 's/\[.*\]$//')
-# -r (raw): lsblk's default output right-pads numeric fields (PARTN came
-# back " 4", not "4") -- the leading space broke growpart's number check.
+# -r: the default output pads numbers (" 4"), which growpart rejects.
 ROOT_DISK="/dev/$(lsblk -rno PKNAME "${ROOT_SOURCE}")"
 ROOT_PART_NUM=$(lsblk -rno PARTN "${ROOT_SOURCE}")
 
@@ -26,8 +15,7 @@ if [[ -z "${ROOT_DISK}" || "${ROOT_DISK}" == "/dev/" || -z "${ROOT_PART_NUM}" ]]
     exit 1
 fi
 
-# growpart also exits nonzero for real errors (e.g. a prior "partition-number must be
-# a number" bug here) -- only a NOCHANGE exit is benign.
+# Only a NOCHANGE failure is benign.
 GROWPART_OUTPUT=$(growpart "${ROOT_DISK}" "${ROOT_PART_NUM}" 2>&1) || {
     if [[ "${GROWPART_OUTPUT}" == NOCHANGE:* ]]; then
         echo "note: growpart made no change to ${ROOT_DISK}${ROOT_PART_NUM} -- already at max size" >&2

@@ -1,7 +1,6 @@
 #!/bin/bash
-# update-ca-trust, but only when the trust sources (the image's and local
-# ones) differ from the last run. ostree normalizes /usr mtimes, so this
-# compares contents. See immutable-kiosk-ca-trust.service.
+# update-ca-trust only if the trust sources' contents changed (ostree
+# normalizes /usr mtimes). See immutable-kiosk-ca-trust.service.
 set -euo pipefail
 
 STAMP=/var/lib/immutable-kiosk/ca-trust.sha256

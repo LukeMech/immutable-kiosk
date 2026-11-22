@@ -1,8 +1,6 @@
 [Unit]
 Description=immutable-kiosk settings API (kioskd, localhost only)
-# Not after NetworkManager either: it took 1.8 s to start, and the kiosk
-# (after kioskd) waited for that. kioskd's nmcli calls work as soon as it
-# runs, and its events bring NetworkManager's state when it does.
+# Not After=: ordering on NetworkManager delays the kiosk; kioskd copes.
 Wants=NetworkManager.service
 
 [Service]

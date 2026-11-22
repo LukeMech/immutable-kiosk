@@ -1,25 +1,15 @@
-/* i18n.js -- Settings and the installer in English (the default) or Polish.
- *
- * The page is written in English. In any other language every text node
- * and the placeholder / title / aria-label attributes are translated as
- * they appear -- a MutationObserver over the whole document -- from that
- * language's dictionary, lang/<code>.js: EXACT (whole strings, trimmed) and
- * PATTERNS (anchored regular expressions for strings with values in them:
- * the first that matches wins, its $1, $2... carry the values over).
- * kioskd's messages (errors, job titles and steps, boot timeline labels)
- * reach the page as English text and are translated the same way. Anything
- * not listed stays English: add it to the dictionary. English itself has
- * no dictionary: nothing to translate.
- *
- * The language is kioskd's config "language" (app.js calls i18n.use with
- * it); the last one is remembered in localStorage, so the page doesn't
- * flash in English before the config arrives.
+/* i18n.js -- the page is written in English; other languages translate it
+ * live from lang/<code>.js. A MutationObserver translates every text node and
+ * placeholder / title / aria-label as it appears (kioskd's English messages
+ * included): EXACT (whole trimmed strings), then PATTERNS (anchored regexes,
+ * first match wins). Unlisted text stays English.
+ * The language comes from kioskd's config (app.js calls i18n.use) and is
+ * cached in localStorage so the page doesn't flash English first.
  */
 (function () {
     "use strict";
 
-    // The dictionaries (lang/<code>.js, loaded before this file): each is a
-    // function of `tr`, for patterns that translate a value inside them.
+    // lang/<code>.js (loaded first): each gets `tr` for nested values.
     const DICTS = {};
     for (const [code, make] of Object.entries(window.I18N_LANGS || {})) DICTS[code] = make(tr);
     const ATTRS = ["placeholder", "title", "aria-label"];
@@ -97,8 +87,7 @@
     window.i18n = {
         get lang() { return lang; },
         tr,
-        // The language kioskd has: a different one than the page started
-        // with reloads the page in it.
+        // kioskd's language; reloads the page if it differs.
         use(l) {
             l = l || "en";
             try { localStorage.setItem("ik-lang", l); } catch (_) { /* no storage */ }

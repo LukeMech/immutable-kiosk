@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- Deliberately no <meta name="viewport">: with one, WebKit on the touch
-     tablet lays the page out at the panel's native 800 px in landscape and
-     stretches it. Without it the page uses the window's real size. -->
+<!-- No viewport meta on purpose: with one, WebKit lays out at the panel's
+     native 800 px and stretches it. -->
 <title>Settings</title>
 <link rel="stylesheet" href="app.css">
 </head>
@@ -91,13 +90,13 @@
       </div>
     </section>
 
-    <!-- NETWORK: the IP address of what is connected first, then Wi-Fi -->
+    <!-- NETWORK: IP cards first, then Wi-Fi -->
     <section id="tab-net" class="tab" hidden>
       <div id="net-list"></div>
       <div class="card">
         <div class="card-head">
           <h2>Wi-Fi</h2>
-          <!-- Hidden until /api/wifi answers: unchecked-by-default read as "off". -->
+          <!-- Hidden until /api/wifi answers, so it never shows a false "off". -->
           <label class="switch inline" id="wifi-radio-box" hidden><input type="checkbox" id="wifi-radio"><span>On</span></label>
         </div>
         <div class="status" id="wifi-st">
@@ -154,8 +153,7 @@
           <button data-v="270">270°</button>
         </div>
         <p class="hint" id="rot-hint"></p>
-        <!-- The boot splash follows the rotation (kioskd rewrites a kernel
-             argument): while that's being written, and when it's done. -->
+        <!-- Boot splash rotation status (kioskd rewrites a kernel argument). -->
         <div class="status" id="splash-st" hidden>
           <div class="status-icon" id="splash-st-icon"></div>
           <div class="status-text">
@@ -193,7 +191,6 @@
 
     <!-- SYSTEM -->
     <section id="tab-system" class="tab" hidden>
-      <!-- System: what runs, its updates, a custom image. -->
       <div class="card">
         <h2>System</h2>
         <dl class="kv" id="sys-info"></dl>
@@ -206,7 +203,7 @@
               <div class="status-sub" id="upd-sub"></div>
             </div>
           </div>
-          <!-- While an update / channel switch runs (or after it failed): its steps. -->
+          <!-- Steps of a running or failed update / channel switch. -->
           <ol class="steps" id="job-steps" hidden></ol>
           <div class="actions upd-actions">
             <button class="btn primary" id="sys-upgrade" disabled>Update</button>
@@ -229,7 +226,6 @@
         <div class="sep">
           <h3>Custom system image</h3>
           <p class="hint">Only images signed with the ghcr.io/lukemech key.</p>
-          <!-- One under the other, each with its hold-to-apply button. -->
           <label for="sys-image">Image</label>
           <div class="inline">
             <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
@@ -242,7 +238,6 @@
           </div>
         </div>
       </div>
-      <!-- Language and region: what the kiosk speaks, its clock, its name. -->
       <div class="card">
         <h2>Language and region</h2>
         <dl class="kv">
@@ -268,7 +263,6 @@
           </dd>
         </dl>
       </div>
-      <!-- Device: the tablet itself and how long it took to start. -->
       <div class="card">
         <h2>Device</h2>
         <dl class="kv" id="dev-info">
@@ -289,7 +283,6 @@
           <div class="bootbar" id="boot-bar"></div>
           <div class="legend" id="boot-legend"></div>
           <p class="msg warn" id="boot-failed" hidden></p>
-          <!-- Everything under the bar: folded until asked for. -->
           <details class="log" id="boot-more" hidden>
             <summary>Boot details</summary>
             <h3>Boot timeline (seconds since kernel start)</h3>
@@ -300,7 +293,7 @@
           </details>
         </div>
       </div>
-      <!-- Recovery: undoing things, held longer (3 s) than power (1.5 s). -->
+      <!-- Recovery: held longer (3 s) than power (1.5 s). -->
       <div class="card" id="recovery-card">
         <h2>Recovery</h2>
         <div class="status" id="rb-st">

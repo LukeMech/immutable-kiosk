@@ -1,6 +1,5 @@
-/* immutable-kiosk Settings / Installer -- touch first: every target >= 56px,
-   nothing that needs hover, no text selection. Dark, low-glare palette for a
-   panel that's on all day. */
+/* Settings / Installer: touch-first (targets >= 56px, no hover, no text
+   selection), dark low-glare palette. */
 :root {
     --bg: #10151c;
     --card: #18202a;
@@ -52,8 +51,7 @@ input { -webkit-user-select: text; user-select: text; }
 .tabs button.on { background: var(--card); color: var(--text); box-shadow: inset 0 -3px 0 var(--accent); }
 
 main { padding: 16px; padding-bottom: 32px; max-width: 900px; margin: 0 auto; }
-/* Room to scroll a field above the on-screen keyboard -- only while it's up
-   (osk.js announces it), not as a permanent half-empty page. */
+/* Room to scroll fields above the OSK, only while it's up (osk.js event). */
 body.osk-open main { padding-bottom: 50vh; }
 
 .card {
@@ -94,7 +92,7 @@ div.inline { margin-top: 6px; }
 .btn.big { width: 100%; min-height: 76px; font-size: 21px; }
 .btn:active { filter: brightness(1.25); }
 .btn[disabled] { opacity: .45; pointer-events: none; }
-/* Hold-to-confirm: the fill grows while the finger stays down. */
+/* Hold-to-confirm fill. */
 .btn.hold::before {
     content: ""; position: absolute; inset: 0; width: 0; background: rgba(255,255,255,.22);
 }
@@ -145,7 +143,7 @@ div.inline { margin-top: 6px; }
 .list .item.open::after { transform: rotate(90deg); }
 .list .expand { padding: 0 4px 16px 62px; }
 .list .empty { color: var(--muted); padding: 14px 4px; }
-/* Small round icon at the start of a list row (same family as .status-icon). */
+/* Round icon at the start of a list row. */
 .ico {
     flex: none; width: 44px; height: 44px; border-radius: 50%;
     display: grid; place-items: center; background: #273241; color: var(--text);
@@ -161,7 +159,7 @@ div.inline { margin-top: 6px; }
 .bootbar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--field); margin-top: 16px; }
 .bootbar > i { display: block; height: 100%; min-width: 3px; }
 .bootbar > i + i { border-left: 2px solid var(--card); }
-/* One line under the bar: short labels, wraps only on a really narrow screen. */
+/* Legend: one line, wraps only on very narrow screens. */
 .legend { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; margin-top: 10px; font-size: 14px; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .legend b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -201,19 +199,15 @@ div.inline { margin-top: 6px; }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .kv dd .sub { display: block; color: var(--muted); font-size: 14px; margin-top: 6px; }
 .kv dt:has(+ dd.inline), .kv dt:has(+ dd > .inline) { align-self: center; }
-/* A label centred on the buttons next to it (Language): the row is as tall
-   as the buttons, without .seg's top margin pushing them below the label. */
+/* Label centred on its buttons (Language), without .seg's top margin. */
 .kv dt.mid { align-self: center; }
 .kv dt.mid + dd > .seg { margin-top: 0; }
 
-/* Status line, the same on every tab: round icon (colour = state) + one line
-   of what's going on + one of detail, optionally a small action on the right.
-   States: ok / ready (green), new (blue), warn (amber), err (red),
-   busy (spinning), off (grey, dimmed). */
+/* Status line: round icon (colour = state), title, detail, optional action.
+   States: ok/ready, new, warn, err, busy (spinning), off (dimmed). */
 .status { display: flex; gap: 14px; align-items: center; }
 .status + * { margin-top: 14px; }
-/* Room between a card's blocks: a line or a status under a row of buttons,
-   a slider or a stepper -- they sat right against them. */
+/* Spacing below button rows, sliders and steppers. */
 .seg + .hint, .stepper + .hint, .slider + .hint, .swatches + .hint,
 .seg + div > .hint:first-child { margin-top: 12px; }
 * + .status { margin-top: 16px; }
@@ -235,10 +229,10 @@ div.inline { margin-top: 6px; }
 .status.busy .status-icon svg { animation: spin 1s linear infinite; }
 .status.off .status-title { color: var(--muted); }
 .status.ready { background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.35); border-radius: 12px; padding: 14px; }
-/* Card title with something on its right (a switch). */
+/* Card title with a control on its right. */
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .card-head h2 { margin: 0; }
-/* A quieter sub-heading inside a card (like "Co nowego"). */
+/* Quieter sub-heading inside a card. */
 .card h3 { margin: 18px 0 2px; font-size: 16px; color: var(--muted); font-weight: 600; }
 .sep { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 4px; }
 .actions .btn.icon, .btn.icon { flex: 0 0 64px; width: 64px; padding: 0; }
@@ -247,7 +241,7 @@ div.inline { margin-top: 6px; }
 .btn.icon.spin svg { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Release notes ("Co nowego") from the GitHub release bodies. */
+/* Release notes from GitHub release bodies. */
 .notes { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
 .notes h3 { margin: 0 0 2px; }
 .rel summary { min-height: 52px; display: flex; align-items: center; gap: 12px; list-style: none; }
@@ -276,8 +270,7 @@ div.inline { margin-top: 6px; }
 
 .job { margin-top: 10px; }
 
-/* An update's steps, a chain like the boot card's: done ones with how long
-   they took, the active one with its bar, the rest still to come. */
+/* Job steps: done (with duration), active (with bar), pending. */
 .steps { list-style: none; margin: 16px 0 0; padding: 0; }
 .steps li { display: grid; grid-template-columns: 30px 1fr; column-gap: 12px; position: relative; padding-bottom: 14px; }
 .steps li:last-child { padding-bottom: 0; }
@@ -332,7 +325,7 @@ div.inline { margin-top: 6px; }
 .stepper .btn { width: 72px; font-size: 28px; }
 .stepper span { min-width: 90px; text-align: center; font-size: 24px; font-weight: 600; }
 
-/* "Details": a small secondary button with a chevron, not grey text. */
+/* "Details" toggle as a small secondary button. */
 .log { margin-top: 14px; }
 .log summary {
     display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 18px;
@@ -359,14 +352,14 @@ div.inline { margin-top: 6px; }
     .grid2 { grid-template-columns: 1fr; }
 }
 
-/* Arrived via the recovery corner: the card lights up for a moment. */
+/* Recovery card highlight after the recovery corner. */
 .card.flash { animation: flash 2.6s ease-out; }
 @keyframes flash {
     0%, 45% { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
     100% { border-color: var(--line); box-shadow: none; }
 }
 
-/* Settings' bar: the network it's on, next to battery and clock. */
+/* Top bar: current network. */
 .netbar { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 220px; }
 .netbar svg { flex: none; width: 22px; height: 22px; color: var(--ok); }
 .netbar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -374,7 +367,7 @@ div.inline { margin-top: 6px; }
 .netbar.waiting svg { color: var(--warn); animation: spin 1s linear infinite; }
 @media (max-width: 720px) { .netbar span { display: none; } }
 
-/* Display > Accent color: one round swatch per colour, the chosen one ringed. */
+/* Accent colour swatches; the chosen one ringed. */
 .swatches { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
 .swatches button {
     all: unset; box-sizing: border-box; width: 56px; height: 56px; border-radius: 50%;
@@ -385,10 +378,10 @@ div.inline { margin-top: 6px; }
 .swatches button.on { box-shadow: 0 0 0 3px var(--card), 0 0 0 6px var(--sw); }
 .swatches button.on svg { opacity: 1; }
 
-/* A switch waiting for its change to take effect (Wi-Fi radio). */
+/* Switch waiting for its change (Wi-Fi radio). */
 .switch input:disabled { opacity: .5; }
 
-/* Boot timing: critical chains -- what a step waited for, nested. */
+/* Boot timing: critical chains, nested. */
 .chain { list-style: none; margin: 6px 0 0; padding: 0; font-size: 14px; }
 .chain li { display: grid; grid-template-columns: 64px 1fr auto; gap: 8px; align-items: baseline; padding: 3px 0; }
 .chain .t { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }

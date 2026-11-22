@@ -1,11 +1,7 @@
 #%PAM-1.0
-# immutable-kiosk-cage.service (PAMName=immutable-kiosk): the session stack
-# of /etc/pam.d/login -- logind session, SELinux context, limits -- without
-# pam_nologin. pam_nologin refuses non-root sessions while /run/nologin
-# exists, and systemd-user-sessions removes that only after network.target:
-# with "login" the kiosk waited for the network before it could start.
-# A systemd unit never authenticates (no password, no TTY prompt); auth
-# and password are denied outright.
+# For immutable-kiosk-cage.service: login's session stack without pam_nologin,
+# which would hold the kiosk until /run/nologin goes (after network.target).
+# Never authenticates: auth and password are denied.
 auth       required     pam_deny.so
 account    include      system-auth
 password   required     pam_deny.so

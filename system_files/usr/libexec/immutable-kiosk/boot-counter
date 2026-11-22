@@ -1,29 +1,14 @@
 #!/usr/bin/python3
 """boot-counter -- automatic rollback when a new version doesn't come up.
 
-Same idea as greenboot on Fedora IoT, cut down to what a kiosk needs:
+  setup     (boot) write custom.cfg: each boot spends a kiosk_tries; at 0
+            GRUB boots the previous deployment once, kiosk_fallback=1
+  arm       (shutdown) next boot is a new deployment -> kiosk_tries=3
+  watchdog  (boot) reboot a trial boot not OK within WATCHDOG_S
+  ok        (kioskd, first page rendered) clear tries; after a fallback,
+            make the running deployment the default (bootc rollback)
 
-  shutdown  `arm`:   the next boot is a different deployment (a staged
-                     update or a queued rollback) -> grubenv kiosk_tries=3.
-  GRUB      custom.cfg (written by `setup`): every boot with kiosk_tries
-                     set spends one (3 -> 2 -> 1 -> 0); found at 0, it boots
-                     the previous deployment (menu entry 1) once and sets
-                     kiosk_fallback=1.
-  boot      `watchdog`: a trial boot (kiosk_tries set) that hasn't reported
-                     OK within WATCHDOG_S reboots -- a hung boot spends its
-                     tries too. (Kernel panics and a broken initramfs reboot
-                     by themselves: panic=10, rd.emergency=reboot.)
-  kiosk     `ok`:    called by kioskd when kiosk-shell rendered its first
-                     page. Clears kiosk_tries. After a fallback it also makes
-                     the running (previous) deployment the default again
-                     (bootc rollback) and leaves a note for Settings.
-
-The GRUB side lives in /boot/grub2/custom.cfg, which bootupd's static
-grub.cfg sources after the boot entries (41_custom.cfg) -- written at
-runtime, so devices installed before this existed get it too. The same
-file hides the GRUB menu (see GRUB_CFG).
-
-Python stdlib only.
+custom.cfg is sourced by bootupd's static grub.cfg (41_custom.cfg).
 """
 
 import json
@@ -109,8 +94,7 @@ def env_bytes(env):
 
 
 def write_in_place(path, data):
-    """GRUB's save_env rewrites grubenv's blocks where they are: keep the
-    file and its blocks, overwrite the contents, fsync."""
+    """Overwrite in place (GRUB's save_env needs grubenv's blocks unmoved), fsync."""
     if path.exists() and path.stat().st_size == len(data):
         with open(path, "r+b") as f:
             f.write(data)
@@ -131,9 +115,7 @@ def write_in_place(path, data):
 
 
 def write_boot_file(path, data):
-    """Write a file under /boot. bootc may mount /boot read-only: then do it
-    in a private mount namespace where /boot is remounted read-write (what
-    ostree itself does), leaving everyone else's view alone."""
+    """Write under /boot; if read-only, remount it rw in a private mount namespace."""
     if path.exists() and path.read_bytes() == data:
         return
     try:
@@ -197,7 +179,7 @@ def cmd_arm():
     log(f"next boot is {version(nxt) or 'a new deployment'}"
         f" ({'staged update' if staged else 'queued rollback'}): {TRIES} tries")
     save_env(kiosk_tries=str(TRIES), kiosk_fallback="")
-    FALLBACK_NOTE.unlink(missing_ok=True)  # a new attempt; the old note is history
+    FALLBACK_NOTE.unlink(missing_ok=True)  # a new attempt
     return 0
 
 
@@ -226,9 +208,7 @@ def cmd_ok():
     env = read_env()
     result = {"ok": True, "fallback": False}
     if env.get("kiosk_fallback") == "1":
-        # Booted the previous deployment because the new one never came up.
-        # GRUB did that for this one boot only: make it the default (bootc
-        # rollback swaps the order when the booted one isn't the default).
+        # GRUB fell back for this boot only: make the booted deployment the default.
         st = bootc_status() or {}
         failed, running = version(st.get("rollback")), version(st.get("booted"))
         if st.get("rollbackQueued"):
@@ -253,8 +233,7 @@ def cmd_write(path):
 
 
 def cmd_write_boot(path):
-    """`write-boot FILE`: stdin into a file under /boot, read-only /boot or
-    not (kioskd: the boot entries' kernel arguments)."""
+    """`write-boot FILE`: stdin into FILE under /boot (kioskd: kernel arguments)."""
     p = Path(path).resolve()
     if BOOT not in p.parents:
         print(f"not under {BOOT}: {p}", file=sys.stderr)

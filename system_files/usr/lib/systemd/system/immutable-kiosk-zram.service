@@ -1,8 +1,5 @@
-# Compressed swap in RAM (zram) -- what zram-generator used to set up, but
-# not as a swap.target member: every tmpfs mount is ordered after
-# swap.target, /run/user/<uid> included, so the kiosk's login session (and
-# with it the screen, black after the boot splash) waited for the zram
-# device. Here the swap comes up alongside the boot and nothing waits for it.
+# Not via zram-generator/swap.target: all tmpfs mounts (incl. /run/user/<uid>)
+# order after swap.target, which would delay the kiosk session.
 [Unit]
 Description=Compressed swap in RAM (zram)
 ConditionPathExists=!/dev/zram0

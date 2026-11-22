@@ -1,12 +1,7 @@
-/* lang/pl.js -- Settings and the installer in Polish: the dictionary
- * i18n.js translates the English page with (see there for how).
- *
- * EXACT: whole strings (trimmed). PATTERNS: anchored regular expressions,
- * the first that matches wins; the replacement is a string ($1, $2... for
- * the values) or a function, which gets `tr` -- the engine's own translate
- * -- for values that are English themselves (job titles, corner names...).
- * A new language: another file like this one, registered the same way, and
- * a <script> tag for it in index.html before i18n.js.
+/* Polish dictionary for i18n.js. EXACT: whole trimmed strings. PATTERNS:
+ * anchored regexes, first match wins; replacement is a string ($1...) or a
+ * function that can call `tr` on values that are English themselves.
+ * New language: a file like this plus a <script> before i18n.js in index.html.
  */
 window.I18N_LANGS = window.I18N_LANGS || {};
 window.I18N_LANGS.pl = function (tr) {
@@ -14,7 +9,7 @@ window.I18N_LANGS.pl = function (tr) {
     const PL = { EXACT: {}, PATTERNS: [] };
 
     Object.assign(PL.EXACT, {
-        // ---- release notes (GitHub writes them in English): headings and table headers
+        // ---- release notes: headings and table headers
         "Package changes": "Zmiany pakietów",
         "Updated": "Zaktualizowane",
         "Added": "Dodane",
@@ -469,7 +464,7 @@ window.I18N_LANGS.pl = function (tr) {
         [/^(.+): the HMI isn't answering yet, the kiosk will switch to it by itself$/,
             "$1: HMI jeszcze nie odpowiada, kiosk przełączy się na nie samo"],
 
-        // ---- Power (battery tooltip): "charger connected · battery 72% (charging)"
+        // ---- Power (battery tooltip)
         [new RegExp(`^(?:charger connected|on battery|${BATT})(?: · ${BATT})?$`),
             s => s.split(" · ").map(powerPart).join(" · ")],
 
