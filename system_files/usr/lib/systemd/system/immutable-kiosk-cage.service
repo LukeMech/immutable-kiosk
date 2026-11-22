@@ -1,10 +1,15 @@
 # cage on tty1 as the kiosk user, started by systemd directly -- no display
 # manager, no greeter. Follows cage's own wiki ("Starting Cage on boot with
-# systemd"): PAMName=login gives the logind session that lets an unprivileged
-# user open the DRM and input devices on seat0.
+# systemd"): a PAM session gives the logind session that lets an
+# unprivileged user open the DRM and input devices on seat0.
+#
+# Not after systemd-user-sessions: that one waits for network.target (and
+# with it Wi-Fi), so the kiosk did too. Its PAM stack (immutable-kiosk) has
+# no pam_nologin, the only thing systemd-user-sessions unlocks. No network
+# at start: kiosk-shell shows Settings and switches to the HMI when it loads.
 [Unit]
 Description=Kiosk (cage + kiosk-shell) on tty1
-After=systemd-user-sessions.service dbus.socket systemd-logind.service immutable-kiosk-backend.service
+After=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 # The boot splash hands the screen over to cage the way display managers do
 # it: plymouth-quit (the generic "stop the splash" at multi-user) is replaced
@@ -30,7 +35,7 @@ ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do ls /dev/dri/card* >/dev/null 2>
 # Splash off, last frame kept, DRM master released for cage. "+": as root
 # (the rest of the unit runs as kiosk); "-": no splash running is fine.
 ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
-PAMName=login
+PAMName=immutable-kiosk
 Environment=XDG_SESSION_TYPE=wayland
 # -d: no client-side decorations. kiosk-session: the last rotation, then
 # kiosk-splash (on screen at once) and kiosk-shell over it -- cage's black
