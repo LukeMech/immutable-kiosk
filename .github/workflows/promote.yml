@@ -136,8 +136,12 @@ jobs:
           if [[ "${NEW}" != "${TAG}" ]]; then
             git push origin ":refs/tags/${TAG}"
             if [[ "${MEDIA}" == "true" ]]; then
-              gh release view "${NEW}" --json assets --jq '.assets[].name' | grep -F -- "-${TAG}." |
-                while IFS= read -r ASSET; do gh release delete-asset "${NEW}" "${ASSET}" --yes; done
+              ASSETS=$(gh release view "${NEW}" --json assets --jq '.assets[].name')
+              while IFS= read -r ASSET; do
+                if [[ "${ASSET}" == *"-${TAG}."* ]]; then
+                  gh release delete-asset "${NEW}" "${ASSET}" --yes
+                fi
+              done <<< "${ASSETS}"
             fi
           fi
           echo "Released as ${NEW}"
