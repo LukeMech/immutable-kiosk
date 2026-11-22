@@ -11,8 +11,7 @@ dnf install -y \
     realtek-firmware \
     brcmfmac-firmware \
     intel-gpu-firmware \
-    thermald \
-    iio-sensor-proxy
+    thermald
 
 # thermald keeps a fanless Atom from throttling itself into lag (or worse)
 # when the panel sits in a warm cabinet.

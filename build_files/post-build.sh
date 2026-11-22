@@ -54,20 +54,59 @@ remove_if_installed \
 # shellcheck disable=SC2046
 remove_if_installed $(rpm -qa --qf '%{NAME}\n' 'qemu-user-static*')
 
-# sos: the support-report collector for Red Hat cases. (os-prober stays:
-# 0.1 MB, never run -- bootupd's static grub.cfg doesn't use grub2-mkconfig --
-# but grub2-tools hard-requires it, and `rpm -e --nodeps` would leave a broken
-# dependency for every later dnf here and in derived images.)
-remove_if_installed sos
+# Everything else fedora-bootc carries that nothing on a kiosk uses (~79 MB).
+# Picked from the packages nothing requires (20261122-778b844 image), and
+# checked with `dnf remove --assumeno`: these go alone, nothing else with
+# them; autoremove below then takes what only they needed.
+#   - filesystems the kiosk never creates or mounts (root btrfs, /boot ext4,
+#     ESP vfat): xfs, f2fs, nilfs, udf, ntfs, exfat tools, quota;
+#   - LVM, kpartx, udisks2 (disabled already), sg3_utils: one eMMC, btrfs;
+#   - admin/shell comfort on a box nobody logs into: man, bash-completion,
+#     lsof, net-tools, bind-utils, tc, socat, 7zip, unzip, wcurl, vim-data,
+#     nano-as-default-editor, gawk's translations, mkpasswd;
+#   - SSH server and client (sshd was disabled: no passwords, no keys),
+#     avahi (disabled), the directory-service sssd backends and adcli (local
+#     users only), cracklib's 9 MB dictionary (no password changes);
+#   - kdump, memstrack, stalld, criu (podman checkpoints), passim/libxmlb/
+#     fwupd-efi (fwupd is gone), flatpak's session helper, debuginfod;
+#   - cloud/VM/console bits: NetworkManager-cloud-setup and -tui, Azure's
+#     udev rules, console-login-helper-messages, iptables-services, the
+#     nfs-client metapackage, clevis-dracut;
+#   - modem libraries (no WWAN), the NPU firmware, iio-sensor-proxy (rotation
+#     is set in Settings), openssl's CLI, python libraries only the removed
+#     tools used (dnf's own Python bindings among them -- dnf stays),
+#     rpm-ostree's leftover libraries, sos.
+# sudo stays: dnf protects it. os-prober stays: 0.1 MB and never run, but
+# grub2-tools hard-requires it -- `rpm -e --nodeps` would leave a broken
+# dependency for every later dnf here and in derived images.
+remove_if_installed \
+    sos xfsprogs f2fs-tools nilfs-utils udftools ntfsprogs ntfs-3g \
+    ntfs-3g-system-compression exfatprogs quota \
+    lvm2 kpartx udisks2 sg3_utils \
+    man-db bash-completion lsof net-tools bind-utils iproute-tc socat 7zip \
+    unzip wcurl vim-data nano-default-editor gawk-all-langpacks mkpasswd \
+    openssh-server openssh-clients avahi sssd-ipa sssd-ad sssd-ldap sssd-krb5 \
+    adcli cracklib-dicts \
+    kdump-utils memstrack stalld criu-libs passim libxmlb fwupd-efi \
+    flatpak-session-helper elfutils-debuginfod-client \
+    NetworkManager-cloud-setup NetworkManager-tui WALinuxAgent-udev \
+    console-login-helper-messages-profile console-login-helper-messages-issuegen \
+    iptables-services nfs-client-utils clevis-dracut \
+    libqmi ModemManager-glib intel-npu-firmware iio-sensor-proxy openssl \
+    python3-libdnf5 python3-dateutil python3-requests python3-jmespath \
+    python3-urllib3+socks python3-file-magic python3-html2text \
+    rpm-ostree-libs polkit-pkla-compat
 
 dnf -y autoremove
 dnf -y clean all
 
 # dnf remove also removes whatever depends on what's removed: make sure
 # nothing the kiosk needs went with it.
-for pkg in bootc ostree skopeo podman kernel-core NetworkManager NetworkManager-wifi \
+for pkg in bootc bootupd ostree skopeo podman kernel-core NetworkManager NetworkManager-wifi \
     cage wlr-randr python3 python3-gobject gtk4 webkitgtk6.0 mesa-dri-drivers \
-    shim-ia32 grub2-efi-ia32 btrfs-progs cloud-utils-growpart zstd; do
+    shim-ia32 grub2-efi-ia32 grub2-tools efibootmgr btrfs-progs e2fsprogs dosfstools gdisk \
+    cloud-utils-growpart zstd plymouth plymouth-plugin-script policycoreutils \
+    chrony zram-generator; do
     rpm -q "${pkg}" >/dev/null || { echo "error: ${pkg} was removed" >&2; exit 1; }
 done
 

@@ -76,11 +76,6 @@ for unit in sssd.service lvm2-monitor.service lvm-devices-import.path \
         systemctl disable "${unit}" || true
     fi
 done
-# udev starts iio-sensor-proxy as soon as it sees the tablet's accelerometer
-# (~1 s at boot); the screen's rotation is set in Settings, never automatic.
-if [[ -f /usr/lib/systemd/system/iio-sensor-proxy.service ]]; then
-    systemctl mask iio-sensor-proxy.service
-fi
 
 # Generators run on every boot before systemd starts a single unit (and
 # again after switch-root): on the Atom, between switch-root at 7.0 s and
