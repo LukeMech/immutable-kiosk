@@ -42,7 +42,7 @@ cat > /etc/plymouth/plymouthd.conf <<'EOF'
 Theme=immutable-kiosk
 ShowDelay=0
 DeviceTimeout=15
-UseSimpledrm=1
+UseSimpledrm=0
 EOF
 
 # Ours is the only theme, besides Plymouth's text fallbacks.

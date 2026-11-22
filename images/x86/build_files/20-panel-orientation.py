@@ -6,10 +6,6 @@ Plymouth (the boot splash) and the kernel console rotate by.
 The image is per variant, not per device: two devices disagreeing about the
 same connector fail the build. A connector a device doesn't have is ignored
 by the kernel, so devices with other panels are unaffected.
-
-simpledrm (the firmware's framebuffer, before the GPU driver is up) has one
-connector, "Unknown-1": it gets the orientation too when all devices agree,
-so the splash shows upright from the start of the initramfs.
 """
 
 import tomllib
@@ -33,8 +29,6 @@ for key, dev in devices.items():
         raise SystemExit(f"devices.toml: {conn} is {args[conn]} on one device and {orient} on [{key}]")
     args[conn] = orient
 
-if len(set(args.values())) == 1:
-    args["Unknown-1"] = next(iter(args.values()))
 kargs = ", ".join(f'"video={c}:panel_orientation={o}"' for c, o in sorted(args.items()))
 with open(OUT, "w") as f:
     f.write("# Generated from devices.toml by images/x86/build_files/20-panel-orientation.py.\n")

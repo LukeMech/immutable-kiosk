@@ -1815,11 +1815,8 @@ def set_splash_orientation(output, transform):
     orientation = PANEL_ORIENTATIONS.get(transform)
     if not orientation or not re.fullmatch(r"[A-Za-z]+-[A-Za-z0-9-]+", output or ""):
         return
-    # The panel's connector, and simpledrm's ("Unknown-1": the firmware's
-    # framebuffer, which the splash uses until i915 is up).
-    prefixes = tuple(f"video={c}:panel_orientation=" for c in (output, "Unknown-1"))
-    wants = [p + orientation for p in prefixes]
-    want = wants[0]
+    prefix = f"video={output}:panel_orientation="
+    want = prefix + orientation
     with _splash_lock:
         present = set()
         for entry in BLS_ENTRIES.glob("*.conf"):
@@ -1829,8 +1826,8 @@ def set_splash_orientation(output, transform):
                 continue
             for line in lines:
                 if line.startswith("options "):
-                    present.update(a for a in line.split()[1:] if a.startswith(prefixes))
-        if present == set(wants):
+                    present.update(a for a in line.split()[1:] if a.startswith(prefix))
+        if present == {want}:
             return
         splash_state(state="working", orientation=orientation, error=None)
         try:
@@ -1839,7 +1836,7 @@ def set_splash_orientation(output, transform):
                 lines = []
                 for line in text.splitlines():
                     if line.startswith("options "):
-                        args = [a for a in line.split()[1:] if not a.startswith(prefixes)] + wants
+                        args = [a for a in line.split()[1:] if not a.startswith(prefix)] + [want]
                         line = "options " + " ".join(args)
                     lines.append(line)
                 new = "\n".join(lines) + "\n"
@@ -1971,7 +1968,6 @@ def set_splash_look(what=""):
                     boot.append((entry.resolve(), new.encode()))
             if not (stale or etc_new or boot):
                 cleanup_overlays()
-                grub_splash(d, cfg, accent)
                 return
             # Shown in Settings (accent or language card), as the rotation is.
             splash_state(look={"state": "working", "what": what, "error": None})
@@ -1991,117 +1987,9 @@ def set_splash_look(what=""):
             print(f"kioskd: boot screen look: accent {accent}, language {cfg.get('language')} "
                   f"({len(etc_new) + len(stale)} in {overrides}, {len(boot)} on /boot)", flush=True)
             splash_state(look={"state": "done", "what": what, "error": None})
-            grub_splash(d, cfg, accent)
         except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot screen look: {e}", flush=True)
             splash_state(look={"state": "failed", "what": what, "error": str(e)})
-
-
-GRUB_SPLASH = Path("/boot/grub2/immutable-kiosk-splash.png")
-
-
-def boot_orientation():
-    """(output, panel orientation) from the boot entries' video= argument."""
-    for entry in sorted(BLS_ENTRIES.glob("*.conf")):
-        for line in entry.read_text().splitlines():
-            if line.startswith("options "):
-                for a in line.split()[1:]:
-                    m = re.fullmatch(r"video=([A-Za-z]+-[A-Za-z0-9-]+):panel_orientation=([a-z_]+)", a)
-                    if m and m.group(1) != "Unknown-1":   # simpledrm's: the same orientation
-                        return m.group(1), m.group(2)
-    return None, "normal"
-
-
-def native_size(output):
-    """The built-in panel's native mode (sysfs lists the preferred one first)."""
-    globs = ([f"card*-{output}/modes"] if output else []) + ["card*-DSI-*/modes", "card*-eDP-*/modes",
-                                                            "card*-LVDS-*/modes"]
-    for pattern in globs:
-        for f in sorted(Path("/sys/class/drm").glob(pattern)):
-            try:
-                m = re.fullmatch(r"(\d+)x(\d+)", f.read_text().split("\n", 1)[0].strip())
-            except OSError:
-                continue
-            if m:
-                return int(m.group(1)), int(m.group(2))
-    return None
-
-
-def grub_splash(d, cfg, accent):
-    """The boot screen's first frame for GRUB (custom.cfg, boot-counter): up
-    from GRUB on, kept into the kernel until plymouth (which needs i915, ~7 s
-    in) draws the same over it. Drawn in the panel's native orientation, as
-    the framebuffer is -- turned by the boot entries' panel orientation --, in
-    Settings' accent and language."""
-    try:
-        output, orientation = boot_orientation()
-        native = native_size(output)
-        if not native:
-            return
-        nw, nh = native
-        turned = orientation in ("left_side_up", "right_side_up")
-        W, H = (nh, nw) if turned else (nw, nh)
-        b = d["bar"]
-        cap, bh = b["cap"], b["h"]
-        bw = int(min(W * b["frac"], b["max"]) / 2) * 2
-        bx, by = (W - bw) // 2, H // 2 - bh // 2
-        lab = d["first"].get(cfg.get("language")) or d["first"]["en"]
-        lx, ly = (W - lab["w"]) // 2, by + bh + b["gap"]
-        track, text, fill = d["track"], d["text"], d["accents"][accent]
-        buf = bytearray(nw * nh * 3)
-
-        def put(x, y, rgb):
-            # Logical (as plymouth draws it) to the panel's own pixel.
-            if orientation == "left_side_up":
-                x, y = y, W - 1 - x
-            elif orientation == "right_side_up":
-                x, y = H - 1 - y, x
-            elif orientation == "upside_down":
-                x, y = W - 1 - x, H - 1 - y
-            if 0 <= x < nw and 0 <= y < nh:
-                o = (y * nw + x) * 3
-                buf[o:o + 3] = bytes(rgb)
-
-        def mix(fg, a, bg):
-            a /= 255
-            return [round(fg[i] * a + bg[i] * (1 - a)) for i in range(3)]
-
-        black = (0, 0, 0)
-        cap_l, cap_r = base64.b64decode(d["cap_l"]), base64.b64decode(d["cap_r"])
-        for y in range(bh):
-            for x in range(bw):
-                if x < cap:                       # the fill's start over the track's
-                    a = cap_l[y * cap + x]
-                    col = mix(fill, a, mix(track, a, black))
-                elif x < 2 * cap:
-                    col = mix(fill, cap_r[y * cap + x - cap], track)
-                elif x >= bw - cap:
-                    col = mix(track, cap_r[y * cap + x - (bw - cap)], black)
-                else:
-                    col = track
-                put(bx + x, by + y, col)
-        cov = base64.b64decode(lab["a"])
-        for y in range(lab["h"]):
-            for x in range(lab["w"]):
-                a = cov[y * lab["w"] + x]
-                if a:
-                    put(lx + x, ly + y, mix(text, a, black))
-
-        def chunk(tag, data):
-            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-        row = nw * 3
-        raw = b"".join(b"\0" + bytes(buf[y * row:(y + 1) * row]) for y in range(nh))
-        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", nw, nh, 8, 2, 0, 0, 0))
-               + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
-        if GRUB_SPLASH.exists() and GRUB_SPLASH.read_bytes() == png:
-            return
-        p = subprocess.run([BOOT_COUNTER, "write-boot", str(GRUB_SPLASH)], input=png, capture_output=True,
-                           timeout=60)
-        if p.returncode != 0:
-            raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
-        print(f"kioskd: GRUB's boot screen picture: {nw}x{nh}, {orientation}", flush=True)
-    except (ApiError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
-        print(f"kioskd: GRUB's boot screen picture: {e}", flush=True)
 
 
 def r_splash(body, q):

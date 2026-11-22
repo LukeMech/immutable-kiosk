@@ -42,18 +42,6 @@ GRUB_CFG = f"""\
 set timeout_style=hidden
 set timeout=1
 
-# The boot screen from GRUB on: kioskd's picture of its first frame (in the
-# panel's orientation, Settings' accent and language), kept into the kernel
-# (gfxpayload=keep) until plymouth draws the same over it.
-if [ -f "${{config_directory}}/immutable-kiosk-splash.png" ]; then
-  if insmod gfxterm; then
-    insmod png
-    set gfxpayload=keep
-    terminal_output gfxterm
-    background_image -m stretch "${{config_directory}}/immutable-kiosk-splash.png"
-  fi
-fi
-
 # Automatic rollback: kiosk_tries is set to {TRIES} at shutdown when the next
 # boot is a new deployment; every boot spends one, the kiosk's first page
 # clears it. Spent without the kiosk coming up: the previous deployment
