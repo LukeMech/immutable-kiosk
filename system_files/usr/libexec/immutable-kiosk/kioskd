@@ -51,6 +51,9 @@ DEFAULT_CONFIG = {
     "hmi": {"scheme": "https", "host": "", "port": 1020, "path": "/"},
     # None = this device model's default (default_rotation()).
     "rotation": None,
+    # The built-in panel's mode, "WxH" or "WxH@R" (wlr-randr --mode); None =
+    # the panel's preferred one.
+    "resolution": None,
     # Our on-screen keyboard injected into the HMI page as well (TwinCAT HMI's
     # login page has no keyboard of its own).
     "osk_in_hmi": True,
@@ -242,6 +245,11 @@ def save_config(update):
         if r is not None and r not in ROTATIONS:
             raise ApiError("Niepoprawna orientacja")
         cfg["rotation"] = r
+    if "resolution" in update:
+        r = update["resolution"]
+        if r is not None and not re.fullmatch(r"\d{3,5}x\d{3,5}(@\d{1,3}(\.\d{1,3})?)?", str(r)):
+            raise ApiError("Niepoprawna rozdzielczość")
+        cfg["resolution"] = r
     for key in ("osk_in_hmi", "accept_self_signed"):
         if key in update:
             cfg[key] = bool(update[key])
@@ -1850,6 +1858,23 @@ def r_splash(body, q):
     return SPLASH_STATE
 
 
+# What kiosk-shell sees of the screen (its window's scale and size, cage's
+# outputs): Ekran shows it, for when the picture is the wrong size.
+DISPLAY_INFO = {}
+
+
+def r_display_set(body, q):
+    DISPLAY_INFO.clear()
+    DISPLAY_INFO.update({k: body.get(k) for k in ("gtk_scale", "window", "outputs")})
+    DISPLAY_INFO["time"] = time.time()
+    EVENTS.emit("display")
+    return {"ok": True}
+
+
+def r_display_get(body, q):
+    return DISPLAY_INFO
+
+
 def touchscreens_present():
     for ev in Path("/sys/class/input").glob("event*"):
         props = subprocess.run(["udevadm", "info", "-q", "property", str(ev)],
@@ -2117,6 +2142,8 @@ ROUTES = {
     ("POST", "/api/settings/reset"): r_settings_reset,
     ("GET", "/api/job"): r_job,
     ("GET", "/api/splash"): r_splash,
+    ("GET", "/api/display"): r_display_get,
+    ("POST", "/api/display"): r_display_set,
     ("GET", "/api/installer"): r_installer,
     ("POST", "/api/installer/start"): r_installer_start,
 }

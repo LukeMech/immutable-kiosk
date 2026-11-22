@@ -546,9 +546,37 @@ async function loadSplash() {
         st.error || "");
 }
 
+// What kiosk-shell reports of the screen: cage's outputs (mode, rotation,
+// scale) and GTK's window -- for a picture of the wrong size or rotation.
+async function loadDisplay() {
+    let d;
+    try { d = await api("/display"); } catch (_) { return; }
+    if (!d || !d.outputs) { $("disp-info").textContent = ""; return; }
+    const outs = d.outputs.map(o => `${o.name} ${o.mode[0]}×${o.mode[1]}, obrót ${o.transform}, skala ${o.scale}`);
+    $("disp-info").textContent = `Wyświetlacz: ${outs.join("; ") || "brak wyjść"} · okno ${d.window[0]}×${d.window[1]}` +
+        `, skala GTK ${d.gtk_scale}`;
+    // Rozdzielczość: the built-in panel's modes (the first output: kiosk-shell
+    // lists the panel first), "WxH@R" when one size comes in several rates.
+    const panel = d.outputs[0], modes = (panel && panel.modes) || [];
+    $("res-card").hidden = !modes.length;
+    if (!modes.length) return;
+    const many = (m) => modes.filter(x => x.w === m.w && x.h === m.h).length > 1;
+    const key = m => `${m.w}x${m.h}` + (many(m) ? `@${m.refresh}` : "");
+    const seen = new Set(), opts = [["", "Domyślna"]];
+    for (const m of modes) {
+        const k = key(m);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        opts.push([k, `${m.w}×${m.h}` + (many(m) ? ` ${Math.round(m.refresh)} Hz` : "") + (m.preferred ? " ★" : "")]);
+    }
+    $("res").innerHTML = opts.map(([v, l]) => `<button data-v="${esc(v)}">${esc(l)}</button>`).join("");
+    seg($("res"), cfg.resolution || "", v => saveCfg({ resolution: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
+}
+
 function loadScreen() {
     renderAccent();
     loadSplash();
+    loadDisplay();
     const names = { portrait: "pion", landscape: "poziom", normal: "0°", 90: "90°", 180: "180°", 270: "270°" };
     seg($("rot"), cfg.rotation || "", v => saveCfg({ rotation: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
     $("rot-hint").textContent = `Teraz: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
@@ -1299,6 +1327,7 @@ function initEvents() {
     listen({
         net: vis(net), power: vis(refreshDevice), clock: vis(refreshDevice), device: vis(refreshDevice),
         splash: vis(() => { if (currentTab === "screen") loadSplash(); }),
+        display: vis(() => { if (currentTab === "screen") loadDisplay(); }),
         config: vis(config),
         boot: vis(() => { if (currentTab === "system") loadBoot(); }),
         system: vis(system),

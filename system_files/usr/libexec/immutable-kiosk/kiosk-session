@@ -10,9 +10,15 @@
 #      splash and ends it once the first page is rendered.
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/immutable-kiosk"
 if [ -r "$CACHE/outputs" ]; then
-    while read -r name transform; do
-        [ -n "$name" ] && [ -n "$transform" ] &&
-            wlr-randr --output "$name" --transform "$transform" --scale 1 2>/dev/null
+    while read -r name transform res; do
+        [ -n "$name" ] && [ -n "$transform" ] || continue
+        case "$res" in
+            ""|preferred) mode="--preferred" ;;
+            *@*) mode="--mode ${res}Hz" ;;
+            *) mode="--mode $res" ;;
+        esac
+        # shellcheck disable=SC2086
+        wlr-randr --output "$name" $mode --transform "$transform" --scale 1 2>/dev/null
     done < "$CACHE/outputs"
 fi
 /usr/libexec/immutable-kiosk/kiosk-splash &
