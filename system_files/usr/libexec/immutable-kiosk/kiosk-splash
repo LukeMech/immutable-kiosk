@@ -3,21 +3,25 @@
 
 cage clears the screen the moment it takes it over from the boot splash,
 and kiosk-shell (Python + GTK + WebKit) needs seconds on an Atom before its
-first frame: that used to be ~10 s of black. This client is first on screen
-instead (kiosk-session starts it right before kiosk-shell): the boot
-splash's animation, "orbit", carried on. It wakes up from the dimmed rest
-pose the boot splash settled into at the hand-over (out of black, then
-brightening), then loops. kiosk-shell's window stays see-through over it
-until the first page is rendered, then ends it (SIGTERM).
+first frame. This client is first on screen instead (kiosk-session starts
+it right before kiosk-shell): the boot splash's animation, "embers",
+carried on. It starts from the picture the boot splash froze on at the
+hand-over -- its embers forming the word WAIT --, holds it a moment, then
+lets the word break up back into the fire. kiosk-shell's window stays
+see-through over it until the first page is rendered, then ends it
+(SIGTERM).
 
 The Wayland protocol by hand, standard library only (no pywayland, no GTK:
 importing those would cost the time this is here to hide): wl_shm buffers,
 an xdg_toplevel cage shows fullscreen, frame callbacks for the animation.
-The frames come pre-drawn (build_files/16-plymouth-images.py, from the same
-shapes as the boot splash's images): one row copy per line, no drawing. The rotation is cage's: kiosk-session
-applies the last one before this starts.
+The fire is drawn at a third of the screen's size and scaled up by cage
+(wp_viewporter): pure Python can add up ~170 glows that size every frame,
+and a fire takes the softness well. The embers' parameters and shapes come
+from build_files/16-plymouth-images.py, as the boot splash's script did.
 """
 
+import json
+import math
 import mmap
 import os
 import signal
@@ -25,11 +29,15 @@ import socket
 import struct
 import sys
 import time
-import zlib
 
-FRAMES = "/usr/share/immutable-kiosk/splash-orbit.bin"
-BG = bytes((0, 0, 0, 0xff))               # black, as the boot splash
-INTRO_FPS = 50                            # the intro frames' rate
+DATA = "/usr/share/immutable-kiosk/splash-embers.json"
+TICK = 50                                 # the fire's clock: plymouth's refresh rate
+# The cycle, in ticks -- the boot splash's own (16-plymouth-images.py):
+FIRE, GATHER, HOLD, SCATTER = 250, 75, 25, 75   # 5 s fire, 1.5 s to the word, 0.5 s, 1.5 s
+CYCLE = FIRE + GATHER + HOLD + SCATTER
+BED_HANDOVER = 0.18                       # the bed's brightness under the word
+Q = 3                                     # drawn at 1/Q of the screen, scaled up by cage
+BED_STEPS = 16                            # pre-rendered bed brightnesses
 GIVE_UP_S = 180                           # kiosk-shell never ended it
 XRGB8888 = 1
 
@@ -43,17 +51,144 @@ def milestone(label):
     log("milestone:", f"kiosk-splash: {label}")
 
 
-def load_frames():
-    """(size, intro frames, loop frames, loop period in s, the frames)."""
-    with open(FRAMES, "rb") as f:
-        data = f.read()
-    if data[:4] != b"IKS2":
-        raise ValueError("not a splash-orbit file")
-    size, intro, loop, period_ms = struct.unpack_from("<HHHH", data, 4)
-    frames = zlib.decompress(data[12:])
-    if len(frames) != size * size * 4 * (intro + loop):
-        raise ValueError("truncated splash-orbit file")
-    return size, intro, loop, period_ms / 1000, frames
+class Fire:
+    """The picture at any moment, as an XRGB8888 frame of (w/Q) x (h/Q)."""
+
+    def __init__(self, data, w, h, q=Q):
+        self.w, self.h, self.q = w, h, q
+        self.bw, self.bh = -(-w // q), -(-h // q)
+        self.embers = data["embers"]
+        colors, sizes = data["colors"], data["sizes"]
+        # Glows, small: (dx, dy, r, g, b) contributions -- the boot splash's
+        # glow shape (soft edge, hot centre), premultiplied, added up.
+        self.sprites = {}
+        for c, (r, g, b) in enumerate(colors):
+            for s, n in enumerate(sizes):
+                lo = max(3, round(n / q) | 1)
+                m = (lo - 1) / 2
+                pts = []
+                for y in range(lo):
+                    for x in range(lo):
+                        d = math.hypot(x - m, y - m) / (m + 0.5)
+                        a = max(0.0, 1 - d) ** 2.0
+                        hot = max(0.0, 1 - d * 2.6) ** 2
+                        if a > 0.02:
+                            pts.append((x - lo // 2, y - lo // 2,
+                                        (b + (255 - b) * hot) * a, (g + (255 - g) * hot) * a, (r + (255 - r) * hot) * a))
+                self.sprites[c, s] = pts
+        # The bed along the bottom: whole frames of black + bed at a few
+        # brightnesses -- picking one is the frame's starting point.
+        bd = data["bed"]
+        bh = max(1, round(bd["screen_h"] / q))
+        top = self.bh - bh
+        r0, g0, b0 = colors[1]
+        rows = []
+        for y in range(bh):
+            v = y / max(1, bh - 1)
+            row = []
+            for x in range(self.bw):
+                u = x / max(1, self.bw - 1)
+                tongues = 0.55 + 0.25 * math.sin(u * 19.0) + 0.2 * math.sin(u * 7.3 + 1.1)
+                a = max(0.0, min(1.0, (v - (1 - 0.9 * tongues)) / (0.9 * tongues))) ** 1.6 * 0.85
+                row.append((b0 * a, g0 * (0.6 + 0.4 * (1 - v)) * a, r0 * a))
+            rows.append(row)
+        self.beds = []
+        for k in range(BED_STEPS + 1):
+            f = bytearray(bytes((0, 0, 0, 255)) * (self.bw * self.bh))
+            lv = k / BED_STEPS
+            for y, row in enumerate(rows):
+                o = (top + y) * self.bw * 4
+                for x, (bb, gg, rr) in enumerate(row):
+                    f[o + x * 4] = round(bb * lv)
+                    f[o + x * 4 + 1] = round(gg * lv)
+                    f[o + x * 4 + 2] = round(rr * lv)
+            self.beds.append(bytes(f))
+
+    def at(self, em, t, c, alive=0.0):
+        """An ember at tick t, c ticks into the cycle: (x, y, brightness).
+        The cycle (the boot splash's too): fire, the word gathering, the
+        word, the word breaking up. Each ember flies on its own: a late
+        start (dl), a path bent through (kx, ky)."""
+        w, h = self.w, self.h
+        fx, fy, fb = self.fire_at(em, t)
+        if c < FIRE:
+            return fx, fy, fb
+        wx = w / 2 + em["tx"] + alive * 1.6 * math.sin(t * em["fq"] * 3 + em["p2"])
+        wy = h / 2 + em["ty"] + alive * 1.6 * math.cos(t * em["fq"] * 2.3 + em["p2"])
+        wb = 1 - alive * 0.18 * (0.5 + 0.5 * math.sin(t * em["fq"] * 4 + em["p2"] * 2))
+        if c < FIRE + GATHER:
+            u = (c - FIRE) / GATHER
+            if not em["word"]:
+                return fx, fy, fb * (1 - u)
+            sx, sy, sb = self.fire_at(em, t - (c - FIRE))   # where it was as the gathering began
+            v = max(0.0, min(1.0, (u - em["dl"]) / (1 - em["dl"])))
+            e = 1 - (1 - v) ** 3
+            mx, my = (sx + wx) / 2 + em["kx"], (sy + wy) / 2 + em["ky"]
+            return ((1 - e) ** 2 * sx + 2 * (1 - e) * e * mx + e * e * wx,
+                    (1 - e) ** 2 * sy + 2 * (1 - e) * e * my + e * e * wy, sb + (wb - sb) * e)
+        if c < FIRE + GATHER + HOLD:
+            return (wx, wy, wb) if em["word"] else (0, 0, 0)
+        u = (c - FIRE - GATHER - HOLD) / SCATTER
+        if not em["word"]:
+            return fx, fy, fb * u
+        v = max(0.0, min(1.0, (u - em["dl"]) / (1 - em["dl"])))
+        e = v * v * (3 - 2 * v)
+        mx, my = (wx + fx) / 2 - em["kx"], (wy + fy) / 2 - em["ky"]
+        return ((1 - e) ** 2 * wx + 2 * (1 - e) * e * mx + e * e * fx,
+                (1 - e) ** 2 * wy + 2 * (1 - e) * e * my + e * e * fy, wb + (fb - wb) * e)
+
+    def bed_at(self, t, c):
+        f = self.flicker(t)
+        if c < FIRE:
+            return f
+        if c < FIRE + GATHER:
+            return f + (BED_HANDOVER - f) * (c - FIRE) / GATHER
+        if c < FIRE + GATHER + HOLD:
+            return BED_HANDOVER
+        return BED_HANDOVER + (f - BED_HANDOVER) * (c - FIRE - GATHER - HOLD) / SCATTER
+
+    def frame(self, el):
+        """The frame `el` seconds after the start. The cycle starts at the
+        word -- the boot splash froze on it --, which then breaks up into
+        the fire, gathers again every while, and so on."""
+        t = el * TICK
+        c = (t + FIRE + GATHER) % CYCLE
+        # The word is alive while it waits: each ember wobbles and twinkles
+        # a little -- from nothing, so the first frame is the boot splash's.
+        alive = min(1.0, el / 0.4)
+        return self.compose([self.at(em, t, c, alive) for em in self.embers], self.bed_at(t, c))
+
+    @staticmethod
+    def flicker(t):
+        """The bed's brightness at tick t (the boot splash's formula)."""
+        return 0.62 + 0.22 * math.sin(t * 0.131) + 0.12 * math.sin(t * 0.377 + 1.3)
+
+    def fire_at(self, em, t):
+        """An ember's place in the fire at tick t: x, y (screen px), brightness."""
+        q_ = t * em["sp"] + em["ph"]
+        p = q_ - math.floor(q_)
+        return (self.w * em["x0"] + em["amp"] * math.sin(t * em["fq"] + em["p2"]),
+                self.h * (1.08 - 1.16 * p), (1 - p) * (1 - p))
+
+    def compose(self, pos, bed):
+        """A frame from every ember's (x, y, brightness) and the bed's."""
+        q, bw, bh = self.q, self.bw, self.bh
+        buf = bytearray(self.beds[max(0, min(BED_STEPS, round(bed * BED_STEPS)))])
+        for em, (x, y, b) in zip(self.embers, pos):
+            if b < 0.03:
+                continue
+            xi, yi = int(x / q), int(y / q)
+            for dx, dy, cb, cg, cr in self.sprites[em["c"], em["s"]]:
+                X, Y = xi + dx, yi + dy
+                if 0 <= X < bw and 0 <= Y < bh:
+                    o = (Y * bw + X) * 4
+                    v = buf[o] + int(cb * b)
+                    buf[o] = v if v < 256 else 255
+                    v = buf[o + 1] + int(cg * b)
+                    buf[o + 1] = v if v < 256 else 255
+                    v = buf[o + 2] + int(cr * b)
+                    buf[o + 2] = v if v < 256 else 255
+        return buf
 
 
 def pack(fmt, args):
@@ -93,7 +228,8 @@ class Reader:
 
 class Splash:
     def __init__(self):
-        self.size, self.intro, self.loop, self.period, self.frames = load_frames()
+        with open(DATA) as f:
+            self.data = json.load(f)
         name = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
         path = name if name.startswith("/") else os.path.join(os.environ["XDG_RUNTIME_DIR"], name)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -109,9 +245,11 @@ class Splash:
         self.pending = None           # (width, height) from xdg_toplevel.configure
         self.buffers = []             # [id, busy]
         self.pool = self.fd = self.mm = None
+        self.fire = None
+        self.viewport = None
         self.cur = 0
         self.frame_cb = None
-        self.t0 = None  # the first frame drawn: the intro starts then
+        self.t0 = None                # the first frame drawn: the word starts then
 
     # -- wire
     def new(self, handler=None):
@@ -213,7 +351,7 @@ class Splash:
         if (w, h) != (self.width, self.height):
             first = not self.buffers
             self.make_buffers(w, h)
-            self.draw(full=True)
+            self.draw()
             if first:
                 milestone(f"first frame ({w}x{h})")
         self.flush()
@@ -238,60 +376,46 @@ class Splash:
             self.mm.close()
             os.close(self.fd)
         self.width, self.height = w, h
-        one = w * h * 4
+        # Without wp_viewporter there's no scaling: full size, slowly.
+        self.fire = Fire(self.data, w, h, Q if self.viewport else 1)
+        bw, bh = self.fire.bw, self.fire.bh
+        if self.viewport:
+            self.req(self.viewport, 2, "ii", w, h)   # wp_viewport.set_destination
+        one = bw * bh * 4
         self.fd = os.memfd_create("kiosk-splash", os.MFD_CLOEXEC)
         os.ftruncate(self.fd, 2 * one)
         self.mm = mmap.mmap(self.fd, 2 * one)
-        background = BG * (w * h)
-        self.mm[0:one] = background
-        self.mm[one:2 * one] = background
         self.pool = self.new()
         self.req(self.shm, 0, "ni", self.pool, 2 * one)  # create_pool (fd alongside)
         self.flush(fd=self.fd)
         self.buffers = []
         for idx in range(2):
             bid = self.new(self.on_buffer(idx))
-            self.req(self.pool, 0, "niiiiu", bid, idx * one, w, h, w * 4, XRGB8888)
+            self.req(self.pool, 0, "niiiiu", bid, idx * one, bw, bh, bw * 4, XRGB8888)
             self.buffers.append([bid, False])
 
-    def draw(self, full=False):
+    def draw(self):
         if not self.buffers:
             return
         idx = self.cur ^ 1
         if self.buffers[idx][1]:         # still the compositor's: try next frame
             idx = self.cur
-            if self.buffers[idx][1] and not full:
+            if self.buffers[idx][1]:
                 self.request_frame()
                 self.req(self.surface, 6)
                 return
-        s, w = self.size, self.width
         now = time.monotonic()
         if self.t0 is None:
             self.t0 = now
-        el = now - self.t0
-        if el < self.intro / INTRO_FPS:
-            k = int(el * INTRO_FPS)
-        else:
-            k = self.intro + int((el - self.intro / INTRO_FPS) / self.period * self.loop) % self.loop
-        x0, y0 = max(0, (w - s) // 2), max(0, (self.height - s) // 2)
-        base = idx * w * self.height * 4 + (y0 * w + x0) * 4
-        src = k * s * s * 4
-        row = min(s, w - x0) * 4
-        for y in range(min(s, self.height - y0)):
-            o = base + y * w * 4
-            self.mm[o:o + row] = self.frames[src + y * s * 4:src + y * s * 4 + row]
-        bid = self.buffers[idx][0]
-        self.req(self.surface, 1, "oii", bid, 0, 0)               # attach
-        if full:
-            self.req(self.surface, 2, "iiii", 0, 0, w, self.height)  # damage
-        elif self.compositor_version >= 4:
-            self.req(self.surface, 9, "iiii", x0, y0, s, s)       # damage_buffer
-        else:
-            self.req(self.surface, 2, "iiii", x0, y0, s, s)
+        frame = self.fire.frame(now - self.t0)
+        one = len(frame)
+        self.mm[idx * one:(idx + 1) * one] = frame
+        self.req(self.surface, 1, "oii", self.buffers[idx][0], 0, 0)           # attach
+        self.req(self.surface, 2, "iiii", 0, 0, self.width, self.height)       # damage (all)
         self.buffers[idx][1] = True
         self.cur = idx
         self.request_frame()
-        self.req(self.surface, 6)                                 # commit
+        self.req(self.surface, 6)                                             # commit
 
     def request_frame(self):
         if self.frame_cb is None:
@@ -309,8 +433,12 @@ class Splash:
         self.wm_base, _ = self.bind("xdg_wm_base", 1, self.on_wm_base)
         if "wl_output" in self.globals:
             self.bind("wl_output", 2, self.on_output)
+        viewporter = self.bind("wp_viewporter", 1)[0] if "wp_viewporter" in self.globals else None
         self.surface = self.new()
         self.req(self.compositor, 0, "n", self.surface)
+        if viewporter:
+            self.viewport = self.new()
+            self.req(viewporter, 1, "no", self.viewport, self.surface)   # get_viewport
         self.xdg_surface = self.new(self.on_xdg_surface)
         self.req(self.wm_base, 2, "no", self.xdg_surface, self.surface)
         self.toplevel = self.new(self.on_toplevel)
