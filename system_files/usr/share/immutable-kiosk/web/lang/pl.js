@@ -186,7 +186,6 @@ window.I18N_LANGS.pl = function (tr) {
         "Time zone": "Strefa czasowa",
         "City": "Miasto",
         "Host name": "Nazwa w sieci",
-        "Lowercase letters, digits and hyphens.": "Małe litery, cyfry i myślniki.",
         "— choose —": "— wybierz —",
         "Africa": "Afryka",
         "America": "Ameryka",
