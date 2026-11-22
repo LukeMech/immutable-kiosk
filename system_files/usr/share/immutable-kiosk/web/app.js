@@ -1035,6 +1035,15 @@ async function loadBoot() {
         `<li class="${u.phase}"><span class="d">${secs(u.dur)}</span><span class="u">${esc(u.unit)}</span>` +
         `<span class="badge${u.phase === "initrd" ? " new" : ""}">${u.phase === "initrd" ? "initramfs" : `@${secs(u.start)}`}</span>` +
         `<span class="meter"><i style="width:${(u.dur / max * 100).toFixed(1)}%"></i></span></li>`).join("");
+    // Critical chains: what local-fs and the kiosk waited for, step by step.
+    // A step starting long after the one it waited for is the gap's cause.
+    $("boot-chains").innerHTML = (b.chains || []).filter(c => c.steps && c.steps.length).map(c =>
+        `<h3>Na co czekał start: ${esc(c.title.toLowerCase())}</h3><ul class="chain">` +
+        c.steps.map((s, i) =>
+            `<li style="--d:${Math.min(i, 8)}"><span class="t">${s.at != null ? secs(s.at) : ""}</span>` +
+            `<span class="u">${esc(s.unit)}</span>` +
+            `<span class="d${s.took >= 1 ? " long" : ""}">${s.took != null ? "+" + secs(s.took) : ""}</span></li>`).join("") +
+        `</ul>`).join("");
     $("boot-more").hidden = !marks.length && !slow.length;
 
     const problems = [

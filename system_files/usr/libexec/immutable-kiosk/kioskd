@@ -963,6 +963,32 @@ def manager_phases():
     return phases
 
 
+CHAIN_LINE = re.compile(r"^[\s│└├─]*([^\s@]+)(?:\s+@(.+?))?(?:\s+\+(.+))?\s*$")
+
+
+def critical_chain(unit):
+    """What `unit` waited for, as systemd sees it -- each step [{unit, at,
+    took}] with `at` in seconds since the kernel started (systemd-analyze
+    counts from userspace start). Explains a gap where nothing runs long."""
+    try:
+        out = run(["systemd-analyze", "critical-chain", "--no-pager", unit], timeout=20)
+        base = int(run(["systemctl", "show", "-p", "UserspaceTimestampMonotonic", "--value"],
+                       timeout=10).strip() or 0) / 1e6
+    except (ApiError, ValueError):
+        return []
+    chain = []
+    for line in out.splitlines():
+        if not line.strip() or line.startswith("The time"):
+            continue
+        m = CHAIN_LINE.match(line)
+        if not m or "." not in m.group(1):
+            continue
+        name, at, took = m.groups()
+        chain.append({"unit": name, "at": base + parse_span(at) if at else None,
+                      "took": parse_span(took) if took else None})
+    return chain
+
+
 def boot_timing():
     if "done" in BOOT_CACHE:
         out = dict(BOOT_CACHE["done"])
@@ -983,6 +1009,12 @@ def boot_timing():
         # PID 1's own phases ranked among the units: what fills the gap
         # between switch-root and the first unit that starts.
         out["slowest"] = sorted(out.get("slowest", []) + manager_phases(), key=lambda u: -u["dur"])[:15]
+        # The two waits that matter: the real root's file systems (udev,
+        # /boot, everything before sysinit hangs on them) and the kiosk.
+        out["chains"] = [
+            {"title": "Do zamontowania systemów plików (local-fs)", "steps": critical_chain("local-fs.target")},
+            {"title": "Do startu kiosku (cage)", "steps": critical_chain(CAGE_UNIT)},
+        ]
         # Nothing about this boot changes once it has finished.
         if out.get("total") and "journal_error" not in out:
             BOOT_CACHE["done"] = dict(out)
