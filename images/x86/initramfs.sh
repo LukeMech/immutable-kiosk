@@ -209,6 +209,39 @@ fi
 # pattern like 'mpt.*' would otherwise glob against files in the cwd.
 EMPTY=$(mktemp -d)
 NOFW=$(mktemp -d)   # --fwdir: no firmware (see the top)
+
+# i915 off udev's coldplug, onto a unit of its own (initramfs only).
+# Loading the module -- ~4.7 MB unpacked from xz and linked, on an Atom --
+# takes ~2.5 s, and udev did it inside coldplug: dracut-initqueue's
+# `udevadm settle` waited for it, so the root (found at 6.3 s) was mounted
+# only at 9.6 s, after "GPU gotowe" at 8.9 s -- even with the probe itself
+# asynchronous (driver_async_probe=i915). Now:
+#   - "blacklist i915": udev's alias-driven modprobe skips it (a blacklist
+#     never stops an explicit `modprobe i915`);
+#   - i915-early.service: `modprobe i915` the moment the initramfs starts,
+#     beside everything else, waited for by nothing but sysroot's switch.
+# The real root has neither: there i915 is already loaded.
+TREE=$(mktemp -d)
+mkdir -p "${TREE}/etc/modprobe.d" "${TREE}/usr/lib/systemd/system/sysinit.target.wants"
+cat > "${TREE}/etc/modprobe.d/i915-initramfs.conf" <<'EOF'
+# immutable-kiosk initramfs: loaded by i915-early.service, not udev's coldplug.
+blacklist i915
+EOF
+cat > "${TREE}/usr/lib/systemd/system/i915-early.service" <<'EOF'
+[Unit]
+Description=Load i915 beside udev's coldplug (immutable-kiosk)
+DefaultDependencies=no
+ConditionPathExists=/etc/initrd-release
+# Done before the initramfs hands over (initrd-cleanup stops everything).
+Before=initrd-switch-root.target initrd-cleanup.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=modprobe i915
+EOF
+ln -s ../i915-early.service "${TREE}/usr/lib/systemd/system/sysinit.target.wants/i915-early.service"
+
 (cd "${EMPTY}" && DRACUT_NO_XATTR=1 dracut --force --reproducible --no-hostonly \
     --compress "zstd -19 -q -T0" \
     --no-early-microcode \
@@ -217,8 +250,10 @@ NOFW=$(mktemp -d)   # --fwdir: no firmware (see the top)
     --omit-drivers " ${OMIT_DRIVERS[*]} " \
     --add-drivers " i915 =drivers/pwm " \
     --install /usr/lib/modprobe.d/i915-backlight.conf \
+    --include "${TREE}" / \
     "${ADD[@]}" \
     "${IMG}" "${KVER}")
+rm -rf "${TREE}"
 rmdir "${EMPTY}" "${NOFW}"
 
 # Our early cpio: uncompressed, in front of the compressed main archive,
@@ -284,6 +319,10 @@ for k in i915 'pwm[-_]lpss[-_]platform'; do
 done
 grep -q 'usr/lib/modprobe.d/i915-backlight.conf' /tmp/initramfs-new.list ||
     { echo "error: i915-backlight.conf (PWM before i915) missing from the initramfs" >&2; exit 1; }
+for f in etc/modprobe.d/i915-initramfs.conf usr/lib/systemd/system/i915-early.service \
+    usr/lib/systemd/system/sysinit.target.wants/i915-early.service; do
+    grep -q "${f}" /tmp/initramfs-new.list || { echo "error: ${f} missing from the initramfs" >&2; exit 1; }
+done
 grep -qx plymouth <<<"${NEW_MODS}" || { echo "error: dracut's plymouth module is not in the initramfs" >&2; exit 1; }
 grep -q 'usr/share/plymouth/themes/immutable-kiosk/ring.png' /tmp/initramfs-new.list ||
     { echo "error: the immutable-kiosk Plymouth theme is not in the initramfs" >&2; exit 1; }
