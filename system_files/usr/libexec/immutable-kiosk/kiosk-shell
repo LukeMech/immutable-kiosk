@@ -79,14 +79,6 @@ WebKit = None  # load_webkit()
 API = "http://127.0.0.1:8088"
 SETTINGS_URL = f"{API}/"
 OSK_JS = Path("/usr/share/immutable-kiosk/web/osk.js")
-# Pages are laid out at the window's size: an HMI's <meta name="viewport">
-# is removed as soon as it appears.
-NO_VIEWPORT_JS = """(function () {
-    const drop = () => document.querySelectorAll('meta[name="viewport"]').forEach(m => m.remove());
-    new MutationObserver(drop).observe(document, { childList: true, subtree: true });
-    document.addEventListener("DOMContentLoaded", drop);
-    drop();
-})();"""
 DATA = Path(GLib.get_user_data_dir()) / "immutable-kiosk"
 CACHE = Path(GLib.get_user_cache_dir()) / "immutable-kiosk"
 
@@ -307,11 +299,6 @@ class KioskShell(Gtk.Application):
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
-        # Let GTK see the rotated monitor before WebKit starts.
-        Gdk.Display.get_default().sync()
-        ctx = GLib.MainContext.default()
-        while ctx.pending():
-            ctx.iteration(False)
         milestone("kiosk-shell: config and rotation")
 
         self.win = Gtk.ApplicationWindow(application=self, title="Kiosk")
@@ -341,12 +328,11 @@ class KioskShell(Gtk.Application):
             self.watch_display()
         state["id"] = clock.connect("after-paint", painted)
 
-    # -- display: what cage and GTK use
+    # -- display
     def watch_display(self):
-        """Report the window's scale and the outputs (with their modes) to
-        kioskd whenever they change: Settings > Display lists the modes."""
+        """Report the outputs (with their modes) to kioskd whenever they
+        change: Settings > Display lists the modes."""
         self.display_pending = False
-        self.win.get_surface().connect("notify::scale", lambda *a: self.display_changed())
         Gdk.Display.get_default().get_monitors().connect("items-changed", lambda *a: self.display_changed())
         self.display_changed()
 
@@ -357,14 +343,7 @@ class KioskShell(Gtk.Application):
 
     def display_check(self):
         self.display_pending = False
-        surface = self.win.get_surface()
-        scale = surface.get_scale() if hasattr(surface, "get_scale") else float(surface.get_scale_factor())
-        outputs = wlr_state()
-        monitor = Gdk.Display.get_default().get_monitor_at_surface(surface)
-        geo = monitor.get_geometry() if monitor else None
-        info = {"gtk_scale": scale, "window": [self.win.get_width(), self.win.get_height()],
-                "monitor": [geo.width, geo.height] if geo else None,
-                "outputs": outputs}
+        info = {"outputs": wlr_state()}
 
         def report():
             try:
@@ -479,12 +458,6 @@ class KioskShell(Gtk.Application):
 
     def common_view_setup(self, view):
         s = view.get_settings()
-        # A kiosk page is as wide as the window: ignore viewport meta tags.
-        feats = WebKit.Settings.get_all_features()
-        for i in range(feats.get_length()):
-            f = feats.get(i)
-            if f.get_identifier() == "ShouldIgnoreMetaViewport":
-                s.set_feature_enabled(f, True)
         s.set_enable_developer_extras(False)
         s.set_javascript_can_open_windows_automatically(False)
         s.set_enable_back_forward_navigation_gestures(False)
@@ -609,9 +582,6 @@ class KioskShell(Gtk.Application):
 
         ucm = self.hmi.get_user_content_manager()
         ucm.remove_all_scripts()
-        ucm.add_script(WebKit.UserScript.new(
-            NO_VIEWPORT_JS, WebKit.UserContentInjectedFrames.ALL_FRAMES,
-            WebKit.UserScriptInjectionTime.START, None, None))
         if cfg.get("osk_in_hmi", True) and OSK_JS.exists():
             ucm.add_script(WebKit.UserScript.new(
                 OSK_JS.read_text(), WebKit.UserContentInjectedFrames.ALL_FRAMES,
