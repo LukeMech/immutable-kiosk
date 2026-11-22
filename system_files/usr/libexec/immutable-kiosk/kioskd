@@ -661,7 +661,8 @@ class Job:
         # The page draws these as a chain: done (with how long it took),
         # the active one (bar, detail, time so far), the ones still to come.
         self.steps = [{"key": k, "label": label, "state": "pending", "detail": "",
-                       "fraction": None, "started": None, "took": None} for k, label in steps]
+                       "fraction": None, "started": None, "took": None, "pace": None}
+                      for k, label in steps]
 
     def step(self, key, detail=None, fraction=None):
         """Makes `key` the active step (earlier ones done, or skipped if they
@@ -685,6 +686,16 @@ class Job:
         st["fraction"] = fraction
         self.stage, self.detail, self.fraction = st["label"], st["detail"], fraction
         JOB_CHANGED.poke()
+
+    def pace(self, key, floor, expect):
+        """A step with no byte count: its bar grows with time instead --
+        from `floor` (the part already done), towards the end over about
+        `expect` seconds for the whole step; the page draws it. Each new
+        stage reported moves the floor and restarts the clock from there."""
+        st = next((s for s in self.steps if s["key"] == key and s["state"] == "active"), None)
+        if st and (not st["pace"] or floor > st["pace"]["floor"]):
+            st["pace"] = {"floor": floor, "since": time.time(), "expect": expect}
+            JOB_CHANGED.poke()
 
     def end_steps(self, error=None):
         now = time.time()
@@ -752,12 +763,27 @@ def start_job(kind, title, target, steps=()):
 
 
 # An update / image switch as the page shows it. bootc streams the layers
-# into the repository as they arrive; once every byte is in, it still
-# commits the image on the eMMC (minutes on an Atom) -- that's "write", not
-# "download" any more.
-BOOTC_STEPS = [("pull", "Pobieranie"), ("write", "Rozpakowanie i zapis na dysk"),
-               ("deploy", "Przygotowanie do uruchomienia")]
+# into the repository as they arrive; once every byte is in, everything
+# else happens on the tablet: committing the image on the eMMC, deploying
+# it, removing old ones -- one step, "local", with a time-paced bar (no byte
+# counts there) that bootc's own stages move along.
+BOOTC_STEPS = [("pull", "Pobieranie"), ("local", "Przygotowanie lokalne")]
 UPGRADE_STEPS = [("check", "Sprawdzenie nowej wersji")] + BOOTC_STEPS
+LOCAL_EXPECT_S = 60  # about what "local" takes on the Atom
+# bootc's stages, by subtask id or description.
+BOOTC_STAGES = {"merging": "Scalanie obrazu", "deploying": "Wdrażanie nowej wersji",
+                "bound_images": "Pobieranie powiązanych obrazów", "bound images": "Pobieranie powiązanych obrazów",
+                "cleanup": "Usuwanie starych wersji", "removing old images": "Usuwanie starych wersji",
+                "pruning": "Usuwanie starych wersji"}
+
+
+def stage_name(sub):
+    for key in (sub.get("subtask") or "", sub.get("description") or ""):
+        k = key.lower()
+        for name, label in BOOTC_STAGES.items():
+            if name in k:
+                return label
+    return sub.get("description") or sub.get("subtask") or ""
 
 
 def decimal(x, digits=1):
@@ -816,16 +842,18 @@ def run_bootc_with_progress(job, args):
                             pull["detail"] = f"{total / 1e6:.0f} MB" + (
                                 f" · średnio {decimal(total / 1e6 / secs)} MB/s" if secs >= 1 else "")
                         cached = ev.get("bytesCached") or 0
-                        job.step("write", "" if total else
-                                 (f"{cached / 1e6:.0f} MB było już na dysku" if cached else ""))
+                        job.step("local", "Zapis obrazu na dysk" if total else
+                                 (f"{cached / 1e6:.0f} MB było już na dysku" if cached else "Zapis obrazu na dysk"))
+                        job.pace("local", 0.0, LOCAL_EXPECT_S)
                 elif task in ("pulling", "importing"):
-                    job.step("write", ev.get("description") or None)
+                    job.step("local", "Zapis obrazu na dysk")
+                    job.pace("local", 0.0, LOCAL_EXPECT_S)
                 elif task == "staging" or ev.get("stepsTotal"):
                     steps, total = ev.get("steps") or 0, ev.get("stepsTotal") or 0
-                    running = next((s.get("description") for s in ev.get("subtasks") or []
-                                    if not s.get("completed")), "")
-                    job.step("deploy", running or (f"krok {steps} z {total}" if total else ""),
-                             steps / total if total else None)
+                    running = next((s for s in ev.get("subtasks") or [] if not s.get("completed")), None)
+                    job.step("local", stage_name(running) if running else None)
+                    # The write before the stages counts as a third of it.
+                    job.pace("local", 1 / 3 + (2 / 3) * (steps / total if total else 0), LOCAL_EXPECT_S)
 
     t = threading.Thread(target=read_progress, daemon=True)
     t.start()

@@ -691,8 +691,17 @@ function renderSteps(job, el) {
             : took != null && s.state !== "pending" ? fmtDur(took) : "";
         const bar = li.querySelector(".progress");
         bar.hidden = s.state !== "active";
-        bar.classList.toggle("indet", s.fraction == null);
-        bar.firstElementChild.style.width = ((s.fraction || 0) * 100).toFixed(1) + "%";
+        // A paced step (no byte count): from its floor towards the end over
+        // about the expected time, slowing down near it -- never full before
+        // kioskd says the step is done.
+        let fraction = s.fraction;
+        if (s.state === "active" && s.pace) {
+            const now = job.now + (job.at ? (performance.now() - job.at) / 1000 : 0);
+            const left = 1 - s.pace.floor, expect = Math.max(1, s.pace.expect * left);
+            fraction = s.pace.floor + left * (1 - Math.exp(-1.5 * Math.max(0, now - s.pace.since) / expect));
+        }
+        bar.classList.toggle("indet", fraction == null);
+        bar.firstElementChild.style.width = ((fraction || 0) * 100).toFixed(1) + "%";
         const d = li.querySelector(".sd");
         d.textContent = s.detail || "";
         d.hidden = !s.detail;
