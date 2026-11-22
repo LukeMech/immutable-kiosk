@@ -81,3 +81,20 @@ done
 if [[ -f /usr/lib/systemd/system/iio-sensor-proxy.service ]]; then
     systemctl mask iio-sensor-proxy.service
 fi
+
+# Generators run on every boot before systemd starts a single unit (and
+# again after switch-root): on the Atom, between switch-root at 7.0 s and
+# the first unit at 13.5 s. Off, by the documented way -- a same-named
+# symlink to /dev/null in /etc/systemd/*-generators:
+# - podman's quadlet (a 2.4 MB Go binary, run as system AND user generator):
+#   no .container/.volume units here;
+# - kdump-dep-generator.sh: no kdump; rpc-pipefs-generator: no NFS.
+mkdir -p /etc/systemd/system-generators /etc/systemd/user-generators
+for g in podman-system-generator kdump-dep-generator.sh rpc-pipefs-generator; do
+    if [[ -e /usr/lib/systemd/system-generators/${g} ]]; then
+        ln -sf /dev/null "/etc/systemd/system-generators/${g}"
+    fi
+done
+if [[ -e /usr/lib/systemd/user-generators/podman-user-generator ]]; then
+    ln -sf /dev/null /etc/systemd/user-generators/podman-user-generator
+fi
