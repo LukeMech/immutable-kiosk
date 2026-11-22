@@ -60,3 +60,8 @@ done
 # For plymouthd and dracut's plymouth module (x86 initramfs is built later).
 plymouth-set-default-theme immutable-kiosk
 test "$(plymouth-set-default-theme)" = immutable-kiosk
+
+# plymouth-quit-wait waits until plymouthd exits -- here, when the kiosk has
+# drawn (kioskd quits it) -- and multi-user.target waits for it: the boot
+# counted as unfinished ~15 s too long. Only gettys need it; tty1 has cage.
+systemctl mask plymouth-quit-wait.service
