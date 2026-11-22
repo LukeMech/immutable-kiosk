@@ -922,15 +922,19 @@ function renderSysInfo() {
     const info = $("sys-info"), s = sys;
     if (!s || !s.available) {
         info.innerHTML = `<dt>bootc</dt><dd>${esc((s && s.error) || "unavailable")}</dd>`;
+        $("sys-more").hidden = true;
         return;
     }
     const b = s.booted || {};
     info.innerHTML = `
         <dt>Version</dt><dd>${esc(versionName(b))}</dd>
+        <dt>Built</dt><dd>${esc(fmtTime(b.timestamp))}</dd>`;
+    // The image and the parts' versions: folded, like the boot details.
+    $("sys-parts").innerHTML = `
         <dt>Image</dt><dd>${esc(b.image || "—")}</dd>
-        <dt>Built</dt><dd>${esc(fmtTime(b.timestamp))}</dd>
         ${COMPONENTS.filter(([k]) => s.components && s.components[k])
             .map(([k, label]) => `<dt>${label}</dt><dd>${esc(s.components[k])}</dd>`).join("")}`;
+    $("sys-more").hidden = false;
     if (!$("sys-image").value) $("sys-image").value = b.image || "";
 }
 

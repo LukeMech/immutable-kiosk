@@ -209,6 +209,7 @@ window.I18N_LANGS.pl = function (tr) {
         "Memory": "Pamięć",
         "Boot time": "Czas uruchamiania",
         "Boot details": "Szczegóły startu",
+        "System details": "Szczegóły systemu",
         "Boot timeline (seconds since kernel start)": "Przebieg startu (sekundy od startu jądra)",
         "Slowest-starting services": "Najdłużej startujące usługi",
         "Loading boot time…": "Wczytywanie czasu uruchamiania…",
