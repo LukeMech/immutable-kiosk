@@ -44,7 +44,6 @@ DEFAULT_CONFIG = {
     # None = model default (default_rotation()).
     "rotation": None,
     # "WxH" or "WxH@R" (wlr-randr --mode); None = panel's preferred mode.
-    "resolution": None,
     # Inject our OSK into the HMI page (TwinCAT HMI's login has none).
     "osk_in_hmi": True,
     # Accept a self-signed cert, but only from the configured HMI host.
@@ -229,11 +228,6 @@ def save_config(update):
         if r is not None and r not in ROTATIONS:
             raise ApiError("Invalid orientation")
         cfg["rotation"] = r
-    if "resolution" in update:
-        r = update["resolution"]
-        if r is not None and not re.fullmatch(r"\d{3,5}x\d{3,5}(@\d{1,3}(\.\d{1,3})?)?", str(r)):
-            raise ApiError("Invalid resolution")
-        cfg["resolution"] = r
     for key in ("osk_in_hmi", "accept_self_signed"):
         if key in update:
             cfg[key] = bool(update[key])
@@ -1830,10 +1824,6 @@ def r_splash(body, q):
     return SPLASH_STATE
 
 
-# kiosk-shell's view of the screen (scale, size, outputs), shown in Display.
-DISPLAY_INFO = {}
-
-
 # cage only deactivates plymouth; quit it on kiosk-shell's first display
 # report or at boot ok, whichever comes first.
 _plymouth = {"done": False}
@@ -1848,15 +1838,7 @@ def plymouth_quit():
 
 def r_display_set(body, q):
     plymouth_quit()
-    DISPLAY_INFO.clear()
-    DISPLAY_INFO.update({k: body.get(k) for k in ("outputs",)})
-    DISPLAY_INFO["time"] = time.time()
-    EVENTS.emit("display")
     return {"ok": True}
-
-
-def r_display_get(body, q):
-    return DISPLAY_INFO
 
 
 def touchscreens():
@@ -2139,7 +2121,6 @@ ROUTES = {
     ("POST", "/api/settings/reset"): r_settings_reset,
     ("GET", "/api/job"): r_job,
     ("GET", "/api/splash"): r_splash,
-    ("GET", "/api/display"): r_display_get,
     ("POST", "/api/display"): r_display_set,
     ("GET", "/api/installer"): r_installer,
     ("POST", "/api/installer/start"): r_installer_start,

@@ -122,8 +122,8 @@ def api_post(path, data, timeout=20):
 INTERNAL_OUTPUTS = ("eDP", "DSI", "LVDS")
 
 def wlr_outputs():
-    """[(name, current mode, preferred mode)] of enabled outputs; a mode is
-    (width, height, refresh), in the panel's native orientation."""
+    """[(name, width, height)] of enabled outputs, the current mode in the
+    panel's native orientation."""
     try:
         out = subprocess.run(["wlr-randr", "--json"], capture_output=True, text=True, timeout=5)
         outputs = json.loads(out.stdout)
@@ -134,47 +134,9 @@ def wlr_outputs():
     for o in outputs:
         if not o.get("enabled", True):
             continue
-        modes = [(m["width"], m["height"], m.get("refresh") or 0, m) for m in o.get("modes", [])]
-        cur = next((m[:3] for m in modes if m[3].get("current")), None)
-        pref = next((m[:3] for m in modes if m[3].get("preferred")), cur)
-        if cur:
-            result.append((o["name"], cur, pref))
-    return result
-
-
-def same_mode(res, cur, pref):
-    """Is Display > Resolution's "WxH[@R]" (None: preferred) the current mode?"""
-    if not res:
-        want = pref
-    else:
-        size, _, rate = res.partition("@")
-        w, _, h = size.partition("x")
-        try:
-            want = (int(w), int(h), float(rate) if rate else None)
-        except ValueError:
-            return True  # unparseable: leave the mode alone
-    if want is None or want[:2] != cur[:2]:
-        return False
-    return want[2] is None or abs(want[2] - cur[2]) < 0.5
-
-
-def wlr_state():
-    """[{name, mode: [w, h], transform, scale}] of enabled outputs, as cage has them."""
-    try:
-        out = subprocess.run(["wlr-randr", "--json"], capture_output=True, text=True, timeout=5)
-        outputs = json.loads(out.stdout)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return []
-    result = []
-    for o in outputs:
-        if not o.get("enabled", True):
-            continue
-        mode = next((m for m in o.get("modes", []) if m.get("current")), {})
-        result.append({"name": o.get("name"), "mode": [mode.get("width"), mode.get("height")],
-                       "transform": o.get("transform"), "scale": o.get("scale"),
-                       "modes": [{"w": m.get("width"), "h": m.get("height"),
-                                  "refresh": round(m.get("refresh") or 0, 2),
-                                  "preferred": bool(m.get("preferred"))} for m in o.get("modes", [])]})
+        mode = next((m for m in o.get("modes", []) if m.get("current")), None)
+        if mode:
+            result.append((o["name"], mode["width"], mode["height"]))
     return result
 
 
@@ -186,7 +148,8 @@ def screen_scale(cfg):
 
 
 def apply_output(cfg):
-    """Rotation and mode for every output. The compositor scale stays 1:
+    """Rotation for every output, never a mode (a modeset blanks the DSI
+    panel for a second or two). The compositor scale stays 1:
     screen scaling is WebKit zoom (KioskShell.apply_scale), since a
     fractional output scale rendered wrong and stuck until cage restarted."""
     rotation = cfg.get("rotation_effective", "landscape")
@@ -195,26 +158,17 @@ def apply_output(cfg):
     touch_transform = None
     panel = ""
     applied = []
-    for name, cur, pref in outputs:
-        w, h = cur[:2]
+    for name, w, h in outputs:
         if rotation == "portrait":
             transform = "90" if w > h else "normal"
         elif rotation == "landscape":
             transform = "90" if h > w else "normal"
         else:
             transform = rotation
-        # Display > Resolution applies to the built-in panel only.
-        res = cfg.get("resolution") if name.startswith(INTERNAL_OUTPUTS) else None
-        # A mode only when it changes: setting one is a full modeset, and the
-        # DSI panel goes dark for a second or two (rotation doesn't need one).
-        if same_mode(res, cur, pref):
-            mode = []
-        else:
-            mode = ["--mode", res + ("Hz" if "@" in res else "")] if res else ["--preferred"]
-        log(f"output {name} {w}x{h}: transform {transform} ({rotation}), mode {res or 'preferred'}")
-        subprocess.run(["wlr-randr", "--output", name, *mode, "--transform", transform,
+        log(f"output {name} {w}x{h}: transform {transform} ({rotation})")
+        subprocess.run(["wlr-randr", "--output", name, "--transform", transform,
                         "--scale", str(scale)], timeout=5)
-        applied.append(f"{name} {transform} {res or 'preferred'}\n")
+        applied.append(f"{name} {transform}\n")
         if touch_transform is None:
             touch_transform = transform
             panel = name if name.startswith(INTERNAL_OUTPUTS) else ""
@@ -347,33 +301,18 @@ class KioskShell(Gtk.Application):
             clock.disconnect(state["id"])
             milestone("kiosk-shell: splash (window's first frame)")
             GLib.idle_add(self.setup_once)
-            self.watch_display()
+            self.report_drawn()
         state["id"] = clock.connect("after-paint", painted)
 
     # -- display
-    def watch_display(self):
-        """Report the outputs (with their modes) to kioskd whenever they
-        change: Settings > Display lists the modes."""
-        self.display_pending = False
-        Gdk.Display.get_default().get_monitors().connect("items-changed", lambda *a: self.display_changed())
-        self.display_changed()
-
-    def display_changed(self):
-        if not self.display_pending:
-            self.display_pending = True
-            GLib.timeout_add(300, self.display_check)
-
-    def display_check(self):
-        self.display_pending = False
-        info = {"outputs": wlr_state()}
-
+    def report_drawn(self):
+        """The kiosk has drawn: kioskd quits plymouth (deactivated until now)."""
         def report():
             try:
-                api_post("/api/display", info, timeout=5)
+                api_post("/api/display", {}, timeout=5)
             except (OSError, ValueError) as e:
                 log("display report:", e)
         threading.Thread(target=report, daemon=True).start()
-        return GLib.SOURCE_REMOVE
 
     def setup_once(self):
         if not getattr(self, "set_up", False):

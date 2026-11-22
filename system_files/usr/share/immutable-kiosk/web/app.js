@@ -536,31 +536,9 @@ async function loadSplash() {
         st.error || "");
 }
 
-async function loadDisplay() {
-    let d;
-    try { d = await api("/display"); } catch (_) { return; }
-    if (!d || !d.outputs) return;
-    // Panel = first output; "@R" only when a size has several rates.
-    const panel = d.outputs[0], modes = (panel && panel.modes) || [];
-    $("res-wrap").hidden = !modes.length;
-    if (!modes.length) return;
-    const many = (m) => modes.filter(x => x.w === m.w && x.h === m.h).length > 1;
-    const key = m => `${m.w}x${m.h}` + (many(m) ? `@${m.refresh}` : "");
-    const seen = new Set(), opts = [["", "Default"]];
-    for (const m of modes) {
-        const k = key(m);
-        if (seen.has(k)) continue;
-        seen.add(k);
-        opts.push([k, `${m.w}×${m.h}` + (many(m) ? ` ${Math.round(m.refresh)} Hz` : "") + (m.preferred ? " ★" : "")]);
-    }
-    $("res").innerHTML = opts.map(([v, l]) => `<button data-v="${esc(v)}">${esc(l)}</button>`).join("");
-    seg($("res"), cfg.resolution || "", v => saveCfg({ resolution: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
-}
-
 function loadScreen() {
     renderAccent();
     loadSplash();
-    loadDisplay();
     const names = { portrait: "portrait", landscape: "landscape", normal: "0°", 90: "90°", 180: "180°", 270: "270°" };
     seg($("rot"), cfg.rotation || "", v => saveCfg({ rotation: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
     $("rot-hint").textContent = `Now: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
@@ -1287,7 +1265,6 @@ function initEvents() {
     listen({
         net: vis(net), power: vis(refreshDevice), clock: vis(refreshDevice), device: vis(refreshDevice),
         splash: vis(() => { if (currentTab === "screen") loadSplash(); }),
-        display: vis(() => { if (currentTab === "screen") loadDisplay(); }),
         config: vis(config),
         boot: vis(() => { if (currentTab === "system") loadBoot(); }),
         system: vis(system),

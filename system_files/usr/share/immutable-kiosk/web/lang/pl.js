@@ -129,12 +129,9 @@ window.I18N_LANGS.pl = function (tr) {
         "Rotating the boot screen…": "Obracanie ekranu startowego…",
         "Boot screen rotated": "Ekran startowy obrócony",
         "Couldn't rotate the boot screen": "Nie udało się obrócić ekranu startowego",
-        "Resolution and scaling": "Rozdzielczość i skalowanie",
+        "Scaling": "Skalowanie",
         "Scaling enlarges everything: the HMI, Settings and the keyboard. HMI zoom (HMI tab) is multiplied by it.":
             "Skalowanie powiększa wszystko: HMI, ustawienia i klawiaturę. Powiększenie HMI (zakładka HMI) mnoży się przez tę wartość.",
-        "Resolution": "Rozdzielczość",
-        "The built-in screen's mode. Default is the one the panel reports as preferred.":
-            "Tryb wbudowanego ekranu. Domyślna to tryb, który panel sam podaje jako właściwy.",
         "Default": "Domyślna",
         "Opening Settings from the HMI": "Wejście do ustawień z HMI",
         "Hold the chosen screen corner for about 1 s.": "Przytrzymaj ok. 1 s wybrany róg ekranu.",
@@ -276,7 +273,6 @@ window.I18N_LANGS.pl = function (tr) {
         "Port must be a number": "Port musi być liczbą",
         "Port must be 1-65535": "Port musi być z zakresu 1-65535",
         "Invalid orientation": "Niepoprawna orientacja",
-        "Invalid resolution": "Niepoprawna rozdzielczość",
         "Zoom: 50-300%": "Powiększenie: 50-300%",
         "Scaling must be a number": "Skalowanie musi być liczbą",
         "Screen scaling: 100-200%": "Skalowanie ekranu: 100-200%",
