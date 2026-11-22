@@ -1,0 +1,19 @@
+# Stands in for atomic-update-ca-trust.service (masked in 05-base.sh): same
+# job -- regenerate /etc's CA bundles after an image update, since the 3-way
+# merge keeps the old generated files -- but after the kiosk is up, at idle
+# priority, and only when the trust sources changed. On the tablet the
+# original held sysinit.target for 15 s on every first boot after an update.
+[Unit]
+Description=immutable-kiosk: refresh the CA trust store after an update
+ConditionPathExists=/usr/bin/update-ca-trust
+ConditionPathExists=!/run/initramfs/live
+After=graphical.target
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/usr/libexec/immutable-kiosk/ca-trust-refresh
+
+[Install]
+WantedBy=graphical.target
