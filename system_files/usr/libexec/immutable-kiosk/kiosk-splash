@@ -25,6 +25,7 @@ import sys
 import time
 
 DATA = "/usr/share/immutable-kiosk/splash-bar.json"
+CONFIG = "/var/lib/immutable-kiosk/config.json"   # kioskd's: the accent colour
 BG = bytes((0, 0, 0, 0xff))               # black, as the boot splash
 GIVE_UP_S = 180                           # kiosk-shell never ended it
 XRGB8888 = 1
@@ -40,13 +41,35 @@ def milestone(label):
 
 
 def load_bar():
+    """The bar's pieces composited as plymouth draws them (on black, the
+    fill's ends over the track), in Settings' accent and language."""
     with open(DATA) as f:
         d = json.load(f)
-    for part in ("track", "fill"):
-        for end in ("l", "r"):
-            d[part][end] = base64.b64decode(d[part][end])
-        d[part]["m"] = bytes((d[part]["m"][2], d[part]["m"][1], d[part]["m"][0], 255))
-    d["label"]["bgrx"] = base64.b64decode(d["label"]["bgrx"])
+    try:
+        with open(CONFIG) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    accent = cfg.get("accent")
+    lab = d["labels"].get(cfg.get("language")) or d["labels"]["en"]
+    fill = d["accents"].get(accent) or d["accents"][d["default_accent"]]
+    track, text = d["track"], d["text"]
+    cap_l, cap_r = base64.b64decode(d["cap_l"]), base64.b64decode(d["cap_r"])
+
+    def over(fg, a, bg):
+        a /= 255
+        return tuple(round(fg[i] * a + bg[i] * (1 - a)) for i in range(3))
+
+    def px(colours):
+        return b"".join(bytes((b, g, r, 255)) for r, g, b in colours)
+
+    black = (0, 0, 0)
+    track_l = [over(track, a, black) for a in cap_l]
+    d["track"] = {"l": px(track_l), "r": px(over(track, a, black) for a in cap_r),
+                  "m": px([track])}
+    d["fill"] = {"l": px(over(fill, a, track_l[i]) for i, a in enumerate(cap_l)),
+                 "r": px(over(fill, a, track) for a in cap_r), "m": px([fill])}
+    d["label"] = dict(lab, bgrx=px(over(text, a, black) for a in base64.b64decode(lab["a"])))
     return d
 
 

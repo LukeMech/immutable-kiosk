@@ -8,18 +8,21 @@ Guards against other pages (the HMI included): /api requires "X-Kiosk: 1"
 be 127.0.0.1:8088 / localhost:8088 (DNS rebinding).
 """
 
+import base64
 import errno
 import ipaddress
 import json
 import os
 import re
 import socket
+import struct
 import subprocess
 import threading
 import time
 import hashlib
 import urllib.request
 import mimetypes
+import zlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1675,6 +1678,9 @@ def r_config_get(body, q):
 def r_config_set(body, q):
     cfg = save_config(body)
     EVENTS.emit("config")
+    for what in ("accent", "language"):
+        if what in body:
+            threading.Thread(target=set_splash_look, args=(what,), daemon=True).start()
     return cfg
 
 
@@ -1773,7 +1779,8 @@ PANEL_ORIENTATIONS = {"normal": "normal", "90": "left_side_up",
 BLS_ENTRIES = Path("/boot/loader/entries")
 _splash_lock = threading.Lock()
 # GET /api/splash: rewriting takes seconds; a restart mid-way keeps the old rotation.
-SPLASH_STATE = {"state": None, "orientation": None, "error": None}
+SPLASH_STATE = {"state": None, "orientation": None, "error": None,
+                "look": {"state": None, "what": None, "error": None}}
 
 
 def splash_state(**changes):
@@ -1823,6 +1830,120 @@ def set_splash_orientation(output, transform):
             splash_state(state="failed", error=str(e))
 
 
+SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
+ACCENT_INITRD = "immutable-kiosk-accent.img"   # on /boot
+
+
+def png_bytes(w, h, rgba):
+    """rgba: w*h (r, g, b, a) tuples, straight alpha 0..255."""
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    raw = b"".join(b"\0" + b"".join(bytes(rgba[y * w + x]) for x in range(w)) for y in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def cpio_newc(files):
+    """An uncompressed initramfs (newc cpio): [(path, data or None for a dir)]."""
+    out = bytearray()
+
+    def add(ino, name, mode, data):
+        name = name.encode() + b"\0"
+        fields = (ino, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(name), 0)
+        out.extend(b"070701" + "".join(f"{v:08X}" for v in fields).encode() + name)
+        out.extend(b"\0" * (-len(out) % 4))
+        out.extend(data)
+        out.extend(b"\0" * (-len(out) % 4))
+    for ino, (path, data) in enumerate(files, 1):
+        add(ino, path, 0o040755 if data is None else 0o100644, b"" if data is None else data)
+    add(0, "TRAILER!!!", 0, b"")
+    return bytes(out)
+
+
+def set_splash_look(what=""):
+    """The boot screen in Settings' accent and language. Plymouth can't read
+    the settings: its script loads the accent's bar pieces and a language
+    marker from the overrides directory when they're there (splash-bar.json
+    "overrides", /etc/immutable-kiosk/splash). At shutdown that's this
+    system's /etc; at boot plymouth runs from the image's initramfs, so the
+    same files also go into an extra initramfs on /boot, loaded after it (a
+    second `initrd` line in every boot entry). Defaults (blue, English): no
+    files, no extra initramfs. `what` -- "accent" or "language" -- is the
+    card in Settings that shows the progress."""
+    try:
+        d = json.loads(SPLASH_DATA.read_text())
+    except (OSError, ValueError) as e:
+        print(f"kioskd: boot screen look: {e}", flush=True)
+        return
+    cfg = load_config()
+    accent = cfg.get("accent") if cfg.get("accent") in d["accents"] else d["default_accent"]
+    files = {}
+    if accent != d["default_accent"]:
+        r, g, b = d["accents"][accent]
+        cap, bh = d["bar"]["cap"], d["bar"]["h"]
+        for end in ("l", "r"):
+            files[f"fill-{end}.png"] = png_bytes(cap, bh, [(r, g, b, a) for a in base64.b64decode(d[f"cap_{end}"])])
+        files["fill-m.png"] = png_bytes(1, bh, [(r, g, b, 255)] * bh)
+    if cfg.get("language") == "pl":
+        files["lang-pl.png"] = png_bytes(1, 1, [(0, 0, 0, 0)])
+    overrides = Path(d["overrides"])
+    ours = (f"/{ACCENT_INITRD}", f"/boot/{ACCENT_INITRD}")
+    with _splash_lock:
+        try:
+            # What has to change: /etc's files, the extra initramfs, the entries.
+            stale = [f for f in overrides.glob("*") if f.name not in files] if overrides.is_dir() else []
+            etc_new = {n: v for n, v in files.items()
+                       if not (overrides / n).exists() or (overrides / n).read_bytes() != v}
+            boot = []
+            if files:
+                tree = []
+                parts = overrides.relative_to("/").parts
+                for i in range(1, len(parts) + 1):
+                    tree.append(("/".join(parts[:i]), None))
+                tree += [(f"{'/'.join(parts)}/{n}", v) for n, v in sorted(files.items())]
+                image = cpio_newc(tree)
+                target = Path("/boot") / ACCENT_INITRD
+                if not target.exists() or target.read_bytes() != image:
+                    boot.append((target, image))
+            for entry in sorted(BLS_ENTRIES.glob("*.conf")):
+                text = entry.read_text()
+                lines = [ln for ln in text.splitlines()
+                         if not (ln.startswith("initrd ") and ln.split()[1:2] and ln.split()[1] in ours)]
+                if files:
+                    initrds = [i for i, ln in enumerate(lines) if ln.startswith("initrd ")]
+                    if not initrds:
+                        continue
+                    # The same root as the entry's own initramfs (/ or /boot).
+                    own = lines[initrds[-1]].split()[1]
+                    prefix = "/boot" if own.startswith("/boot/") else ""
+                    lines.insert(initrds[-1] + 1, f"initrd {prefix}/{ACCENT_INITRD}")
+                new = "\n".join(lines) + "\n"
+                if new != text:
+                    boot.append((entry.resolve(), new.encode()))
+            if not (stale or etc_new or boot):
+                return
+            # Shown in Settings (accent or language card), as the rotation is.
+            splash_state(look={"state": "working", "what": what, "error": None})
+            overrides.mkdir(parents=True, exist_ok=True)
+            for f in stale:
+                f.unlink()
+            for n, v in etc_new.items():
+                tmp = overrides / f".{n}.tmp"
+                tmp.write_bytes(v)
+                tmp.replace(overrides / n)
+            for path, data in boot:
+                p = subprocess.run([BOOT_COUNTER, "write-boot", str(path)], input=data,
+                                   capture_output=True, timeout=60)
+                if p.returncode != 0:
+                    raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
+            print(f"kioskd: boot screen look: accent {accent}, language {cfg.get('language')} "
+                  f"({len(etc_new) + len(stale)} in {overrides}, {len(boot)} on /boot)", flush=True)
+            splash_state(look={"state": "done", "what": what, "error": None})
+        except (ApiError, OSError, subprocess.TimeoutExpired) as e:
+            print(f"kioskd: boot screen look: {e}", flush=True)
+            splash_state(look={"state": "failed", "what": what, "error": str(e)})
+
+
 def r_splash(body, q):
     return SPLASH_STATE
 
@@ -1865,9 +1986,13 @@ def r_touch_set(body, q):
     matrix = TOUCH_MATRICES.get(transform)
     if not matrix:
         raise ApiError("Unknown orientation")
-    # The boot splash follows the built-in panel (kiosk-shell names it).
-    threading.Thread(target=set_splash_orientation, args=(str(body.get("output") or ""), transform),
-                     daemon=True).start()
+    # The boot splash follows the built-in panel (kiosk-shell names it) and
+    # the accent and language (re-checked at every start: a new deployment's
+    # boot entries come without the extra initramfs).
+    def splash():
+        set_splash_orientation(str(body.get("output") or ""), transform)
+        set_splash_look()
+    threading.Thread(target=splash, daemon=True).start()
     rule = (
         "# Written by kioskd: touch follows the screen rotation "
         f"(wlr-randr transform {transform}).\n"

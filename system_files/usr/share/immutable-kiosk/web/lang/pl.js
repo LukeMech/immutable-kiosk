@@ -114,7 +114,7 @@ window.I18N_LANGS.pl = function (tr) {
         // ---- Display tab
         "Brightness": "Jasność",
         "Accent color": "Kolor akcentu",
-        "Buttons, switches and highlights in Settings.": "Przyciski, przełączniki i zaznaczenia w ustawieniach.",
+        "Settings' buttons and highlights, and the boot screen's bar.": "Przyciski i zaznaczenia w ustawieniach oraz pasek na ekranie startowym.",
         "Blue": "Niebieski",
         "Teal": "Morski",
         "Green": "Zielony",
@@ -129,6 +129,15 @@ window.I18N_LANGS.pl = function (tr) {
         "Rotating the boot screen…": "Obracanie ekranu startowego…",
         "Boot screen rotated": "Ekran startowy obrócony",
         "Couldn't rotate the boot screen": "Nie udało się obrócić ekranu startowego",
+        "Updating the boot screen…": "Aktualizowanie ekranu startowego…",
+        "Boot screen updated": "Ekran startowy zaktualizowany",
+        "Couldn't update the boot screen": "Nie udało się zaktualizować ekranu startowego",
+        "Saving it to the boot settings. Don't restart the tablet until it's done.":
+            "Zapisywanie w ustawieniach rozruchu. Nie uruchamiaj tabletu ponownie, dopóki się nie skończy.",
+        "From the next start, the boot screen's bar has this color.":
+            "Od następnego uruchomienia pasek na ekranie startowym ma ten kolor.",
+        "From the next start, the boot screen speaks this language.":
+            "Od następnego uruchomienia ekran startowy jest w tym języku.",
         "Scaling": "Skalowanie",
         "Scaling enlarges everything: the HMI, Settings and the keyboard. HMI zoom (HMI tab) is multiplied by it.":
             "Skalowanie powiększa wszystko: HMI, ustawienia i klawiaturę. Powiększenie HMI (zakładka HMI) mnoży się przez tę wartość.",

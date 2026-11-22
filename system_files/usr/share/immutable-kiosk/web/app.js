@@ -534,6 +534,19 @@ async function loadSplash() {
         `From the next start, the boot animation uses this orientation (${o}).`);
     else if (st.state === "failed") setStatus("splash-st", "err", ICONS.err, "Couldn't rotate the boot screen",
         st.error || "");
+    // The accent's and the language's boot screen files, each in its card.
+    const look = st.look || {};
+    for (const [what, id] of [["accent", "accent-st"], ["language", "lang-st"]]) {
+        $(id).hidden = !(look.state && look.what === what);
+        if (look.what !== what) continue;
+        if (look.state === "working") setStatus(id, "busy", ICONS.busy, "Updating the boot screen…",
+            "Saving it to the boot settings. Don't restart the tablet until it's done.");
+        else if (look.state === "done") setStatus(id, "ok", ICONS.ok, "Boot screen updated",
+            what === "accent" ? "From the next start, the boot screen's bar has this color."
+                : "From the next start, the boot screen speaks this language.");
+        else if (look.state === "failed") setStatus(id, "err", ICONS.err, "Couldn't update the boot screen",
+            look.error || "");
+    }
 }
 
 function loadScreen() {
@@ -1277,7 +1290,7 @@ function initEvents() {
     const system = () => { if (currentTab === "system") loadSystem(); };
     listen({
         net: vis(net), power: vis(refreshDevice), clock: vis(refreshDevice), device: vis(refreshDevice),
-        splash: vis(() => { if (currentTab === "screen") loadSplash(); }),
+        splash: vis(() => { if (currentTab === "screen" || currentTab === "system") loadSplash(); }),
         config: vis(config),
         boot: vis(() => { if (currentTab === "system") loadBoot(); }),
         system: vis(system),

@@ -135,8 +135,16 @@
       </div>
       <div class="card">
         <h2>Accent color</h2>
-        <p class="hint">Buttons, switches and highlights in Settings.</p>
+        <p class="hint">Settings' buttons and highlights, and the boot screen's bar.</p>
         <div class="swatches" id="accent"></div>
+        <!-- Boot screen colour status (kioskd writes an extra initramfs). -->
+        <div class="status" id="accent-st" hidden>
+          <div class="status-icon" id="accent-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="accent-st-title"></div>
+            <div class="status-sub" id="accent-st-sub"></div>
+          </div>
+        </div>
       </div>
       <div class="card">
         <h2>Orientation</h2>
@@ -257,6 +265,14 @@
             </span>
           </dd>
         </dl>
+        <!-- Boot screen language status (kioskd writes its files). -->
+        <div class="status" id="lang-st" hidden>
+          <div class="status-icon" id="lang-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="lang-st-title"></div>
+            <div class="status-sub" id="lang-st-sub"></div>
+          </div>
+        </div>
       </div>
       <div class="card">
         <h2>Device</h2>
