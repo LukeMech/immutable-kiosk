@@ -638,8 +638,7 @@ const STEP_ICONS = { done: ICONS.ok, active: ICONS.busy, failed: ICONS.err };
 
 // kioskd's job.steps as a chain. Kept as DOM between polls (every 0.7 s):
 // rebuilt, the bars would restart their animation each time.
-function renderSteps(job) {
-    const el = $("job-steps");
+function renderSteps(job, el) {
     const steps = (job && job.steps) || [];
     const show = steps.length > 0 && (job.state === "running" || job.state === "failed");
     el.hidden = !show;
@@ -701,7 +700,7 @@ let sys = null;          // GET /system (bootc status + last check)
 let sysJob = null;       // last update-ish job (check / upgrade / switch)
 let sysWasRunning = false;
 let sysNotes = null;     // GET /system/changelog (GitHub releases)
-const UPDATE_JOBS = ["check", "upgrade", "switch"];
+const UPDATE_JOBS = ["check", "upgrade", "switch", "rollback"];
 const CHECK_EVERY = 15 * 60;  // s: opening System checks again after this
 
 // A version label, readable without a matching GitHub release:
@@ -800,7 +799,8 @@ function renderUpdate() {
     // A check is just a spinner; an update or a switch shows its steps
     // (the update's first one is the same check).
     const checking = running && job.kind === "check";
-    const working = running && !checking;
+    const restoring = running && job.kind === "rollback";  // shown in Przywracanie
+    const working = running && !checking && !restoring;
     let state, title, sub = "";
     // A running job first: while bootc works, its status may be stale or
     // briefly unavailable -- that's not a failure to show.
@@ -812,6 +812,9 @@ function renderUpdate() {
     } else if (checking) {
         state = "busy"; title = "Sprawdzanie aktualizacji…";
         sub = s && s.booted ? `Teraz działa ${versionName(s.booted)}` : "";
+    } else if (restoring) {
+        state = "busy"; title = "Przywracanie poprzedniej wersji…";
+        sub = "Postęp w karcie „Przywracanie i zasilanie”.";
     } else if (!s) {
         state = "busy"; title = "Wczytywanie…";
     } else if (!s.available) {
@@ -832,7 +835,8 @@ function renderUpdate() {
     }
     setStatus("upd", state, ICONS[state], title, sub);
     // The bar only while there's progress to show -- a check is just a spinner.
-    renderSteps(job && UPDATE_JOBS.includes(job.kind) && job.kind !== "check" ? job : null);
+    renderSteps(job && (job.kind === "upgrade" || job.kind === "switch") ? job : null, $("job-steps"));
+    renderSteps(job && job.kind === "rollback" ? job : null, $("rb-steps"));
     renderChannel(running);
     const avail = !!(s && s.available);
     // One row: [Aktualizuj | Uruchom ponownie] [↻]. Restart replaces
@@ -845,8 +849,16 @@ function renderUpdate() {
     $("sys-check").classList.toggle("spin", checking);
     $("sys-switch").disabled = running;
     $("sys-rollback").disabled = running || !(avail && s.rollback);
+    $("sys-rollback").textContent = avail && s.rollback_queued
+        ? "Przytrzymaj: uruchom ponownie teraz" : "Przytrzymaj: przywróć poprzednią wersję";
     const fb = s && s.fallback;
     if (!s) setStatus("rb-st", "busy", ICONS.busy, "Wczytywanie…");
+    else if (restoring) setStatus("rb-st", "busy", ICONS.busy, "Przywracanie poprzedniej wersji…",
+        s.rollback ? `Wraca do ${versionName(s.rollback)}` : "");
+    else if (job && job.kind === "rollback" && job.state === "failed")
+        setStatus("rb-st", "err", ICONS.err, "Nie udało się przywrócić", job.detail || "");
+    else if (avail && s.rollback_queued) setStatus("rb-st", "ready", ICONS.ready, "Poprzednia wersja włączy się po restarcie",
+        `${versionName(s.rollback)} jest ustawiona jako domyślna; do restartu działa ${versionName(s.booted)}.`);
     else if (!avail) setStatus("rb-st", "err", ICONS.err, "Przywracanie niedostępne", s.error || "");
     else if (fb) setStatus("rb-st", "warn", ICONS.warn, "Nowa wersja się nie uruchomiła",
         `${rawVersion(fb.failed) || "Aktualizacja"} ${AUTO_TRIES} razy nie pokazała kiosku, więc system sam wrócił ` +
@@ -1141,8 +1153,10 @@ function initSystem() {
     holdButton($("sys-switch"), () => api("/system/switch", { image: $("sys-image").value.trim() })
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
         .catch(e => toast(e.message, true)));
+    // A job: bootc rollback, then the restart (kioskd), steps in the card.
     holdButton($("sys-rollback"), () => api("/system/rollback", {})
-        .then(() => { toast("Poprzednia wersja uruchomi się po restarcie"); loadSystem(); }).catch(e => toast(e.message, true)));
+        .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
+        .catch(e => toast(e.message, true)));
     const power = action => () => api("/power", { action }).then(() => toast(action === "reboot" ? "Ponowne uruchamianie…" : "Wyłączanie…"))
         .catch(e => toast(e.message, true));
     holdButton($("sys-reboot-now"), power("reboot"));

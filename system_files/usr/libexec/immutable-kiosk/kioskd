@@ -779,6 +779,8 @@ def bootc_status():
     # The channel what runs follows; a staged switch says where it's going.
     st = {"available": True, "booted": booted, "staged": staged, "rollback": rollback,
           "update": update, "checked": LAST_CHECK,
+          # bootc rollback done, not restarted yet: the previous one boots next.
+          "rollback_queued": bool(s.get("rollbackQueued")),
           "channel": channel_of((booted or {}).get("image")),
           "next_channel": channel_of((staged or booted or {}).get("image"))}
     LAST_STATUS["value"] = st
@@ -1713,9 +1715,37 @@ def r_system_channel(body, q):
                      job_switch(image), BOOTC_STEPS).as_dict()
 
 
+ROLLBACK_STEPS = [("rollback", "Ustawienie poprzedniej wersji jako domyślnej"),
+                  ("reboot", "Ponowne uruchomienie")]
+
+
+def job_rollback(job):
+    """The previous deployment, now: bootc rollback, then a restart.
+    Already queued (bootc rollback toggles: a second one would undo the
+    first), only the restart."""
+    st = bootc_status()
+    if not st.get("available"):
+        raise RuntimeError(st.get("error") or "bootc jest niedostępny")
+    prev = st.get("rollback")
+    if not prev:
+        raise RuntimeError("Nie ma poprzedniej wersji")
+    job.step("rollback", f"Wersja {prev.get('version') or prev.get('digest', '')[7:19]}")
+    if st.get("rollback_queued"):
+        job.add_log("Przywrócenie już ustawione: tylko restart")
+    else:
+        for line in run(["bootc", "rollback"], timeout=180).splitlines():
+            job.add_log(line)
+    job.result = bootc_status()
+    job.step("reboot", "Ekran na chwilę zgaśnie, potem uruchomi się poprzednia wersja")
+    time.sleep(2)  # the page gets to show this step
+    run(["systemctl", "reboot"], timeout=30)
+    # Normally the end of this process. Still here: something holds it up.
+    time.sleep(120)
+    raise RuntimeError("System nie uruchomił się ponownie — poprzednia wersja włączy się przy następnym starcie")
+
+
 def r_system_rollback(body, q):
-    run(["bootc", "rollback"], timeout=120)
-    return bootc_status()
+    return start_job("rollback", "Przywracanie poprzedniej wersji", job_rollback, ROLLBACK_STEPS).as_dict()
 
 
 def r_power(body, q):
