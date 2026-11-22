@@ -17,10 +17,16 @@
 
 set -ouex pipefail
 
-# No weak dependencies: Plymouth's own themes, fonts and the label plugin
-# stay out. plymouth-graphics-libs hard-requires "system-logos" (Fedora:
-# fedora-logos), so that package comes in -- its files go below.
-dnf install -y --setopt=install_weak_deps=False plymouth plymouth-plugin-script
+# Weak dependencies are off for the whole build (00-pre-build.sh): Plymouth's
+# own themes, fonts and the label plugin stay out. plymouth-graphics-libs
+# hard-requires "system-logos"; left to itself dnf picks fedora-logos (Fedora
+# branding, 1.5 MB) -- generic-logos, the unbranded provider meant for
+# remixes, is asked for instead. Its files go below all the same.
+dnf install -y plymouth plymouth-plugin-script generic-logos
+if rpm -q fedora-logos >/dev/null 2>&1; then
+    echo "error: fedora-logos came in after all" >&2
+    exit 1
+fi
 
 THEME=/usr/share/plymouth/themes/immutable-kiosk
 mkdir -p "${THEME}"
@@ -88,13 +94,13 @@ DeviceTimeout=15
 UseSimpledrm=0
 EOF
 
-# Ours is the only theme: everything else under themes/ goes (fedora-logos'
-# "charge" among them) except Plymouth's built-in text fallbacks.
+# Ours is the only theme: everything else under themes/ goes except
+# Plymouth's built-in text fallbacks.
 find /usr/share/plymouth/themes -mindepth 1 -maxdepth 1 -type d \
     ! -name immutable-kiosk ! -name text ! -name details -exec rm -rf {} +
-# fedora-logos' files (anaconda artwork, Fedora icons): the package has to
-# stay installed for the dependency above, nothing here shows any of it.
-rpm -ql fedora-logos | while read -r f; do
+# generic-logos' files: the package has to stay installed for the
+# dependency above, nothing here shows any of it.
+rpm -ql generic-logos | while read -r f; do
     case "${f}" in /usr/share/licenses/*) continue ;; esac
     if [[ -f "${f}" || -L "${f}" ]]; then rm -f "${f}"; fi
 done
