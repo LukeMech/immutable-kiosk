@@ -5,7 +5,7 @@
 
 set -ouex pipefail
 
-dnf5 install -y \
+dnf install -y \
     cage \
     wlr-randr \
     mesa-dri-drivers \
@@ -64,7 +64,7 @@ systemctl set-default graphical.target
 #   kmsconvt@) would dangle, so they go too.
 systemctl mask getty@tty1.service
 if rpm -q kmscon >/dev/null 2>&1; then
-    dnf5 -y remove kmscon
+    dnf -y remove kmscon
 fi
 find /etc/systemd /usr/lib/systemd -lname '*kmscon*' -print -delete
 

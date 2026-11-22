@@ -19,7 +19,7 @@
 
 set -ouex pipefail
 
-dnf5 install -y shim-ia32 grub2-efi-ia32
+dnf install -y shim-ia32 grub2-efi-ia32
 
 # Where everything landed -- the log answers "which layout" at a glance.
 rpm -ql shim-ia32 grub2-efi-ia32 | grep -i '\.efi$' || true
@@ -28,7 +28,7 @@ find /usr/lib/efi /usr/lib/bootupd/updates -maxdepth 6 -iname '*.efi' 2>/dev/nul
 if [[ -d /usr/lib/bootupd/updates/EFI ]] && ! find /usr/lib/bootupd/updates -iname 'BOOTIA32.EFI' | grep -q .; then
     # Old layout: regenerate bootupd's payload so it includes the ia32 files.
     mkdir -p /boot/efi
-    dnf5 reinstall -y shim-x64 grub2-efi-x64 shim-ia32 grub2-efi-ia32
+    dnf reinstall -y shim-x64 grub2-efi-x64 shim-ia32 grub2-efi-ia32
     bootupctl backend generate-update-metadata
     rm -rf /boot/efi/EFI
 fi

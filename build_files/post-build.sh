@@ -9,7 +9,7 @@ remove_if_installed() {
     local pkg
     for pkg in "$@"; do
         if rpm -q "${pkg}" >/dev/null 2>&1; then
-            dnf5 -y remove "${pkg}"
+            dnf -y remove "${pkg}"
         fi
     done
 }
@@ -60,10 +60,10 @@ remove_if_installed $(rpm -qa --qf '%{NAME}\n' 'qemu-user-static*')
 # dependency for every later dnf here and in derived images.)
 remove_if_installed sos
 
-dnf5 -y autoremove
-dnf5 -y clean all
+dnf -y autoremove
+dnf -y clean all
 
-# dnf5 remove also removes whatever depends on what's removed: make sure
+# dnf remove also removes whatever depends on what's removed: make sure
 # nothing the kiosk needs went with it.
 for pkg in bootc ostree skopeo podman kernel-core NetworkManager NetworkManager-wifi \
     cage wlr-randr python3 python3-gobject gtk4 webkitgtk6.0 mesa-dri-drivers \

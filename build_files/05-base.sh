@@ -3,7 +3,7 @@
 
 set -ouex pipefail
 
-dnf5 install -y \
+dnf install -y \
     glibc-langpack-en \
     glibc-langpack-pl \
     NetworkManager \

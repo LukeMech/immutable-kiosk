@@ -232,7 +232,7 @@ early_microcode() {
         echo "warning: no Atom microcode under ${UCODE_DIR}: initramfs without early microcode" >&2
         return 0
     fi
-    command -v cpio >/dev/null || dnf5 install -y cpio
+    command -v cpio >/dev/null || dnf install -y cpio
     work=$(mktemp -d)
     mkdir -p "${work}/kernel/x86/microcode"
     cat "${files[@]}" > "${work}/kernel/x86/microcode/GenuineIntel.bin"

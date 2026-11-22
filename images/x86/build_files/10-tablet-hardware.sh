@@ -7,7 +7,7 @@
 
 set -ouex pipefail
 
-dnf5 install -y \
+dnf install -y \
     realtek-firmware \
     brcmfmac-firmware \
     intel-gpu-firmware \
