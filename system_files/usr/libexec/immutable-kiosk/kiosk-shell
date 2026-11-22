@@ -1,27 +1,19 @@
 #!/usr/bin/python3
-"""kiosk-shell -- the only window cage ever shows.
+"""kiosk-shell -- the only window cage shows.
 
 Two WebKit views in a stack:
-  * "hmi":      the configured HMI (Beckhoff TwinCAT HMI / TF2000 or any web
-                HMI), fullscreen. A small invisible hot corner, held for
-                ~1 s, opens Settings. If the HMI can't be reached, an error
-                page with a big "Ustawienia" button replaces it and the HMI
-                is retried every few seconds.
-  * "settings": kioskd's local page (http://127.0.0.1:8088/) -- Wi-Fi, IP,
-                HMI address, updates. On the installer ISO this is the only
-                view and shows the installer instead.
+  * "hmi":      the configured web HMI, fullscreen. A hot corner held ~1 s
+                opens Settings; an unreachable HMI gets an error page and
+                is retried.
+  * "settings": kioskd's page (http://127.0.0.1:8088/). The only view on
+                the installer ISO.
 
-A second, recovery corner (opposite the Settings one) works over both views:
-held 3 s it opens Settings > System > "Odzyskiwanie" -- the way
-back to the previous version when an update broke the HMI, Settings' own
-navigation or the Settings corner.
+A recovery corner (opposite the Settings one) held 3 s opens Settings >
+System > Recovery, even when an update broke the HMI or Settings.
 
-Two separate views rather than the HMI in an <iframe>: HMI servers commonly
-forbid framing (X-Frame-Options), and this way the HMI's page never shares a
-JavaScript context with Settings.
-
-Settings talks back through a WebKit script message handler ("kiosk") that
-only the Settings view registers.
+Separate views, not an <iframe>: HMI servers often forbid framing, and the
+HMI never shares a JavaScript context with Settings. Settings talks back
+through the "kiosk" script message handler.
 """
 
 import json
@@ -40,9 +32,7 @@ def log(*a):
 
 
 def milestone(label):
-    """A point of the kiosk's start-up, for Settings' boot timeline: kioskd
-    picks "kiosk-shell: milestone: <label>" lines out of this unit's journal
-    (their own timestamps), next to the system's."""
+    """A boot-timeline point: kioskd reads these lines from the journal."""
     log("milestone:", label)
 
 
@@ -50,13 +40,8 @@ milestone("kiosk-shell: start")
 
 
 def sandbox_works():
-    """Can bubblewrap create the namespaces WebKit's web-process sandbox needs?
-
-    If it can't, WebKitGTK doesn't fail gracefully: the UI process aborts
-    ("Connection: failed to receive credentials") as soon as the first view
-    starts its web process -- cage exits with it and systemd restarts the
-    pair every 2 s: a black screen with a blinking cursor.
-    """
+    """Can bubblewrap create the namespaces WebKit's sandbox needs? If not,
+    WebKitGTK aborts on the first web process instead of failing gracefully."""
     try:
         r = subprocess.run(
             ["bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
@@ -71,12 +56,8 @@ def sandbox_works():
 
 
 def load_webkit():
-    """WebKit comes in only after the start-up screen is up (KioskShell.setup):
-    loading it takes seconds on an Atom, which used to be seconds of black
-    between the boot splash and the kiosk. The sandbox decision has to come
-    before it. Without a sandbox the web pages still run in their own
-    processes, just not namespaced -- far better than a kiosk that never
-    comes up."""
+    """Imported only once the window is up: it takes seconds on an Atom.
+    Without a working sandbox, pages still run in their own processes."""
     global WebKit
     if "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS" not in os.environ and not sandbox_works():
         log("WebKit sandbox unavailable, starting without it")
@@ -98,10 +79,8 @@ WebKit = None  # load_webkit()
 API = "http://127.0.0.1:8088"
 SETTINGS_URL = f"{API}/"
 OSK_JS = Path("/usr/share/immutable-kiosk/web/osk.js")
-# An HMI page's own <meta name="viewport"> makes WebKit on the touch panel
-# lay it out at the panel's native width (800 px in landscape) and stretch
-# it. Removed as soon as it shows up: the page is laid out at the window's
-# real size, like Settings (index.html has no viewport meta either).
+# Pages are laid out at the window's size: an HMI's <meta name="viewport">
+# is removed as soon as it appears.
 NO_VIEWPORT_JS = """(function () {
     const drop = () => document.querySelectorAll('meta[name="viewport"]').forEach(m => m.remove());
     new MutationObserver(drop).observe(document, { childList: true, subtree: true });
@@ -111,9 +90,7 @@ NO_VIEWPORT_JS = """(function () {
 DATA = Path(GLib.get_user_data_dir()) / "immutable-kiosk"
 CACHE = Path(GLib.get_user_cache_dir()) / "immutable-kiosk"
 
-# Until the first page is up the window is see-through ("splashing"):
-# kiosk-splash's animation, under it, carries on -- even while WebKit's
-# loading keeps this process busy.
+# See-through ("splashing") until the first page: kiosk-splash shows below.
 CSS = b"""
 window, stack { background: #10151c; }
 window.splashing, window.splashing stack, window.splashing .splash { background: transparent; }
@@ -130,9 +107,7 @@ CORNERS = {
 }
 OPPOSITE = {"top-left": "bottom-right", "top-right": "bottom-left",
             "bottom-left": "top-right", "bottom-right": "top-left"}
-# Long on purpose: the corner also sits over the HMI, where nothing should
-# jump away from under a finger by accident. Settings' page says the same
-# (RECOVERY_HOLD_S in app.js).
+# Long on purpose: the corner sits over the HMI. Matches RECOVERY_HOLD_S in app.js.
 RECOVERY_HOLD_MS = 3000
 
 
@@ -151,7 +126,7 @@ def api_post(path, data, timeout=20):
 
 # ------------------------------------------------------------ rotation
 
-# Built-in panels first: that's the one the touchscreen sits on.
+# Built-in panels first: the touchscreen sits on them.
 INTERNAL_OUTPUTS = ("eDP", "DSI", "LVDS")
 
 def wlr_outputs():
@@ -200,14 +175,9 @@ def screen_scale(cfg):
 
 
 def apply_output(cfg):
-    """Rotation for every output.
-
-    The compositor's scale stays at 1, always set explicitly: a fractional
-    output scale (wlr-randr --scale 1.25) made GTK/WebKit render far bigger
-    than 125 %, and going back to 1 didn't undo it until cage restarted.
-    Screen scaling (Settings > Display) is WebKit zoom on both views instead
-    (KioskShell.apply_scale) -- sharp at any step, and it can't get stuck.
-    """
+    """Rotation and mode for every output. The compositor scale stays 1:
+    screen scaling is WebKit zoom (KioskShell.apply_scale), since a
+    fractional output scale rendered wrong and stuck until cage restarted."""
     rotation = cfg.get("rotation_effective", "landscape")
     scale = 1
     outputs = sorted(wlr_outputs(), key=lambda o: not o[0].startswith(INTERNAL_OUTPUTS))
@@ -221,8 +191,7 @@ def apply_output(cfg):
             transform = "90" if h > w else "normal"
         else:
             transform = rotation
-        # The mode (Display > Resolution) only for the built-in panel; any
-        # other output keeps its preferred one.
+        # Display > Resolution applies to the built-in panel only.
         res = cfg.get("resolution") if name.startswith(INTERNAL_OUTPUTS) else None
         mode = ["--mode", res.replace("@", "@") + ("Hz" if "@" in res else "")] if res else ["--preferred"]
         log(f"output {name} {w}x{h}: transform {transform} ({rotation}), mode {res or 'preferred'}")
@@ -232,18 +201,16 @@ def apply_output(cfg):
         if touch_transform is None:
             touch_transform = transform
             panel = name if name.startswith(INTERNAL_OUTPUTS) else ""
-    # kiosk-session applies these at the next start before anything is drawn:
-    # kiosk-splash comes up rotated already.
+    # kiosk-session applies these at the next start, before the first frame.
     try:
         CACHE.mkdir(parents=True, exist_ok=True)
         (CACHE / "outputs.tmp").write_text("".join(applied))
         (CACHE / "outputs.tmp").replace(CACHE / "outputs")
     except OSError as e:
         log("output cache:", e)
-    # Touch follows the panel: kioskd sets libinput's calibration matrix
-    # (udev) and restarts cage once if it changed -- see kioskd r_touch_set.
-    # The built-in panel's name lets kioskd turn the boot splash too.
-    # In the background: at start-up this runs before the first frame.
+    # Touch and the boot splash follow the panel (kioskd r_touch_set; it
+    # restarts cage if the calibration matrix changed). In the background:
+    # at start-up this runs before the first frame.
     if touch_transform:
         def set_touch():
             try:
@@ -256,8 +223,7 @@ def apply_output(cfg):
 
 
 def end_splash():
-    """kiosk-splash (kiosk-session) has been on screen under our window:
-    once the first page shows, it's not needed any more."""
+    """Stop kiosk-splash (started by kiosk-session) once a page shows."""
     pid = os.environ.pop("KIOSK_SPLASH_PID", "")
     if pid.isdigit():
         try:
@@ -323,36 +289,25 @@ class KioskShell(Gtk.Application):
         self.boot_reported = False
         self.ok_reported = False
         self.pending = None  # view to reveal once its first page is rendered
-        # The HMI couldn't be reached at start (no network yet, server still
-        # booting): Settings is shown instead, and the HMI replaces it the
-        # moment it loads. Settings' top bar says what's being waited for.
+        # HMI unreachable at start: Settings shows until the HMI loads.
         self.waiting_for_hmi = False
 
     # -- setup
     def do_activate(self):
-        """kiosk-splash (started before us by kiosk-session) is on screen and
-        animating while all of this runs: GTK, the rotation, WebKit and its
-        views. Then the window maps over it -- see-through, so the
-        animation stays in sight -- until the first page is rendered."""
+        """kiosk-splash animates while this starts; the window maps over it
+        see-through until the first page is rendered."""
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        # 96 dpi, said outright. WebKitGTK zooms every page by its "font DPI"
-        # over 96: GTK's gtk-xft-dpi, or -- when that isn't set -- the
-        # monitor's own, from its size in mm. The 408's panel is 172x108 mm at
-        # 1280x800: 189 dpi, every page ~2x too big (devicePixelRatio 1.966,
-        # laid out 650 px wide). Nothing in a bare cage session sets
-        # gtk-xft-dpi; set here, before any web view, it holds: a value the
-        # application sets wins over the session's.
+        # WebKitGTK zooms pages by gtk-xft-dpi / 96, or, when that's unset
+        # (as in cage), by the monitor's physical DPI: 1.97x on the 408.
+        # 1 CSS px = 1 screen px; Settings' scaling is the zoom on top.
         Gtk.Settings.get_default().set_property("gtk-xft-dpi", 96 * 1024)
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
-        # Let GTK hear about it before WebKit starts: a round trip to cage,
-        # then the events it brought (the monitor's new geometry). Without
-        # this the web process started with the monitor still 800x1280 and
-        # laid the landscape pages out 800 px wide, stretched 1.6x.
+        # Let GTK see the rotated monitor before WebKit starts.
         Gdk.Display.get_default().sync()
         ctx = GLib.MainContext.default()
         while ctx.pending():
@@ -367,20 +322,15 @@ class KioskShell(Gtk.Application):
         splash = Gtk.Box(halign=Gtk.Align.FILL, valign=Gtk.Align.FILL)
         splash.add_css_class("splash")
         self.stack.add_named(splash, "splash")
-        # WebKit comes in only once the window is on the screen (painted):
-        # a view created and loading before that never got its size -- the
-        # page measured 0x0, the zoom came out NaN, and in landscape the
-        # pages ended up ~1.6x too big after every start (measured under a
-        # headless cage: created after the window, 1280x800 at zoom 1.0).
-        # The window is see-through meanwhile; kiosk-splash animates below.
+        # WebKit loads only after the window's first frame (on_first_map):
+        # loading it takes seconds, and the splash must stay smooth meanwhile.
         self.win.fullscreen()
         self.win.connect("map", self.on_first_map)
         self.win.present()
         milestone("kiosk-shell: window sent")
 
     def on_first_map(self, win):
-        """The window's first frame actually drawn: from here it covers
-        kiosk-splash (the boot timeline shows any gap)."""
+        """After the window's first painted frame: set up WebKit."""
         clock = win.get_frame_clock()
         state = {}
 
@@ -391,13 +341,10 @@ class KioskShell(Gtk.Application):
             self.watch_display()
         state["id"] = clock.connect("after-paint", painted)
 
-    # -- display: what cage and GTK actually use
+    # -- display: what cage and GTK use
     def watch_display(self):
-        """The page came up ~2x too big with Settings' scaling at 100 %: GTK
-        drew at a scale above 1. Whenever the window's scale or the set of
-        outputs changes, look again: a scale above 1 gets the output
-        configuration (scale 1, the rotation) applied once more, and what's
-        there goes to kioskd -- Settings > Display shows it."""
+        """Report the window's scale and the outputs (with their modes) to
+        kioskd whenever they change: Settings > Display lists the modes."""
         self.display_pending = False
         self.win.get_surface().connect("notify::scale", lambda *a: self.display_changed())
         Gdk.Display.get_default().get_monitors().connect("items-changed", lambda *a: self.display_changed())
@@ -442,11 +389,9 @@ class KioskShell(Gtk.Application):
         if self.cfg.get("mode") != "installer":
             (DATA / "hmi").mkdir(parents=True, exist_ok=True)
             CACHE.mkdir(parents=True, exist_ok=True)
-            # Persistent: TwinCAT HMI's login session survives a restart.
+            # Persistent session and cookies: an HMI login with an expiry
+            # survives a reboot (session-only cookies don't, by design).
             self.hmi_session = WebKit.NetworkSession.new(str(DATA / "hmi"), str(CACHE / "hmi"))
-            # Cookies on disk explicitly (SQLite), so a login with an expiry
-            # survives a reboot. A pure session cookie (no expiry) is still
-            # dropped at restart -- that one is the HMI server's choice.
             self.hmi_session.get_cookie_manager().set_persistent_storage(
                 str(DATA / "hmi" / "cookies.sqlite"), WebKit.CookiePersistentStorage.SQLITE)
             self.hmi = self.make_hmi_view()
@@ -458,15 +403,12 @@ class KioskShell(Gtk.Application):
             self.apply_hmi_config(force_load=True)
         self.apply_scale()
 
-        # The start-up screen stays until the view's first page is rendered
-        # (on_any_load_changed) -- no blank WebKit view in between -- or 30 s.
+        # The splash stays until the first page is rendered, at most 30 s.
         if self.hmi and self.cfg.get("hmi_url"):
-            # Settings' page loads once the HMI is up (or Settings is opened):
-            # two web processes starting side by side on a Bay Trail Atom
-            # slowed the HMI's first paint down.
+            # Settings loads after the HMI: two web processes starting at
+            # once slow the HMI's first paint on an Atom. At the latest after
+            # 60 s, in case the HMI server never answers.
             self.pending = "hmi"
-            # An HMI server that accepts but never answers would keep
-            # Settings from ever loading (and the boot from counting as good).
             GLib.timeout_add_seconds(60, self.ensure_settings)
         else:
             self.pending = "settings"  # first boot: nothing to show yet but Settings
@@ -475,9 +417,8 @@ class KioskShell(Gtk.Application):
         threading.Thread(target=self.listen_events, daemon=True).start()
 
     def listen_events(self):
-        """kioskd's live events (/api/events, the Settings page reads the
-        same): a network change retries an HMI that couldn't be reached,
-        right then instead of at the next retry tick."""
+        """kioskd's live events: a network change retries an unreachable HMI
+        at once."""
         while True:
             try:
                 req = urllib.request.Request(API + "/api/events")
@@ -514,8 +455,7 @@ class KioskShell(Gtk.Application):
         return GLib.SOURCE_REMOVE
 
     def splash_over(self):
-        """The first view is in: once the stack's crossfade from the see-through
-        start-up page is done, the window turns opaque and kiosk-splash goes."""
+        """After the crossfade to the first view: window opaque, splash gone."""
         if not self.win.has_css_class("splashing") or getattr(self, "splash_ending", False):
             return
         self.splash_ending = True
@@ -527,7 +467,7 @@ class KioskShell(Gtk.Application):
         GLib.timeout_add(self.stack.get_transition_duration() + 150, finish)
 
     def wait_for_config(self):
-        # kioskd starts first (unit ordering), but give it a moment on a slow eMMC.
+        # kioskd starts first, but may be slow on eMMC.
         for _ in range(60):
             try:
                 return api_get("/api/config")
@@ -539,11 +479,7 @@ class KioskShell(Gtk.Application):
 
     def common_view_setup(self, view):
         s = view.get_settings()
-        # WebKit honours <meta name="viewport" content="width=device-width">
-        # on a touch screen -- and after cage (re)started in landscape it
-        # took "device-width" as the panel's portrait 800 px: every page laid
-        # out 800 px wide and stretched to 1280 (fine in portrait, fine after
-        # rotating while running). A kiosk page is as wide as the window.
+        # A kiosk page is as wide as the window: ignore viewport meta tags.
         feats = WebKit.Settings.get_all_features()
         for i in range(feats.get_length()):
             f = feats.get(i)
@@ -586,8 +522,7 @@ class KioskShell(Gtk.Application):
         box = Gtk.Box(width_request=72, height_request=72)
         box.add_css_class("hotcorner")
         press = Gtk.GestureLongPress(touch_only=False)
-        # GTK's maximum (gtk-long-press-time x 2 = ~1 s); 4.0 was rejected
-        # with a Gtk-CRITICAL and silently left at the default ~0.5 s.
+        # ~1 s, GTK's maximum (larger factors are rejected).
         press.set_delay_factor(2.0)
         press.connect("begin", lambda *a: box.add_css_class("armed"))
         press.connect("end", lambda *a: box.remove_css_class("armed"))
@@ -597,9 +532,9 @@ class KioskShell(Gtk.Application):
         return box
 
     def make_recovery_corner(self):
-        """Held RECOVERY_HOLD_MS: Settings > System > Odzyskiwanie.
-        GestureLongPress can't wait longer than ~1 s, so a drag gesture plus
-        our own timer; moving the finger away cancels."""
+        """Held RECOVERY_HOLD_MS: Settings > System > Recovery. A drag
+        gesture plus a timer (GestureLongPress caps at ~1 s); moving away
+        cancels."""
         box = Gtk.Box(width_request=72, height_request=72)
         box.add_css_class("hotcorner")
         box.add_css_class("recovery")
@@ -635,10 +570,8 @@ class KioskShell(Gtk.Application):
         return box
 
     def open_recovery(self):
-        """Settings' page with #recovery: it opens System and scrolls to the
-        recovery card (a fragment change if the page is already there, a
-        fresh load otherwise -- either way app.js handles it)."""
-        log("recovery corner held: Settings > System > Odzyskiwanie")
+        """Settings with #recovery: app.js opens System at the recovery card."""
+        log("recovery corner held: Settings > System > Recovery")
         self.settings_loaded = True
         self.settings.load_uri(SETTINGS_URL + "#recovery")
         self.show("settings")
@@ -660,8 +593,7 @@ class KioskShell(Gtk.Application):
         self.splash_over()
         if self.hmi:
             self.hotcorner.set_visible(name == "hmi")
-        # Settings' page keeps running behind the HMI: tell it when it's on
-        # screen, so it reloads on kioskd's events (network, battery...) only then.
+        # Settings runs behind the HMI: it refreshes on events only while shown.
         if name == "settings":
             self.settings.evaluate_javascript("window.kioskShown && window.kioskShown()", -1,
                                               None, None, None, None, None)
@@ -677,7 +609,6 @@ class KioskShell(Gtk.Application):
 
         ucm = self.hmi.get_user_content_manager()
         ucm.remove_all_scripts()
-        # Always, keyboard or not: no viewport meta of the HMI's (NO_VIEWPORT_JS).
         ucm.add_script(WebKit.UserScript.new(
             NO_VIEWPORT_JS, WebKit.UserContentInjectedFrames.ALL_FRAMES,
             WebKit.UserScriptInjectionTime.START, None, None))
@@ -689,10 +620,8 @@ class KioskShell(Gtk.Application):
             self.load_hmi()
 
     def place_corners(self):
-        """Settings corner where Display says, recovery corner opposite it.
-        Removed and added back, not just re-aligned: a changed halign/valign
-        on an overlay child that's already placed didn't move it (the
-        recovery corner stayed bottom-left whatever Display said)."""
+        """Settings corner where configured, recovery corner opposite. Re-added
+        rather than re-aligned: GTK doesn't move a placed overlay child."""
         corner = self.cfg.get("settings_corner", "top-right")
         if corner not in CORNERS:
             corner = "top-right"
@@ -705,8 +634,7 @@ class KioskShell(Gtk.Application):
         log(f"corners: settings {corner}, recovery {OPPOSITE[corner]}")
 
     def apply_scale(self):
-        """Screen scaling = WebKit zoom: Settings (and its keyboard) at the
-        scale, the HMI at scale x its own zoom (the HMI tab's setting)."""
+        """Screen scaling is WebKit zoom; the HMI also gets its own zoom."""
         if not hasattr(self, "settings"):
             return  # before setup(): it applies the scale itself
         scale = screen_scale(self.cfg)
@@ -757,7 +685,7 @@ class KioskShell(Gtk.Application):
         self.cancel_retry()
         secs = int(self.cfg.get("retry_seconds", 10))
         if self.waiting_for_hmi:
-            secs = min(secs, 5)  # Settings is on screen meanwhile: try often
+            secs = min(secs, 5)  # Settings shows meanwhile: retry often
 
         def fire():
             self.retry_source = None
@@ -767,8 +695,7 @@ class KioskShell(Gtk.Application):
         return secs
 
     def t(self, pl, en):
-        """The error page's own texts, in Settings' language (en by default;
-        Settings itself is translated by i18n.js)."""
+        """kiosk-shell's own texts in Settings' language (English by default)."""
         return pl if (self.cfg or {}).get("language", "en") == "pl" else en
 
     def show_error(self, title, detail, failing_uri):
@@ -786,9 +713,7 @@ class KioskShell(Gtk.Application):
             return False
         log("HMI load failed:", uri, error.message)
         if self.pending == "hmi":
-            # Start-up and no HMI: Settings instead of the error page (it
-            # shows the network and what's being waited for); the HMI keeps
-            # being tried behind it and takes over once it loads.
+            # At start-up: Settings instead of the error page until the HMI loads.
             log("HMI not reachable at start: Settings until it is")
             self.waiting_for_hmi = True
             self.pending = "settings"
@@ -802,7 +727,7 @@ class KioskShell(Gtk.Application):
         host = urlsplit(uri).hostname or ""
         hmi_host = urlsplit(self.cfg.get("hmi_url", "")).hostname or ""
         if self.cfg.get("accept_self_signed", True) and host and host == hmi_host:
-            # TwinCAT HMI's own self-signed certificate -- only for the HMI host.
+            # The HMI's self-signed certificate, for the HMI host only.
             log(f"accepting certificate for {host} ({errors})")
             self.hmi_session.allow_tls_certificate_for_host(certificate, host)
             view.load_uri(uri)
@@ -815,11 +740,10 @@ class KioskShell(Gtk.Application):
         return True
 
     def on_any_load_changed(self, view, event):
-        """First page rendered by either view -- the HMI, its error page or
-        Settings: cage, GTK, WebKit and kioskd all work. kioskd tells
-        boot-counter this boot is good (automatic rollback)."""
+        """The first page rendered by any view means the boot is good
+        (kioskd tells boot-counter; see automatic rollback)."""
         if event == WebKit.LoadEvent.FINISHED and view is self.settings:
-            self.tell_settings_waiting()  # a (re)loaded page starts without it
+            self.tell_settings_waiting()  # a reloaded page has lost it
         if event == WebKit.LoadEvent.FINISHED and self.pending == ("hmi" if view is self.hmi else "settings"):
             self.reveal()
         if event == WebKit.LoadEvent.FINISHED and not self.ok_reported:
@@ -843,16 +767,14 @@ class KioskShell(Gtk.Application):
             self.cancel_retry()
         elif event == WebKit.LoadEvent.FINISHED and not self.hmi_error:
             if self.waiting_for_hmi:
-                # Reachable at last: the HMI replaces Settings shown meanwhile.
                 log("HMI reachable: switching to it")
                 self.set_waiting(False)
                 if self.stack.get_visible_child_name() == "settings":
                     self.show("hmi")
-            # The HMI is up: Settings may load now, with a head start for the
-            # HMI's own scripts.
+            # Settings loads now, after a head start for the HMI's scripts.
             GLib.timeout_add_seconds(3, self.ensure_settings)
             if not self.boot_reported:
-                # Settings > System shows "HMI visible N s after boot".
+                # For Settings' boot timing.
                 self.boot_reported = True
                 threading.Thread(target=self.report_hmi_shown, daemon=True).start()
 
