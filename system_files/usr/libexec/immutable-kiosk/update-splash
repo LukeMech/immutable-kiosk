@@ -1,0 +1,15 @@
+#!/bin/sh
+# immutable-kiosk-update-splash.service, at shutdown: with an update staged,
+# the boot screen shows it being installed. plymouth (plymouth-reboot or
+# -poweroff) may still be starting: wait for it up to 3 s.
+[ -e /run/ostree/staged-deployment ] || exit 0
+i=0
+while [ "$i" -lt 30 ]; do
+    if plymouth --ping 2>/dev/null; then
+        plymouth change-mode --updates
+        exit 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+done
+exit 0

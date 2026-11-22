@@ -1,7 +1,5 @@
-# A variant (what build.yml matrixes over) is one OS image:
-# images/<suffix>/{build_files,system_files}/, package "immutable-kiosk-<suffix>".
-#
-# Not tied to one device -- devices.toml entries pick a variant.
+# One OS image (build.yml's matrix): images/<suffix>/{build_files,system_files}/,
+# package "immutable-kiosk-<suffix>". devices.toml entries pick a variant.
 
 [x86]
 suffix = "x86"

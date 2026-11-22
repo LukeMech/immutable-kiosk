@@ -23,8 +23,8 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
                      ▼                                                    ▼
              HMI view (WebKit)                              Settings view (WebKit)
      https://<hmi-ip>:1020/  fullscreen        http://127.0.0.1:8088/  ◄── kioskd (root)
-     hold a corner ~2 s ──────────────────────►  HMI · Wi-Fi · Sieć · Ekran · System
-     HMI unreachable → error page with ⚙        "← Wróć do HMI"
+     hold a corner ~1 s ──────────────────────►  HMI · Network · Display · System
+     HMI unreachable → error page with ⚙        "← Back to HMI"
 ```
 
 - **kiosk-shell** ([`kiosk-shell`](system_files/usr/libexec/immutable-kiosk/kiosk-shell),
@@ -57,17 +57,18 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
    power-on -- to be confirmed on the 408; Secure Boot can stay on, the
    bootloader is Fedora's signed shim).
 4. The installer page lists the disks, internal eMMC preselected → hold
-   **Przytrzymaj 3 s, aby zainstalować**. It streams the compressed disk image
+   **Hold for 3 s to install**. It streams the compressed disk image
    onto the eMMC with a real progress bar (MB/s, time left), reads it back
    to verify, then asks you to pull the stick and reboot.
 5. First boot grows the root partition to the whole eMMC and opens Settings
-   (no HMI configured yet): Wi-Fi → HMI address → *Zapisz i otwórz HMI*.
+   (no HMI configured yet): Wi-Fi → HMI address → *Save and open HMI*.
 
 ## Updates
 
-Settings → **System**: *Sprawdź aktualizacje* / *Aktualizuj* (`bootc upgrade`,
-the new image starts after a restart), rollback to the previous image, and
-switching to another image (`bootc switch`, e.g. a `testing-<branch>` tag).
+Settings → **System**: *Check for updates* / *Update* (`bootc upgrade`, the
+new image starts after a restart), the update channel -- *Stable* (`:latest`,
+releases) or *Testing* (`:dev`, every build of the `dev` branch) -- rollback
+to the previous image, and switching to any other image (`bootc switch`).
 The enforced signature policy (from immutable-sbc) only accepts
 `ghcr.io/lukemech/*` images signed with the repo's cosign key.
 
@@ -92,8 +93,25 @@ immutable-sbc / lm-server).
 | Path | What |
 |---|---|
 | `Containerfile`, `build_files/` | the system image: Fedora bootc 45, numbered hooks as in immutable-sbc. `05-base` network/zram/growroot, `10-kiosk` cage + WebKit + services, `20-efi-ia32` 32-bit UEFI boot (shim/GRUB ia32 + bootupd metadata) |
-| `images/variants.toml`, `images/<variant>/` | OS variants (`x86` today: tablet Wi-Fi firmware, thermald, and `initramfs.sh`, run last: a slimmer initramfs without network/LVM/RAID/LUKS/cloud stacks, i915 for early KMS) |
-| `images/devices.toml` | physical devices: variant, DMI match, default rotation, whether it needs 32-bit UEFI; shipped into the image for runtime defaults |
+| `images/variants.toml`, `images/<variant>/` | OS variants (`x86` today: tablet Wi-Fi firmware, thermald, and `initramfs.sh`, run last: a slimmer initramfs without network/LVM/RAID/LUKS/cloud stacks, early KMS or other CPUs' microcode) |
+| `images/devices.toml` | physical devices: variant, DMI match, default rotation, panel orientation, whether it needs 32-bit UEFI; build-time only (the build derives the default-rotation table and kernel arguments from it) |
 | `system_files/` | copied onto `/`: kioskd, kiosk-shell, the web page, systemd units, signature policy |
 | `installer/` | the installer image (FROM the system image + payload + installer mode) and the ISO boot menu |
 | `scripts/` | `ensure-efi-ia32.sh` (disk image boots on 32-bit UEFI), `iso-add-ia32.sh` (installer ISO boots on 32-bit UEFI), `shrink-raw.sh` (10 GiB disk image → its contents + 256 MiB), `check-iso.sh`, `make-payload.sh`; changelog helpers from immutable-sbc |
+
+## Commit messages
+
+Every commit subject starts with its type ([Conventional Commits](https://www.conventionalcommits.org/)),
+so the release notes can group them -- build.yml lists *Features*, *Fixes* and
+*Other changes* from them:
+
+- `feat: ...` -- something new for the user (a setting, a screen, a behaviour);
+- `fix: ...` -- something that was broken works again;
+- `chore:`, `ci:`, `docs:`, `refactor:`, `perf:` -- anything else (*Other changes*).
+
+A scope is welcome where it helps: `fix(updater): ...`, `feat(settings): ...`.
+Development happens on `dev` (the testing channel); `main` is stable, and
+merging `dev` into it promotes the tested build ([promote.yml](.github/workflows/promote.yml)).
+Everything in the repository -- comments, docs, commit messages -- is in
+English; the UI is English by default with Polish as an option
+([i18n.js](system_files/usr/share/immutable-kiosk/web/i18n.js)).

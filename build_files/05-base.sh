@@ -3,13 +3,12 @@
 
 set -ouex pipefail
 
-dnf5 install -y \
+dnf install -y \
     glibc-langpack-en \
     glibc-langpack-pl \
     NetworkManager \
     NetworkManager-wifi \
     wpa_supplicant \
-    zram-generator \
     cloud-utils-growpart \
     btrfs-progs \
     gdisk \
@@ -17,22 +16,63 @@ dnf5 install -y \
     jq
 
 systemctl enable NetworkManager.service
+systemctl enable immutable-kiosk-zram.service
 
-# Root grows to fill the disk on first boot (disk images are built small; see
-# immutable-sbc, where this service comes from).
+# Root grows to fill the disk on first boot (images are built small).
 systemctl enable immutable-kiosk-growroot.service
 
-# Time zone for the clock in Settings and the journal -- /etc stays writable,
-# so a different one is still just `timedatectl set-timezone`.
+# /etc stays writable: `timedatectl set-timezone` still works.
 ln -sf ../usr/share/zoneinfo/Europe/Warsaw /etc/localtime
 
-# A display on a wall never sleeps: no suspend/hibernate at all, whatever
-# asks for it (logind's idle/lid/power-key handling is set to ignore too, in
-# system_files/usr/lib/systemd/logind.conf.d/).
+# A wall display never sleeps (logind ignores idle/lid/power key too:
+# logind.conf.d).
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 
-# fedora-bootc enables bootc-fetch-apply-updates.timer, which pulls AND
-# reboots on its own schedule -- a screen in use going dark for a reboot is
-# exactly what an HMI panel mustn't do. Updates are started from Settings
-# instead (ROADMAP: an optional "download automatically, apply on button").
+# This timer pulls AND reboots on its own; a kiosk must not go dark in use.
+# Updates are started from Settings instead.
 systemctl disable bootc-fetch-apply-updates.timer || true
+
+# ConditionNeedsUpdate=/etc units run before sysinit.target on the first boot
+# after each update, and on the Atom two of them cost ~18 s:
+# - atomic-update-ca-trust (15 s on eMMC): replaced by immutable-kiosk-ca-trust,
+#   which runs after the kiosk is up, at idle priority, only on real changes.
+if [[ -f /usr/lib/systemd/system/atomic-update-ca-trust.service ]]; then
+    systemctl mask atomic-update-ca-trust.service
+fi
+systemctl enable immutable-kiosk-ca-trust.service
+# - systemd-hwdb-update (3 s): hwdb is built into /usr instead, so the unit's
+#   conditions are false (tmpfiles removes a stale /etc copy).
+systemd-hwdb update --usr
+rm -f /etc/udev/hwdb.bin
+test -s /usr/lib/udev/hwdb.bin
+
+# fedora-bootc services a kiosk never uses (each costs boot time on the Atom):
+# no directory users (sssd), no LVM/RAID, no mDNS, no homed, udisks2 on demand
+# only, no LUKS, and sshd could never let anyone in (no passwords, no keys;
+# debugging is the tty9 debug shell).
+for unit in sssd.service lvm2-monitor.service lvm-devices-import.path \
+    lvm-devices-import.service dm-event.socket lvm2-lvmpolld.socket \
+    mdmonitor.service raid-check.timer avahi-daemon.service avahi-daemon.socket \
+    systemd-homed.service systemd-homed-activate.service udisks2.service \
+    clevis-luks-askpass.path sshd.service; do
+    if systemctl list-unit-files "${unit}" >/dev/null 2>&1; then
+        systemctl disable "${unit}" || true
+    fi
+done
+
+# Generators run on every boot before any unit (seconds on the Atom); masked
+# with /dev/null symlinks in /etc:
+# - podman quadlet (system + user): no quadlet units here;
+# - kdump-dep-generator.sh, rpc-pipefs-generator: no kdump, no NFS;
+# - zram-generator: its swap sits in swap.target, which every tmpfs mount
+#   (incl. the kiosk's /run/user) waits for. immutable-kiosk-zram.service sets
+#   up the same swap without blocking.
+mkdir -p /etc/systemd/system-generators /etc/systemd/user-generators
+for g in podman-system-generator kdump-dep-generator.sh rpc-pipefs-generator zram-generator; do
+    if [[ -e /usr/lib/systemd/system-generators/${g} ]]; then
+        ln -sf /dev/null "/etc/systemd/system-generators/${g}"
+    fi
+done
+if [[ -e /usr/lib/systemd/user-generators/podman-user-generator ]]; then
+    ln -sf /dev/null /etc/systemd/user-generators/podman-user-generator
+fi

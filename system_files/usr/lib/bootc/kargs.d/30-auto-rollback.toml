@@ -1,0 +1,4 @@
+# Auto-rollback (boot-counter) needs failed boots to reboot: after a kernel
+# panic, and instead of an initramfs emergency shell nobody can type into.
+# To debug, edit the GRUB entry (USB keyboard, Esc) and drop these.
+kargs = ["panic=10", "rd.shell=0", "rd.emergency=reboot"]

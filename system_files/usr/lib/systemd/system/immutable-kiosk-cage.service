@@ -1,41 +1,51 @@
-# cage on tty1 as the kiosk user, started by systemd directly -- no display
-# manager, no greeter. Follows cage's own wiki ("Starting Cage on boot with
-# systemd"): PAMName=login gives the logind session that lets an unprivileged
-# user open the DRM and input devices on seat0.
+# cage on tty1 as kiosk, no display manager (per cage's wiki): the PAM session
+# gives the logind session needed for DRM/input on seat0.
+# Not after systemd-user-sessions (waits for network); the immutable-kiosk
+# PAM stack omits pam_nologin instead.
 [Unit]
 Description=Kiosk (cage + kiosk-shell) on tty1
-After=systemd-user-sessions.service dbus.socket systemd-logind.service immutable-kiosk-backend.service
+After=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
+# Splash handover like GDM: `plymouth deactivate` (ExecStartPre) instead of
+# plymouth-quit keeps its last frame up until cage draws; kioskd sends
+# `plymouth quit --retain-splash` once the kiosk has drawn.
+After=plymouth-start.service plymouth-quit.service
+Conflicts=plymouth-quit.service
 ConditionPathExists=/dev/tty0
-# Never give up: with the default limit (5 starts in 10 s) a few early
-# failures left the unit dead, and tty1 showed a login prompt instead.
+# Never give up (the default start limit could leave tty1 without a kiosk).
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=kiosk
 WorkingDirectory=/var/home/kiosk
-# i915 on Bay Trail can come up after this unit starts (slower still from a
-# USB stick over OTG): cage then finds no GPU and exits. Wait up to 30 s
-# for a DRM card first; after that, start anyway and let Restart= retry.
+# i915 can appear after this starts; cage would then fail or take simpledrm.
+# Wait up to 30 s for a non-simple-framebuffer card, then start anyway.
 # ($$: systemd expands $ itself.)
-ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do ls /dev/dri/card* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo "no /dev/dri/card* after 30 s" >&2'
-PAMName=login
+ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do for c in /sys/class/drm/card[0-9]; do d=$$(readlink -f "$$c/device/driver"); [ -n "$$d" ] && [ "$${d##*/}" != simple-framebuffer ] && exit 0; done; sleep 0.5; done; echo "no GPU (only a firmware framebuffer) after 30 s" >&2'
+# The splash is in its rest pose already (kioskd's unit sent "handover"):
+# release the GPU with that frame on screen for kiosk-splash to continue.
+# "+": as root; "-": no splash is fine.
+ExecStartPre=-+/usr/bin/plymouth deactivate
+PAMName=immutable-kiosk
 Environment=XDG_SESSION_TYPE=wayland
-# -d: no client-side decorations, kiosk-shell is the only (fullscreen) window.
-ExecStart=/usr/bin/cage -d -- /usr/libexec/immutable-kiosk/kiosk-shell
+# "user-light": a seat session without the per-user service manager
+# (user@.service). pam_systemd waited for that to start -- 4.7 s on the 408
+# at boot, black screen included. Nothing in the kiosk uses it.
+Environment=XDG_SESSION_CLASS=user-light
+# -d: no client-side decorations.
+ExecStart=/usr/bin/cage -d -- /usr/libexec/immutable-kiosk/kiosk-session
 Restart=always
 RestartSec=2
 UtmpIdentifier=tty1
 UtmpMode=user
 TTYPath=/dev/tty1
-TTYReset=yes
+# No TTYReset/TTYVTDisallocate: they'd switch tty1 to text mode and blank
+# plymouth's frame before cage draws.
 TTYVHangup=yes
-TTYVTDisallocate=yes
 StandardInput=tty-fail
 StandardOutput=journal
-# Also on the console: while cage runs it owns the screen, so this is only
-# seen when cage/kiosk-shell dies -- exactly when the error is needed.
+# Console output only shows when cage dies -- exactly when it's needed.
 StandardError=journal+console
 
 [Install]

@@ -1,7 +1,3 @@
-# Don't wait for a TPM2 at boot. The tablets' firmware announces one, so
-# systemd-tpm2-generator makes boot wait for /dev/tpm0 and /dev/tpmrm0, but
-# the kernel never creates them there: boot hangs ~90 s per device and logs
-# "Timed out waiting for device dev-tpm0.device / dev-tpmrm0.device".
-# Nothing here uses the TPM (no TPM-sealed LUKS, no measured-boot policy).
-# Same argument on the installer ISO (installer/iso.yaml).
+# The firmware announces a TPM2 the kernel never exposes: boot would wait
+# ~90 s per /dev/tpm* device. Nothing uses the TPM. Also in installer/iso.yaml.
 kargs = ["systemd.tpm2_wait=0"]

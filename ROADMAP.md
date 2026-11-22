@@ -5,7 +5,7 @@
 - [ ] **PIN for Settings** (optional, off by default): hot corner → PIN pad
       (numeric `osk.js` layout) before Settings opens. kioskd stores a hash;
       the API then also requires a session token.
-- [ ] **Updates from a USB stick**: Settings → System → *Z pendrive'a*:
+- [ ] **Updates from a USB stick**: Settings → System → *From a USB stick*:
       kioskd watches for a stick with `immutable-kiosk-*.oci.tar`, verifies its
       cosign signature, `bootc switch --transport oci-archive …`; release
       workflow publishes that archive. For sites without internet.

@@ -1,0 +1,21 @@
+# An update's boot entry is written at shutdown, when ostree-finalize-staged
+# installs it (its ExecStop). This unit stops right after it (ordered Before=
+# it) and gives the new entries the boot screen's look (accent, language:
+# kioskd's overlay initramfs), so the update's first boot has it already.
+[Unit]
+Description=Boot screen look for a just-installed update's boot entry
+DefaultDependencies=no
+After=local-fs.target boot.mount
+Before=ostree-finalize-staged.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/libexec/immutable-kiosk/kioskd --splash-look
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+# Not via zram-generator/swap.target: all tmpfs mounts (incl. /run/user/<uid>)
+# order after swap.target, which would delay the kiosk session.
+[Unit]
+Description=Compressed swap in RAM (zram)
+ConditionPathExists=!/dev/zram0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/immutable-kiosk/zram-swap
+
+[Install]
+WantedBy=multi-user.target

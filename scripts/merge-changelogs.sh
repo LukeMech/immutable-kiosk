@@ -1,13 +1,7 @@
 #!/bin/bash
-#
-# Release changelog's package section, from each variant's diff-packages.sh output
-# (package-changelog-<variant>.md/.tsv in <artifact-dir>). Printed to stdout.
-#
-# With several variants, a change that's identical in every one of them (same package,
-# same previous and new version) goes into one "All images" section; each variant's
-# own section then keeps only what's specific to it. Only done when every variant has
-# a TSV -- an initial build or a missing artifact would make "shared by all" a lie,
-# so that case falls back to each variant's full section as-is.
+# Release changelog package section from each variant's diff-packages.sh output.
+# Changes identical in every variant go into "All images", the rest per
+# variant -- only if every variant has a TSV; otherwise each full section as-is.
 #
 # Usage: merge-changelogs.sh <artifact-dir> <variant>...
 
@@ -24,8 +18,7 @@ COMMON="$(mktemp)"
 REST="$(mktemp)"
 trap 'rm -f "${COMMON}" "${REST}"' EXIT
 
-# A changelog is a nicety, not a reason to block the release -- fall back to a
-# placeholder if the artifact's missing.
+# A missing changelog must not block the release.
 print_variant_md() {
     local md="${DIR}/package-changelog-${1,,}.md"
     if [[ -f "${md}" ]]; then
@@ -57,8 +50,7 @@ if [[ "${ALL_HAVE_TSV}" -eq 0 ]]; then
     exit 0
 fi
 
-# Rows present in every variant's TSV, in the first variant's order (already sorted
-# by name within each bucket).
+# Rows in every variant's TSV, in the first variant's order.
 TSVS=()
 for VARIANT in "${VARIANTS[@]}"; do
     TSVS+=("${DIR}/package-changelog-${VARIANT,,}.tsv")

@@ -1,20 +1,9 @@
 #!/bin/bash
 # iso-add-ia32.sh <in.iso> <out.iso>
-#
-# Makes an image-builder bootc-generic-iso boot on 32-bit UEFI (HP Pro
-# Tablet 408): image-builder only puts the x64 shim/GRUB in the ISO, so this
-# adds BOOTIA32.EFI (shim ia32), grubia32.efi and mmia32.efi next to them --
-# in the EFI boot image (images/efiboot.img, the appended ESP the firmware
-# boots from) and in /EFI/BOOT on the ISO itself. grubia32.efi reads the same
-# EFI/BOOT/grub.cfg as grubx64.efi and boots the x86_64 kernel through the
-# EFI handover protocol.
-#
-# The ISO is then re-mastered with the same xorrisofs options image-builder
-# uses (org.osbuild.xorrisofs: hybrid MBR, GPT-appended ESP, BIOS El Torito)
-# and its checksum implanted again (org.osbuild.implantisomd5).
-#
-# Run INSIDE the installer image (it holds the signed ia32 files in
-# /boot/efi/EFI, xorriso, mtools, grub2-pc-modules and isomd5sum):
+# image-builder's ISO has only the x64 shim/GRUB: add the ia32 ones to the EFI
+# boot image (the appended ESP) and /EFI/BOOT, sharing grubx64's grub.cfg.
+# Re-mastered with image-builder's own xorrisofs options (org.osbuild.xorrisofs),
+# then implantisomd5. Run inside the installer image (signed ia32 files, tools):
 #   podman run --rm -v "$PWD:/w" -w /w <installer> bash scripts/iso-add-ia32.sh in.iso out.iso
 set -euo pipefail
 

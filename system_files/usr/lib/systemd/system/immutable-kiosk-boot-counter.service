@@ -1,0 +1,19 @@
+# Automatic rollback (see boot-counter): start writes GRUB's custom.cfg and
+# grubenv; stop arms 3 tries if the next boot is a new deployment.
+# After= means stopped before /boot unmounts and ostree finalizes.
+[Unit]
+Description=immutable-kiosk: GRUB boot counter (automatic rollback)
+# Not on the live installer ISO.
+ConditionPathExists=!/run/initramfs/live
+RequiresMountsFor=/boot /var/lib
+After=local-fs.target ostree-finalize-staged.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/immutable-kiosk/boot-counter setup
+ExecStop=/usr/libexec/immutable-kiosk/boot-counter arm
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

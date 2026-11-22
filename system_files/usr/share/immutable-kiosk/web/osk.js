@@ -1,20 +1,9 @@
 /*
- * On-screen keyboard for immutable-kiosk.
- *
- * Self-contained, no dependencies. Used two ways:
- *   - by the Settings/Installer page (<script src="osk.js">);
- *   - injected by kiosk-shell into every frame of the HMI page (WebKit user
- *     script), so TwinCAT HMI's login and text fields can be typed into
- *     without a physical keyboard.
- *
- * It appears when an editable field gets focus and types into it with
- * document.execCommand("insertText"), which fires the same input events a
- * real keyboard would -- frameworks (TcHmi, React, ...) see a normal edit.
- * Everything lives in a closed shadow root, so the host page's CSS can't
- * restyle it and its CSS can't leak into the page.
- *
- * Polish letters: the "ąę" key turns the next letter into its accented
- * form (a→ą, c→ć, e→ę, l→ł, n→ń, o→ó, s→ś, z→ż, x→ź), like AltGr.
+ * On-screen keyboard. Self-contained: loaded by the Settings page and
+ * injected by kiosk-shell into every HMI frame (WebKit user script).
+ * Types with execCommand("insertText") so frameworks (TcHmi, React) see
+ * real input events. Lives in a closed shadow root, isolated from page CSS.
+ * "ąę" accents the next letter, like AltGr.
  */
 (() => {
     "use strict";
@@ -82,8 +71,8 @@
         position: relative; cursor: default;
     }
     button.fn { background: #222b36; font-size: 19px; color: #b9c5d1; }
-    button.on { background: #2f81f7; color: #fff; }
-    button.lock { background: #1f6feb; color: #fff; box-shadow: inset 0 -3px 0 #fff; }
+    button.on { background: var(--ik-accent, #2f81f7); color: #fff; }
+    button.lock { background: var(--ik-accent, #1f6feb); color: #fff; box-shadow: inset 0 -3px 0 #fff; }
     button.down { filter: brightness(1.45); }
     button.enter { background: #238636; color: #fff; }
     button sup { position: absolute; top: 4px; right: 7px; font-size: 13px; color: #8fb8ff; }
@@ -175,8 +164,7 @@
         place();
     }
 
-    // The page (Settings) adds room at the bottom only while the keyboard is
-    // up -- an event, not a class on <html>: this script also runs in HMI pages.
+    // Settings adds bottom room on this; an event since we also run in HMI pages.
     function announce(open) {
         window.dispatchEvent(new CustomEvent("kiosk-osk", { detail: { open } }));
     }
@@ -184,8 +172,7 @@
     function place() {
         if (!target || kb.hidden) return;
         const r = target.getBoundingClientRect();
-        // Field in the lower part of the screen: put the keyboard on top
-        // instead of over it (HMI pages usually can't scroll).
+        // Low field: keyboard goes on top (HMI pages usually can't scroll).
         const kbH = kb.getBoundingClientRect().height || window.innerHeight * 0.4;
         const top = r.bottom > window.innerHeight - kbH - 12 && r.top > kbH + 12;
         kb.classList.toggle("top", top);
@@ -207,7 +194,7 @@
         const el = target || document.activeElement;
         if (!el) return;
         if (document.execCommand && document.execCommand("insertText", false, text)) return;
-        // Fallback (e.g. some input types): edit the value and announce it.
+        // Fallback: edit the value and fire input.
         if ("value" in el) {
             const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? el.value.length;
             try { el.setRangeText(text, s, e, "end"); } catch (_) { el.value += text; }
@@ -318,8 +305,7 @@
     }, true);
 
     document.addEventListener("focusout", () => {
-        // Focus moving to another field re-shows it right away; anything
-        // else (a button, the page) hides it.
+        // Hide unless focus moved to another field.
         clearTimeout(hideTimer);
         hideTimer = setTimeout(() => {
             const a = document.activeElement;
@@ -327,15 +313,13 @@
         }, 120);
     }, true);
 
-    // A tap anywhere else (a button, empty space) closes the keyboard. Not
-    // left to focusout alone: with touch, WebKitGTK often keeps focus in the
-    // field when a button is tapped, and the keyboard stayed up. The field
-    // is blurred after the tap's click went through, so the button still works.
+    // A tap elsewhere closes it: on touch WebKitGTK often keeps focus in the
+    // field, so focusout isn't enough. Blur after the click went through.
     document.addEventListener("pointerdown", e => {
         if (!kb || kb.hidden) return;
         const path = e.composedPath ? e.composedPath() : [e.target];
         if (path.includes(host) || editable(path[0])) return;
-        // A <label> for a field moves focus into it: that's a field tap.
+        // A field's <label> focuses the field: counts as a field tap.
         const label = path[0].closest && path[0].closest("label");
         if (label && label.control && editable(label.control)) return;
         const field = target;
@@ -345,8 +329,7 @@
         }, 0);
     }, true);
 
-    // A field that is already focused but was tapped again (keyboard hidden
-    // with ⌨▾) brings the keyboard back.
+    // Re-tapping the focused field (after ⌨▾) brings the keyboard back.
     document.addEventListener("pointerup", e => {
         const el = e.composedPath ? e.composedPath()[0] : e.target;
         if (editable(el) && el === document.activeElement && (!kb || kb.hidden)) show(el);

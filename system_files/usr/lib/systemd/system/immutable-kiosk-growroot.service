@@ -1,7 +1,9 @@
 [Unit]
 Description=Grow the root filesystem to fill the physical disk
-# Not on the live installer ISO: there root is an overlay in RAM.
+# Not on the live installer ISO (root is a RAM overlay).
 ConditionPathExists=!/run/initramfs/live
+# Done for good once grown (stamp written by grow-root.sh); saves ~1 s per boot.
+ConditionPathExists=!/var/lib/immutable-kiosk/root-grown
 
 [Service]
 Type=oneshot

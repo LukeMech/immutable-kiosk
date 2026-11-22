@@ -1,7 +1,5 @@
 # https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
-#
-# github-actions keeps `uses:` SHA pins current. docker has no digest pin yet
-# (floating tags intentional) but stays configured for when one's added.
+# docker: tags float on purpose; kept for any future digest pin.
 
 version: 2
 updates:

@@ -1,20 +1,12 @@
-# image-builder's ISO config: volume label and the boot menu.
-#
-# root=live:CDLABEL must name the same label. At most 11 characters: Rufus
-# "ISO mode" copies the ISO onto FAT32, whose labels are cut to 11 (a
-# longer one boots into a dracut emergency shell); check-iso.sh enforces it.
-# rd.live.dir/rd.live.squashimg say where image-builder put the root
-# squashfs on the ISO --
-# scripts/check-iso.sh verifies that path exists in every built ISO and fails
-# the build otherwise, so a layout change upstream can't ship an ISO that
-# boots into an emergency shell.
-#
-# systemd.tpm2_wait=0: see system_files/usr/lib/bootc/kargs.d/20-no-tpm-wait.toml.
-# selinux=0: the live root comes straight from the container's files, which
-# carry no SELinux labels on the ISO (same as lm-server's installer).
+# image-builder's ISO config: volume label and boot menu.
+# The label must match root=live:CDLABEL and be at most 11 characters (Rufus
+# "ISO mode" truncates FAT32 labels). check-iso.sh enforces both and that
+# rd.live.dir/rd.live.squashimg point at the real squashfs.
+# systemd.tpm2_wait=0: see kargs.d/20-no-tpm-wait.toml.
+# selinux=0: the live root's files carry no SELinux labels.
 label: "IMMKIOSK"
 grub2:
-  # Menu wait (osbuild default 60 s): the tablet has no keyboard to skip it.
+  # osbuild's default is 60 s; the tablet has no keyboard to skip it.
   timeout: 3
   entries:
     - name: "Instalator immutable-kiosk"

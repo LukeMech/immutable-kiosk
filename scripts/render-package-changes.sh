@@ -1,11 +1,6 @@
 #!/bin/bash
-#
-# Renders a package-changes TSV (kind<TAB>name<TAB>previous<TAB>new, kind one of
-# added/updated/removed, '-' for a missing side) as the changelog's markdown tables.
-# Shared by diff-packages.sh (one image) and merge-changelogs.sh (the release's
-# "All images" section plus each image's remainder).
-#
-# An empty TSV renders as "No package changes." -- or <empty-text> if given.
+# Renders a TSV (kind<TAB>name<TAB>previous<TAB>new; kind added/updated/removed,
+# '-' for a missing side) as markdown tables. Empty TSV: [empty-text].
 #
 # Usage: render-package-changes.sh <changes.tsv> [empty-text]
 
@@ -23,8 +18,7 @@ if [[ ! -s "${TSV}" ]]; then
     exit 0
 fi
 
-# Only the buckets that have rows -- a release with only updates doesn't show
-# empty headers.
+# Only buckets that have rows.
 if grep -q $'^added\t' "${TSV}"; then
     echo "### ✨ Added"
     echo

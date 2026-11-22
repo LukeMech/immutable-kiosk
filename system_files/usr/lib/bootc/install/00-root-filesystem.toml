@@ -1,9 +1,5 @@
-# Declares this image's default root filesystem to bootc, so both `bootc install`
-# and bootc-image-builder pick it up -- no --rootfs flag needed downstream.
-#
-# The current fedora-bootc release isn't (yet) in bootc-image-builder's distro/version -> default-filesystem
-# table yet, so without this it fails ("no default root filesystem type specified").
-#
+# Default root fs for `bootc install` and bootc-image-builder, which has no
+# default for the current fedora-bootc release and fails without one.
 # https://bootc.dev/bootc/man/bootc-install-config.5.html
 [install.filesystem.root]
 type = "btrfs"

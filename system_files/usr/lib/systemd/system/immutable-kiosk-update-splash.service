@@ -1,0 +1,19 @@
+# At shutdown with an update staged, ostree-finalize-staged installs it (its
+# ExecStop). This unit stops right before it (ordered After= it) and switches
+# the boot screen to "updates": "Installing the update…" and a filling bar
+# instead of the restart's loading animation.
+[Unit]
+Description=Boot screen: show the update being installed at shutdown
+DefaultDependencies=no
+After=ostree-finalize-staged.service local-fs.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/libexec/immutable-kiosk/update-splash
+
+[Install]
+WantedBy=multi-user.target

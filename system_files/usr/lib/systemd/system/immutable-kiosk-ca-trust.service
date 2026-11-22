@@ -1,0 +1,17 @@
+# Replaces atomic-update-ca-trust.service (masked in 05-base.sh), which held
+# sysinit.target ~15 s after updates: runs after the kiosk is up, at idle
+# priority, only when the trust sources changed.
+[Unit]
+Description=immutable-kiosk: refresh the CA trust store after an update
+ConditionPathExists=/usr/bin/update-ca-trust
+ConditionPathExists=!/run/initramfs/live
+After=graphical.target
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/usr/libexec/immutable-kiosk/ca-trust-refresh
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,8 @@
+# i915 is in the x86 initramfs for the splash; these keep it cheap:
+# - driver_async_probe=i915: its ~3 s probe doesn't hold up `udevadm settle`
+#   and the root mount;
+# - i915.fastboot=1: reuse the firmware's mode, no mid-boot blank (needed
+#   explicitly on Bay Trail);
+# - plymouth.use-simpledrm=0: simpledrm has no panel orientation, so wait for
+#   i915 (also UseSimpledrm=0 in plymouthd.conf).
+kargs = ["driver_async_probe=i915", "i915.fastboot=1", "plymouth.use-simpledrm=0"]

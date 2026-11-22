@@ -41,11 +41,20 @@ build $variant="x86" $target_image=(image_name + "-" + variant) $tag=default_tag
     set -euox pipefail
 
     LABELS=()
+    GIT_SHA=""
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
         LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ image_name }}/blob/${GIT_SHA}/Containerfile")
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
-        LABELS+=("--label" "org.opencontainers.image.version={{ default_tag }}.$(date +%Y%m%d)-${GIT_SHA}")
+        # CI's release tag if any (a dev tag already ends in the commit),
+        # else "latest.<date>-<sha>".
+        if [[ -n "${RELEASE_TAG:-}" && "${RELEASE_TAG}" == *".${GIT_SHA}" ]]; then
+            LABELS+=("--label" "org.opencontainers.image.version=${RELEASE_TAG}")
+        elif [[ -n "${RELEASE_TAG:-}" ]]; then
+            LABELS+=("--label" "org.opencontainers.image.version=${RELEASE_TAG}-${GIT_SHA}")
+        else
+            LABELS+=("--label" "org.opencontainers.image.version={{ default_tag }}.$(date +%Y%m%d)-${GIT_SHA}")
+        fi
     fi
     LABELS+=("--label" "io.artifacthub.package.keywords={{ image_keywords }}")
     LABELS+=("--label" "io.artifacthub.package.license=Apache-2.0")
@@ -54,7 +63,10 @@ build $variant="x86" $target_image=(image_name + "-" + variant) $tag=default_tag
     LABELS+=("--label" "org.opencontainers.image.title={{ image_name }}")
     LABELS+=("--label" "org.opencontainers.image.vendor={{ repo_organization }}")
 
-    podman build --build-arg "VARIANT=${variant}" "${LABELS[@]}" \
+    # Also written into os-release (10-kiosk.sh), shown in GRUB entries.
+    podman build --build-arg "VARIANT=${variant}" \
+        --build-arg "RELEASE_TAG=${RELEASE_TAG:-}" --build-arg "GIT_SHA=${GIT_SHA}" \
+        "${LABELS[@]}" \
         --pull=newer --tag "${target_image}:${tag}" --file Containerfile .
 
 # Split the image for smaller updates (same as immutable-sbc)

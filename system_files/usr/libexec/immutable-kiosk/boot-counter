@@ -1,0 +1,280 @@
+#!/usr/bin/python3
+"""boot-counter -- automatic rollback when a new version doesn't come up.
+
+  setup     (boot) write custom.cfg: each boot spends a kiosk_tries; at 0
+            GRUB boots the previous deployment once, kiosk_fallback=1
+  arm       (shutdown) next boot is a new deployment -> kiosk_tries=3
+  watchdog  (boot) reboot a trial boot not OK within WATCHDOG_S
+  ok        (kioskd, first page rendered) clear tries; after a fallback,
+            make the running deployment the default (bootc rollback)
+
+custom.cfg is sourced by bootupd's static grub.cfg (41_custom.cfg).
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+BOOT = Path("/boot")
+GRUB_DIR = BOOT / "grub2"
+GRUBENV = GRUB_DIR / "grubenv"
+CUSTOM_CFG = GRUB_DIR / "custom.cfg"
+TRIES = 3
+WATCHDOG_S = 600
+RUN_DIR = Path("/run/immutable-kiosk")
+OK_FLAG = RUN_DIR / "boot-ok"
+FALLBACK_NOTE = Path("/var/lib/immutable-kiosk/boot-fallback.json")
+
+ENV_HEADER = "# GRUB Environment Block\n"
+ENV_SIZE = 1024
+
+GRUB_CFG = f"""\
+# immutable-kiosk -- written by /usr/libexec/immutable-kiosk/boot-counter at
+# every boot; edits here are overwritten.
+
+# No visible menu. The tablet's volume keys move the selection, but nothing
+# on it can confirm one, and any key stops the countdown -- the menu just sat
+# there. With "hidden" those keys are ignored; Esc / F4 / holding Shift on a
+# USB keyboard still opens the menu.
+set timeout_style=hidden
+set timeout=1
+
+# Automatic rollback: kiosk_tries is set to {TRIES} at shutdown when the next
+# boot is a new deployment; every boot spends one, the kiosk's first page
+# clears it. Spent without the kiosk coming up: the previous deployment
+# (entry 1) boots once, and the kiosk makes it the default again.
+# (No arithmetic: Fedora's grub may lack the increment module.)
+if [ "${{kiosk_tries}}" = "3" ]; then
+  set kiosk_tries=2
+  save_env kiosk_tries
+elif [ "${{kiosk_tries}}" = "2" ]; then
+  set kiosk_tries=1
+  save_env kiosk_tries
+elif [ "${{kiosk_tries}}" = "1" ]; then
+  set kiosk_tries=0
+  save_env kiosk_tries
+elif [ "${{kiosk_tries}}" = "0" ]; then
+  set default=1
+  set kiosk_tries=
+  set kiosk_fallback=1
+  save_env kiosk_tries kiosk_fallback
+fi
+"""
+
+
+def log(*a):
+    print("boot-counter:", *a, file=sys.stderr, flush=True)
+
+
+# ------------------------------------------------------------ files on /boot
+
+def read_env():
+    try:
+        text = GRUBENV.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return {}
+    env = {}
+    for line in text.splitlines():
+        if line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        env[k] = v
+    return env
+
+
+def env_bytes(env):
+    body = ENV_HEADER + "".join(f"{k}={v}\n" for k, v in env.items())
+    data = body.encode("utf-8")
+    if len(data) > ENV_SIZE:
+        raise SystemExit("boot-counter: grubenv would exceed 1024 bytes")
+    return data + b"#" * (ENV_SIZE - len(data))
+
+
+def write_in_place(path, data):
+    """Overwrite in place (GRUB's save_env needs grubenv's blocks unmoved), fsync."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size == len(data):
+        with open(path, "r+b") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    else:
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    dfd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def write_boot_file(path, data):
+    """Write under /boot; if read-only, remount it rw in a private mount namespace."""
+    if path.exists() and path.read_bytes() == data:
+        return
+    try:
+        write_in_place(path, data)
+        return
+    except OSError as e:
+        if e.errno != 30:  # EROFS
+            raise
+    subprocess.run(["unshare", "--mount", "--propagation", "private", "/bin/sh", "-c",
+                    'mount -o remount,rw /boot && exec "$0" _write "$1"', sys.argv[0], str(path)],
+                   input=data, check=True)
+
+
+def remove_boot_file(path):
+    """Delete under /boot; if read-only, remount it rw in a private mount namespace."""
+    if not path.exists():
+        return
+    try:
+        path.unlink()
+        return
+    except OSError as e:
+        if e.errno != 30:  # EROFS
+            raise
+    subprocess.run(["unshare", "--mount", "--propagation", "private", "/bin/sh", "-c",
+                    'mount -o remount,rw /boot && exec rm -f -- "$0"', str(path)], check=True)
+
+
+def save_env(**changes):
+    env = read_env()
+    env.update({k: v for k, v in changes.items() if v is not None})
+    write_boot_file(GRUBENV, env_bytes(env))
+
+
+# ------------------------------------------------------------ bootc
+
+def bootc_status():
+    try:
+        out = subprocess.run(["bootc", "status", "--format=json"], capture_output=True,
+                             text=True, timeout=60, check=True).stdout
+        return json.loads(out).get("status") or {}
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        log("bootc status:", e)
+        return None
+
+
+def version(entry):
+    img = (entry or {}).get("image") or {}
+    return img.get("version") or (img.get("imageDigest") or "")[:19]
+
+
+# ------------------------------------------------------------ commands
+
+def cmd_setup():
+    """Every boot: our GRUB snippet and a grubenv GRUB can write to."""
+    if not GRUB_DIR.is_dir():
+        log(f"{GRUB_DIR} missing -- not a bootupd install, nothing to do")
+        return 0
+    write_boot_file(CUSTOM_CFG, GRUB_CFG.encode("utf-8"))
+    if not GRUBENV.exists():
+        save_env()
+    env = read_env()
+    log(f"kiosk_tries={env.get('kiosk_tries', '')!r} kiosk_fallback={env.get('kiosk_fallback', '')!r}")
+    return 0
+
+
+def cmd_arm():
+    """At shutdown: is the next boot a different deployment?"""
+    st = bootc_status()
+    if st is None:
+        return 0
+    staged, queued = st.get("staged"), bool(st.get("rollbackQueued"))
+    if not staged and not queued:
+        return 0
+    nxt = staged or st.get("rollback")
+    log(f"next boot is {version(nxt) or 'a new deployment'}"
+        f" ({'staged update' if staged else 'queued rollback'}): {TRIES} tries")
+    save_env(kiosk_tries=str(TRIES), kiosk_fallback="")
+    FALLBACK_NOTE.unlink(missing_ok=True)  # a new attempt
+    return 0
+
+
+def cmd_watchdog():
+    tries = read_env().get("kiosk_tries", "")
+    if tries == "":
+        return 0
+    log(f"trial boot of a new version ({tries} tries left after this one): "
+        f"rebooting unless the kiosk is up within {WATCHDOG_S} s")
+    deadline = time.monotonic() + WATCHDOG_S
+    while time.monotonic() < deadline:
+        if OK_FLAG.exists():
+            return 0
+        time.sleep(5)
+    log("the kiosk never came up -- rebooting (GRUB counts this try)")
+    subprocess.run(["systemctl", "reboot"])
+    return 0
+
+
+def cmd_ok():
+    """The kiosk rendered its first page: this boot counts as good."""
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    if OK_FLAG.exists():
+        print(json.dumps({"ok": True, "already": True}))
+        return 0
+    env = read_env()
+    result = {"ok": True, "fallback": False}
+    if env.get("kiosk_fallback") == "1":
+        # GRUB fell back for this boot only: make the booted deployment the default.
+        st = bootc_status() or {}
+        failed, running = version(st.get("rollback")), version(st.get("booted"))
+        if st.get("rollbackQueued"):
+            p = subprocess.run(["bootc", "rollback"], capture_output=True, text=True, timeout=120)
+            log("bootc rollback:", p.returncode, (p.stderr or p.stdout).strip())
+        note = {"time": time.time(), "failed": failed, "running": running}
+        FALLBACK_NOTE.parent.mkdir(parents=True, exist_ok=True)
+        FALLBACK_NOTE.write_text(json.dumps(note))
+        log(f"fell back: {failed or 'the new version'} didn't come up, {running} is the default again")
+        result.update(fallback=True, **note)
+    if env.get("kiosk_tries", "") != "" or env.get("kiosk_fallback", "") != "":
+        save_env(kiosk_tries="", kiosk_fallback="")
+    OK_FLAG.touch()
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_write(path):
+    """Internal: inside the private namespace with /boot read-write."""
+    write_in_place(Path(path), sys.stdin.buffer.read())
+    return 0
+
+
+def cmd_write_boot(path):
+    """`write-boot FILE`: stdin into FILE under /boot (kioskd: kernel arguments)."""
+    p = Path(path).resolve()
+    if BOOT not in p.parents:
+        print(f"not under {BOOT}: {p}", file=sys.stderr)
+        return 2
+    write_boot_file(p, sys.stdin.buffer.read())
+    return 0
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    cmd = sys.argv[1]
+    if cmd == "_write":
+        return cmd_write(sys.argv[2])
+    if cmd == "write-boot":
+        return cmd_write_boot(sys.argv[2])
+    if cmd == "remove-boot":
+        p = Path(sys.argv[2]).resolve()
+        if BOOT not in p.parents:
+            print(f"not under {BOOT}: {p}", file=sys.stderr)
+            return 2
+        remove_boot_file(p)
+        return 0
+    return {"setup": cmd_setup, "arm": cmd_arm, "watchdog": cmd_watchdog, "ok": cmd_ok}[cmd]()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
