@@ -59,19 +59,29 @@ def sandbox_works():
     return r.returncode == 0
 
 
-# Must be decided before WebKit is loaded. Without a sandbox the web pages
-# still run in their own processes, just not namespaced -- far better than a
-# kiosk that never comes up.
-if "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS" not in os.environ and not sandbox_works():
-    log("WebKit sandbox unavailable, starting without it")
-    os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
+def load_webkit():
+    """WebKit comes in only after the start-up screen is up (KioskShell.setup):
+    loading it takes seconds on an Atom, which used to be seconds of black
+    between the boot splash and the kiosk. The sandbox decision has to come
+    before it. Without a sandbox the web pages still run in their own
+    processes, just not namespaced -- far better than a kiosk that never
+    comes up."""
+    global WebKit
+    if "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS" not in os.environ and not sandbox_works():
+        log("WebKit sandbox unavailable, starting without it")
+        os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
+    from gi.repository import WebKit as webkit
+    WebKit = webkit
+
 
 import gi  # noqa: E402
 
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
-from gi.repository import Gdk, GLib, Gtk, WebKit  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+
+WebKit = None  # load_webkit()
 
 API = "http://127.0.0.1:8088"
 SETTINGS_URL = f"{API}/"
@@ -79,8 +89,14 @@ OSK_JS = Path("/usr/share/immutable-kiosk/web/osk.js")
 DATA = Path(GLib.get_user_data_dir()) / "immutable-kiosk"
 CACHE = Path(GLib.get_user_cache_dir()) / "immutable-kiosk"
 
+# The boot splash's spinner (build_files/16-plymouth-images.py): the kiosk's
+# start-up screen is the splash's picture, so the hand-over looks continuous.
+SPLASH_RING = Path("/usr/share/plymouth/themes/immutable-kiosk/ring.png")
+
 CSS = b"""
 window, stack { background: #10151c; }
+.splash image { animation: ik-turn 1.1s linear infinite; }
+@keyframes ik-turn { from { -gtk-icon-transform: rotate(0turn); } to { -gtk-icon-transform: rotate(1turn); } }
 .hotcorner { background: transparent; }
 .hotcorner.armed { background: radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%); }
 .hotcorner.recovery.armed { background: radial-gradient(circle, rgba(248,81,73,0.45) 0%, rgba(248,81,73,0) 70%); }
@@ -235,24 +251,43 @@ class KioskShell(Gtk.Application):
         self.hmi_error = False
         self.boot_reported = False
         self.ok_reported = False
+        self.pending = None  # view to reveal once its first page is rendered
 
     # -- setup
     def do_activate(self):
+        """Up on screen as fast as Python and GTK allow: the boot splash's
+        picture (same background, same turning ring), rotated already.
+        Everything heavy -- WebKit and its views -- follows in setup()."""
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
+        self.cfg = self.wait_for_config()
+        apply_output(self.cfg)  # before the first frame: no portrait flash
+
         self.win = Gtk.ApplicationWindow(application=self, title="Kiosk")
-        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=150)
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=200)
         self.overlay = Gtk.Overlay(child=self.stack)
         self.win.set_child(self.overlay)
+        splash = Gtk.Box(halign=Gtk.Align.FILL, valign=Gtk.Align.FILL)
+        splash.add_css_class("splash")
+        if SPLASH_RING.exists():
+            ring = Gtk.Image.new_from_file(str(SPLASH_RING))
+            ring.set_pixel_size(112)
+            ring.set_hexpand(True)
+            ring.set_vexpand(True)
+            splash.append(ring)
+        self.stack.add_named(splash, "splash")
+        self.win.fullscreen()
+        self.win.present()
+        # A moment for the first frame, then the rest.
+        GLib.timeout_add(150, self.setup)
 
+    def setup(self):
+        load_webkit()
         self.settings = self.make_settings_view()
         self.stack.add_named(self.settings, "settings")
-
-        self.cfg = self.wait_for_config()
-        GLib.idle_add(apply_output, self.cfg)
 
         if self.cfg.get("mode") != "installer":
             (DATA / "hmi").mkdir(parents=True, exist_ok=True)
@@ -273,19 +308,27 @@ class KioskShell(Gtk.Application):
             self.apply_hmi_config(force_load=True)
         self.apply_scale()
 
+        # The start-up screen stays until the view's first page is rendered
+        # (on_any_load_changed) -- no blank WebKit view in between -- or 30 s.
         if self.hmi and self.cfg.get("hmi_url"):
             # Settings' page loads once the HMI is up (or Settings is opened):
             # two web processes starting side by side on a Bay Trail Atom
             # slowed the HMI's first paint down.
-            self.show("hmi")
+            self.pending = "hmi"
             # An HMI server that accepts but never answers would keep
             # Settings from ever loading (and the boot from counting as good).
             GLib.timeout_add_seconds(60, self.ensure_settings)
         else:
-            self.show("settings")  # first boot: nothing to show yet but Settings
+            self.pending = "settings"  # first boot: nothing to show yet but Settings
+            self.ensure_settings()
+        GLib.timeout_add_seconds(30, self.reveal)
+        return GLib.SOURCE_REMOVE
 
-        self.win.fullscreen()
-        self.win.present()
+    def reveal(self):
+        if self.pending:
+            name, self.pending = self.pending, None
+            self.show(name)
+        return GLib.SOURCE_REMOVE
 
     def wait_for_config(self):
         # kioskd starts first (unit ordering), but give it a moment on a slow eMMC.
@@ -404,6 +447,7 @@ class KioskShell(Gtk.Application):
     def show(self, name):
         if name == "hmi" and not self.hmi:
             return
+        self.pending = None  # an explicit switch ends the start-up screen
         if name == "settings":
             self.ensure_settings()
         self.stack.set_visible_child_name(name)
@@ -531,6 +575,8 @@ class KioskShell(Gtk.Application):
         """First page rendered by either view -- the HMI, its error page or
         Settings: cage, GTK, WebKit and kioskd all work. kioskd tells
         boot-counter this boot is good (automatic rollback)."""
+        if event == WebKit.LoadEvent.FINISHED and self.pending == ("hmi" if view is self.hmi else "settings"):
+            self.reveal()
         if event == WebKit.LoadEvent.FINISHED and not self.ok_reported:
             self.ok_reported = True
             threading.Thread(target=self.report_boot_ok, daemon=True).start()
