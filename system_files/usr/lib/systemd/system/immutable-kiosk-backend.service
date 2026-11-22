@@ -1,8 +1,8 @@
 [Unit]
 Description=immutable-kiosk settings API (kioskd, localhost only)
-# NetworkManager running is enough (nmcli answers); network.target would
-# hold kioskd -- and the kiosk after it -- until Wi-Fi is up.
-After=NetworkManager.service
+# Not after NetworkManager either: it took 1.8 s to start, and the kiosk
+# (after kioskd) waited for that. kioskd's nmcli calls work as soon as it
+# runs, and its events bring NetworkManager's state when it does.
 Wants=NetworkManager.service
 
 [Service]

@@ -1863,7 +1863,21 @@ def r_splash(body, q):
 DISPLAY_INFO = {}
 
 
+# cage's unit only deactivates plymouth (its last frame stays up until the
+# kiosk draws); it's ended here once kiosk-shell has drawn -- its first
+# report -- or at boot ok, whichever comes first.
+_plymouth = {"done": False}
+
+
+def plymouth_quit():
+    if not _plymouth["done"]:
+        _plymouth["done"] = True
+        threading.Thread(target=run, args=(["plymouth", "quit", "--retain-splash"],),
+                         kwargs={"check": False, "timeout": 30}, daemon=True).start()
+
+
 def r_display_set(body, q):
+    plymouth_quit()
     DISPLAY_INFO.clear()
     DISPLAY_INFO.update({k: body.get(k) for k in ("gtk_scale", "window", "outputs")})
     DISPLAY_INFO["time"] = time.time()
@@ -1975,6 +1989,7 @@ def r_boot_ok(body, q):
     """kiosk-shell rendered its first page: this boot is good (automatic
     rollback, see boot-counter). Runs bootc rollback after a fallback, so
     it can take a while."""
+    plymouth_quit()
     out = run([BOOT_COUNTER, "ok"], timeout=150)
     EVENTS.emit("system")  # after a fallback the deployments changed order
     try:
