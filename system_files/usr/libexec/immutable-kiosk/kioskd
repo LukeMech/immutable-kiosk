@@ -1,18 +1,11 @@
 #!/usr/bin/python3
-"""kioskd -- the root-side half of the kiosk.
+"""kioskd -- root-side backend of the kiosk (stdlib only).
 
-Serves the Settings/Installer page (/usr/share/immutable-kiosk/web) and a small
-JSON API on 127.0.0.1:8088 for everything that needs root: Wi-Fi and IP
-(nmcli), the HMI address, system updates (bootc) and, on the installer ISO,
-writing the system onto the internal disk.
-
-Only kiosk-shell's Settings view is meant to talk to it. Two guards keep any
-other page (the HMI included) out:
-  * every /api request must carry "X-Kiosk: 1" -- a custom header a foreign
-    origin can't send without a CORS preflight, which is never answered;
-  * the Host header must be 127.0.0.1:8088 / localhost:8088 (DNS rebinding).
-
-Python stdlib only, so nothing extra lands in the image.
+Serves the Settings/Installer page and a JSON API on 127.0.0.1:8088 for
+anything needing root: Wi-Fi/IP, HMI address, bootc updates, ISO install.
+Guards against other pages (the HMI included): /api requires "X-Kiosk: 1"
+(foreign origins would need a CORS preflight, never answered), and Host must
+be 127.0.0.1:8088 / localhost:8088 (DNS rebinding).
 """
 
 import errno
@@ -37,8 +30,7 @@ ALLOWED_HOSTS = {"127.0.0.1:8088", "localhost:8088"}
 WEB_ROOT = Path("/usr/share/immutable-kiosk/web")
 STATE_DIR = Path("/var/lib/immutable-kiosk")
 CONFIG_FILE = STATE_DIR / "config.json"
-# Default rotation per device model, generated at build time from
-# images/devices.toml (build_files/12-default-rotation.py).
+# Generated at build time from images/devices.toml.
 DEFAULT_ROTATION_FILE = Path("/usr/lib/immutable-kiosk/default-rotation.json")
 MODE_FILE = Path("/usr/lib/immutable-kiosk/mode")
 PAYLOAD_DIR = Path("/usr/share/immutable-kiosk/payload")
@@ -49,40 +41,31 @@ ROTATIONS = ("portrait", "landscape", "normal", "90", "180", "270")
 DEFAULT_CONFIG = {
     # TwinCAT HMI Server (TF2000) listens on 1010 (HTTP) / 1020 (HTTPS) by default.
     "hmi": {"scheme": "https", "host": "", "port": 1020, "path": "/"},
-    # None = this device model's default (default_rotation()).
+    # None = model default (default_rotation()).
     "rotation": None,
-    # The built-in panel's mode, "WxH" or "WxH@R" (wlr-randr --mode); None =
-    # the panel's preferred one.
+    # "WxH" or "WxH@R" (wlr-randr --mode); None = panel's preferred mode.
     "resolution": None,
-    # Our on-screen keyboard injected into the HMI page as well (TwinCAT HMI's
-    # login page has no keyboard of its own).
+    # Inject our OSK into the HMI page (TwinCAT HMI's login has none).
     "osk_in_hmi": True,
-    # TwinCAT HMI ships a self-signed certificate: accept it, but only for the
-    # configured HMI host -- never for anything else.
+    # Accept a self-signed cert, but only from the configured HMI host.
     "accept_self_signed": True,
     # Zoom of the HMI page only (WebKit).
     "zoom": 1.0,
-    # Scaling of the whole screen (compositor, wlr-randr --scale): HMI,
-    # Settings and the keyboard alike. 1.0-2.0.
+    # Whole-screen scale (wlr-randr --scale), 1.0-2.0.
     "scale": 1.0,
     # Seconds between reload attempts while the HMI can't be reached.
     "retry_seconds": 10,
-    # Where the invisible "hold ~2 s for Settings" spot sits on top of the HMI.
+    # Corner of the hidden "hold ~2 s for Settings" spot.
     "settings_corner": "top-right",
-    # Settings' accent colour (Display > Accent color), one of ACCENTS.
     "accent": "blue",
-    # Settings' language (web/i18n.js translates the English page): en, pl.
+    # Settings language (web/i18n.js).
     "language": "en",
-    # Backlight in percent, applied by kioskd at start and on change. None =
-    # never touched (systemd-backlight's restored value stays).
+    # Backlight %, applied at start and on change; None = never touched.
     "brightness": None,
-    # GitHub repo (owner/name) whose releases are the update changelog --
-    # the one that builds the image. A custom image (Settings > System) can
-    # point it at its own fork.
+    # GitHub owner/name whose releases are the update changelog.
     "releases_repo": "LukeMech/immutable-kiosk",
 }
 
-# Names only; the colours live in app.js (ACCENTS).
 ACCENTS = ("blue", "teal", "green", "purple", "pink", "orange", "graphite")
 
 GITHUB_REPO = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
@@ -131,8 +114,7 @@ def read_dmi(field):
 
 
 def default_rotation():
-    """This model's rotation until one is set in Settings: the entry whose
-    dmi_product is in this machine's DMI product name, else the default."""
+    """Rotation for this DMI product name from DEFAULT_ROTATION_FILE, else its default."""
     try:
         table = json.loads(DEFAULT_ROTATION_FILE.read_text())
     except (OSError, ValueError):
@@ -388,9 +370,8 @@ def wifi_state(rescan):
 
 
 def net_brief():
-    """For Settings' top bar (polled every 5 s while it's open), so cheap:
-    the connected device -- Ethernet wins over Wi-Fi -- and for Wi-Fi the
-    signal from NetworkManager's last scan (no rescan). None = offline."""
+    """Connected device for the top bar (polled every 5 s, so no rescan);
+    Ethernet wins over Wi-Fi. None = offline."""
     try:
         rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"], timeout=5)
     except ApiError:
@@ -415,10 +396,7 @@ def net_brief():
 
 
 def wifi_device():
-    """The Wi-Fi adapter's state for the status line: {device, state,
-    connection, address} -- state is nmcli's (connected, connecting
-    (getting IP configuration), disconnected, unavailable...). None = no
-    Wi-Fi adapter at all."""
+    """{device, state (nmcli's), connection, address}; None = no Wi-Fi adapter."""
     try:
         rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
     except ApiError:
@@ -441,12 +419,10 @@ def wifi_connect(ssid, password, hidden):
     if existing and not password:
         run(["nmcli", "con", "up", existing[0]["uuid"]], timeout=60)
         return
-    # New password = new profile: an old one with a stale password would
-    # otherwise be tried first and fail.
+    # New password = new profile, or the stale one would be tried first.
     for s in existing:
         run(["nmcli", "con", "delete", s["uuid"]], check=False)
-    # The password ends up on nmcli's command line for a moment; only root
-    # and the kiosk user exist on this machine.
+    # Password is briefly on nmcli's argv; only root and kiosk users exist.
     cmd = ["nmcli", "dev", "wifi", "connect", ssid]
     if password:
         cmd += ["password", password]
@@ -526,23 +502,19 @@ def network_set(body):
     else:
         raise ApiError("Mode must be auto or manual")
     run(["nmcli", "con", "mod", uuid] + args)
-    # Re-activating drops the link for a moment; that never affects this API
-    # (localhost), so it runs in the background and the page polls the result.
+    # Re-activation drops the link briefly: run in background, the page polls.
     threading.Thread(target=run, args=(["nmcli", "con", "up", uuid],),
                      kwargs={"check": False, "timeout": 60}, daemon=True).start()
 
 
 # ---------------------------------------------------------------- events
 #
-# Nothing in cage polls kioskd: GET /api/events (Server-Sent Events) says
-# what changed and the reader (Settings, the installer, kiosk-shell) reloads
-# that part. Topics and their sources:
-#   net     NetworkManager's D-Bus signals: state, addresses, the list of
-#           networks, signal
-#   power   udev power_supply events, plus a battery check (below)
-#   disks   udev block events: the installer's disk list
-#   clock   the kernel's "wall clock was set"
-#   job     a running job's progress and its end
+# GET /api/events (SSE) names changed topics; clients reload that part.
+#   net     NetworkManager D-Bus signals
+#   power   udev power_supply + periodic battery check
+#   disks   udev block events (installer)
+#   clock   wall clock was set
+#   job     job progress and end
 #   device, config, splash, boot, system   kioskd's own changes
 
 class Events:
@@ -604,9 +576,7 @@ def watch_lines(cmd, debounce, name):
 
 
 def watch_power():
-    """Charger plugged in or out: udev, at once. The battery's percentage
-    doesn't always come with an event: checked every 30 s, an event only
-    when something changed."""
+    """Charger changes come from udev; battery % is also polled every 30 s."""
     poke = Debounce("power", 0.5)
     threading.Thread(target=watch_lines, daemon=True, name="udev-power", args=(
         ["udevadm", "monitor", "--udev", "--subsystem-match=power_supply"], poke, "power")).start()
@@ -623,9 +593,7 @@ def watch_power():
 
 
 def watch_clock():
-    """The wall clock was set (NTP's first step, a manual change): the top
-    bar's clock is kioskd's, so it has to hear about it. timerfd with
-    TFD_TIMER_CANCEL_ON_SET -- the read fails with ECANCELED exactly then."""
+    """Emit "clock" when the wall clock is set (timerfd CANCEL_ON_SET -> ECANCELED)."""
     if not hasattr(os, "timerfd_create"):
         return
     fd = os.timerfd_create(time.CLOCK_REALTIME)
@@ -645,7 +613,7 @@ def start_watchers():
     net = Debounce("net", 1.0)
     threading.Thread(target=watch_lines, daemon=True, name="nm", args=(
         ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager")).start()
-    # A USB disk in or out (the installer's list), partitions coming and going.
+    # Disk hotplug (installer's list).
     threading.Thread(target=watch_lines, daemon=True, name="udev-block", args=(
         ["udevadm", "monitor", "--udev", "--subsystem-match=block"], Debounce("disks", 1.0), "disks")).start()
     threading.Thread(target=watch_power, daemon=True, name="power").start()
@@ -654,8 +622,7 @@ def start_watchers():
 
 # ---------------------------------------------------------------- jobs
 #
-# A running job's progress goes out as "job" events (at most ~3 a second):
-# the page fetches GET /api/job then, instead of every 0.7 s.
+# Progress goes out as debounced "job" events; the page then fetches /api/job.
 JOB_CHANGED = Debounce("job", 0.3)
 
 class Job:
@@ -672,18 +639,16 @@ class Job:
         self.result = None
         self.started = time.time()
         self.finished = None
-        # The page draws these as a chain: done (with how long it took),
-        # the active one (bar, detail, time so far), the ones still to come.
+        # Drawn by the page as a chain: done, active, pending.
         self.steps = [{"key": k, "label": label, "state": "pending", "detail": "",
                        "fraction": None, "started": None, "took": None, "pace": None}
                       for k, label in steps]
 
     def step(self, key, detail=None, fraction=None):
-        """Makes `key` the active step (earlier ones done, or skipped if they
-        never ran) and sets its detail/bar; the job's own stage, detail and
-        fraction follow the active step."""
+        """Make `key` the active step (earlier ones done or skipped); the job's
+        stage/detail/fraction mirror it."""
         idx = next((i for i, st in enumerate(self.steps) if st["key"] == key), None)
-        # Never back: a late event of an earlier phase doesn't reopen it.
+        # Never go back: late events of an earlier step are ignored.
         if idx is None or any(st["state"] in ("active", "done") for st in self.steps[idx + 1:]):
             return
         now = time.time()
@@ -702,10 +667,8 @@ class Job:
         JOB_CHANGED.poke()
 
     def pace(self, key, floor, expect):
-        """A step with no byte count: its bar grows with time instead --
-        from `floor` (the part already done), towards the end over about
-        `expect` seconds for the whole step; the page draws it. Each new
-        stage reported moves the floor and restarts the clock from there."""
+        """Time-based bar for a step without byte counts: from `floor` toward
+        1 over ~`expect` s (drawn by the page). A higher floor restarts it."""
         st = next((s for s in self.steps if s["key"] == key and s["state"] == "active"), None)
         if st and (not st["pace"] or floor > st["pace"]["floor"]):
             st["pace"] = {"floor": floor, "since": time.time(), "expect": expect}
@@ -722,8 +685,7 @@ class Job:
                 st["state"] = "skipped"
         JOB_CHANGED.poke()
 
-    # Whatever a job does to its stage, bar, detail, state or result (the
-    # installer sets them directly) is a "job" event for the page.
+    # Setting any of these (the installer does directly) emits a "job" event.
     WATCHED = frozenset(("stage", "fraction", "detail", "state", "result", "finished"))
 
     def __setattr__(self, name, value):
@@ -776,15 +738,12 @@ def start_job(kind, title, target, steps=()):
     return job
 
 
-# An update / image switch as the page shows it. bootc streams the layers
-# into the repository as they arrive; once every byte is in, everything
-# else happens on the tablet: committing the image on the eMMC, deploying
-# it, removing old ones -- one step, "local", with a time-paced bar (no byte
-# counts there) that bootc's own stages move along.
+# "pull" has byte progress; "local" (commit, deploy, prune) has none, so it
+# gets a time-paced bar moved along by bootc's stages.
 BOOTC_STEPS = [("pull", "Download"), ("local", "Preparing locally")]
 UPGRADE_STEPS = [("check", "Check for a new version")] + BOOTC_STEPS
-LOCAL_EXPECT_S = 95  # what "local" takes on the 408: ~60 s writing, ~35 s bootc's stages (1 min 34 s measured)
-# bootc's stages, by subtask id or description.
+LOCAL_EXPECT_S = 95  # typical "local" duration: ~60 s write + ~35 s stages
+# Labels for bootc stages, matched on subtask id or description.
 BOOTC_STAGES = {"merging": "Merging the image", "deploying": "Deploying the new version",
                 "bound_images": "Fetching bound images", "bound images": "Fetching bound images",
                 "cleanup": "Removing old versions", "removing old images": "Removing old versions",
@@ -812,8 +771,7 @@ def run_bootc_with_progress(job, args):
                             pass_fds=(w,))
     os.close(w)
 
-    # Download speed: bytes over the last ~5 s (one slow layer or a burst
-    # doesn't swing it), and what's left at that speed.
+    # Speed over a ~5 s window, plus ETA.
     samples = []
 
     def speed_text(done, total):
@@ -847,8 +805,7 @@ def run_bootc_with_progress(job, args):
                         job.step("pull", f"{done / 1e6:.0f} / {total / 1e6:.0f} MB" + speed_text(done, total),
                                  done / total)
                     else:
-                        # All downloaded (or all of it already here): the
-                        # download's line becomes its summary.
+                        # Download complete (or cached): summarize the pull step.
                         pull = job.steps[[st["key"] for st in job.steps].index("pull")] \
                             if any(st["key"] == "pull" for st in job.steps) else None
                         if pull and pull["state"] == "active" and total:
@@ -866,7 +823,7 @@ def run_bootc_with_progress(job, args):
                     steps, total = ev.get("steps") or 0, ev.get("stepsTotal") or 0
                     running = next((s for s in ev.get("subtasks") or [] if not s.get("completed")), None)
                     job.step("local", stage_name(running) if running else None)
-                    # The write before the stages is two thirds of it (~60 of ~90 s).
+                    # The write is ~2/3 of "local"; the stages fill the rest.
                     job.pace("local", 2 / 3 + (1 / 3) * (steps / total if total else 0), LOCAL_EXPECT_S)
 
     t = threading.Thread(target=read_progress, daemon=True)
@@ -879,21 +836,17 @@ def run_bootc_with_progress(job, args):
         raise RuntimeError(job.log[-1] if job.log else f"bootc exited with code {proc.returncode}")
 
 
-# The image's version label ends in its git sha (Justfile): "v45.20261122.1-
-# 778b844" (stable), "v45.3f30f95" (dev: the tag is the commit). The sha ties
-# a deployment to its commit, and through the release tag on that commit to
-# its GitHub release (changelog).
+# Version labels end in the git sha ("v45.20261122.1-778b844", dev
+# "v45.3f30f95"); it links a deployment to its GitHub release.
 VERSION_SHA = re.compile(r"(?:-|^v\d+\.)([0-9a-f]{7,40})$")
 
-# Last `bootc upgrade --check` (this kioskd's lifetime): the page checks on its
-# own when this is old or missing, and shows when it was.
+# Last `bootc upgrade --check` in this process; the page re-checks when stale.
 LAST_CHECK = {"time": None, "error": None}
 
 
 LAST_STATUS = {"value": None}  # last good bootc_status(), see r_system
 
-# What build.yml publishes: main -> :latest (releases), the dev branch ->
-# :dev (one rolling pre-release). Any other tag is a custom image.
+# build.yml: main -> :latest, dev branch -> :dev; any other tag is custom.
 CHANNELS = {"stable": {"tag": "latest", "name": "stable"},
             "dev": {"tag": "dev", "name": "testing"}}
 
@@ -952,16 +905,15 @@ def bootc_status():
     staged = entry(s.get("staged"))
     rollback = entry(s.get("rollback"))
     update = booted.get("update") if booted else None
-    # Nothing to do: already running it, or already downloaded and waiting
-    # for the restart.
+    # Not an update if already booted or staged.
     if update and booted and update["digest"] == booted["digest"]:
         update = None
     if update and staged and update["digest"] == staged["digest"]:
         update = None
-    # The channel what runs follows; a staged switch says where it's going.
+    # next_channel: where a staged switch goes.
     st = {"available": True, "booted": booted, "staged": staged, "rollback": rollback,
           "update": update, "checked": LAST_CHECK,
-          # bootc rollback done, not restarted yet: the previous one boots next.
+          # Rollback done, previous deployment boots next.
           "rollback_queued": bool(s.get("rollbackQueued")),
           "channel": channel_of((booted or {}).get("image")),
           "next_channel": channel_of((staged or booted or {}).get("image"))}
@@ -990,7 +942,7 @@ def job_check(job):
 
 
 def job_upgrade(job):
-    # Always against what's in the registry right now, not an old check.
+    # Always re-check the registry.
     st = check_for_update(job)
     if not st.get("update"):
         job.stage = "Done"
@@ -1009,10 +961,8 @@ def job_upgrade(job):
 
 # ---------------------------------------------------------------- changelog
 
-# Release notes come from the image's GitHub releases (build.yml writes them:
-# commits + package changes), repo from config "releases_repo". Public API,
-# no token: 60 requests/hour per IP, so cached; a kiosk without internet just
-# shows no notes.
+# Notes come from GitHub releases of config "releases_repo". Unauthenticated
+# API: 60 req/h per IP, hence the cache. Offline = no notes.
 RELEASES_TTL = 15 * 60
 _releases_cache = {"time": 0, "repo": None, "data": None}
 _releases_lock = threading.Lock()
@@ -1026,8 +976,7 @@ def _github(repo, path):
 
 
 def release_notes(body):
-    """A release body without what only matters on a PC (the ISO install
-    steps), commits first: they say what changed, the package tables how."""
+    """Release body minus the ISO install section, "Commits" first."""
     sections, cur = [], ["", []]
     for line in (body or "").replace("\r\n", "\n").split("\n"):
         if line.startswith("## "):
@@ -1042,8 +991,8 @@ def release_notes(body):
 
 
 def releases(force=False):
-    """[{tag, sha, date, notes}], newest first; [] when GitHub can't be reached.
-    force: past the cache (an update the cached list doesn't know yet)."""
+    """[{tag, sha, date, prerelease, notes}], newest first; [] if unreachable.
+    force bypasses the cache."""
     repo = load_config().get("releases_repo") or DEFAULT_CONFIG["releases_repo"]
     with _releases_lock:
         cached = _releases_cache["data"] if _releases_cache["repo"] == repo else None
@@ -1067,7 +1016,7 @@ def releases(force=False):
 def changelog():
     """Releases for the booted version and for what an update/restart brings."""
     st = bootc_status()
-    # A stable kiosk never sees the dev pre-release in its notes.
+    # Stable kiosks hide the dev pre-release.
     dev = "dev" in (st.get("channel"), st.get("next_channel"))
     booted = st.get("booted") or {}
     target = st.get("staged") or st.get("update") or None
@@ -1081,17 +1030,15 @@ def changelog():
         return next((i for i, r in enumerate(rels) if r["sha"].startswith(sha)), None)
 
     rels = load()
-    # The update just found was published after the list was cached (15 min):
-    # fetch again rather than show the running version's notes for it.
+    # Target newer than the cached list: refetch.
     if target and target.get("sha") and index(rels, target["sha"]) is None:
         rels = load(force=True)
     b = index(rels, booted.get("sha"))
     t = index(rels, target.get("sha")) if target else None
     news = []
     if target and t is not None:
-        # Newest first: from the target's release down to (not including) the
-        # booted one's. The booted one's gone (the dev pre-release is replaced
-        # by every build, and it says all since stable anyway): the target's.
+        # Target down to (excluding) booted; if booted's release is gone
+        # (dev pre-release gets replaced), only the target's.
         news = rels[t:b] if b is not None and b > t else [rels[t]]
     return {
         "repo": load_config().get("releases_repo"),
@@ -1104,8 +1051,7 @@ def changelog():
 
 # ---------------------------------------------------------------- boot timing
 
-# Set by kiosk-shell (POST /api/boot/hmi) when the HMI page first finished
-# loading: seconds since the kernel started (CLOCK_MONOTONIC).
+# CLOCK_MONOTONIC time of the first HMI page load (POST /api/boot/hmi).
 HMI_SHOWN = {"at": None}
 BOOT_COUNTER = "/usr/libexec/immutable-kiosk/boot-counter"
 BOOT_FALLBACK_NOTE = STATE_DIR / "boot-fallback.json"
@@ -1122,7 +1068,7 @@ MSG_STARTING = "7d4958e842da4a758f6c1cdc7b36dcc5"   # "Starting X..." / "Mountin
 MSG_STARTED = "39f53479d3a045ac8e11786248231fbf"    # "Started/Finished/Mounted X", "Reached target X"
 MSG_FAILED = "be02cf6855d2428ba40df7e9d022f03d"
 
-# Points on the way from kernel to HMI worth showing, in boot order.
+# Unit milestones for the boot timeline, in boot order.
 BOOT_MILESTONES = {
     "initrd-root-device.target": "initrd: system disk found",
     "initrd-root-fs.target": "initrd: file system mounted",
@@ -1144,9 +1090,8 @@ BOOT_CACHE = {}
 
 
 def boot_journal():
-    """Timeline and slowest units of this boot, initrd included, from the
-    journal: systemd-analyze blame only sees the real root's manager and is
-    dominated by .device units, whose "time" is just when udev got to them."""
+    """This boot's timeline and slowest units from the journal, initrd included
+    (systemd-analyze blame misses the initrd and is skewed by .device units)."""
     try:
         out = run(["journalctl", "-b", "-o", "json", "--no-pager",
                    "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT,_SYSTEMD_UNIT",
@@ -1165,8 +1110,7 @@ def boot_journal():
         msg = e.get("MESSAGE")
         if not isinstance(msg, str):
             continue
-        # Kernel lines arrive late (journald reads the ring buffer when it
-        # starts): their own timestamp is the one that counts.
+        # Kernel lines are logged late: use their source timestamp.
         ts = e.get("_SOURCE_MONOTONIC_TIMESTAMP") or e.get("__MONOTONIC_TIMESTAMP")
         try:
             t = int(ts) / 1e6
@@ -1178,9 +1122,7 @@ def boot_journal():
                     seen.add(label)
                     marks.append({"t": t, "label": label})
             continue
-        # The kiosk's own start-up points ("<program>: milestone: <label>" on
-        # kiosk-splash's and kiosk-shell's stderr, in cage's unit) -- the
-        # first of each, this boot.
+        # "<prog>: milestone: <label>" lines in cage's unit; first of each.
         if e.get("_SYSTEMD_UNIT") == CAGE_UNIT and e.get("UNIT") is None:
             label = msg.partition("milestone: ")[2].strip()
             if label and label not in seen:
@@ -1196,8 +1138,7 @@ def boot_journal():
             continue
         if mid == MSG_STARTING:
             starting[unit] = t
-            # Every start of cage: a second one means the screen went black
-            # and the kiosk started over (a crash, the touch matrix).
+            # A second cage start = kiosk restarted (crash, touch matrix).
             if unit == CAGE_UNIT:
                 cage_starts += 1
                 marks.append({"t": t, "label": "Kiosk: cage starts (plymouth goes away)" if cage_starts == 1
@@ -1206,8 +1147,7 @@ def boot_journal():
             t0 = starting.pop(unit, None)
             if t0 is not None and not unit.endswith((".device", ".target", ".slice", ".scope")):
                 units.append({"unit": unit, "start": t0, "dur": t - t0})
-            # The initrd reaches local-fs/sysinit/basic too: before
-            # switch-root only initrd-* count, after it only the rest.
+            # initrd also reaches local-fs etc.: before switch-root only initrd-* count.
             if (unit in BOOT_MILESTONES and unit not in seen
                     and unit.startswith("initrd") == (switch is None)):
                 seen.add(unit)
@@ -1222,9 +1162,8 @@ def boot_journal():
             "failed": sorted(set(failed))}
 
 
-# What PID 1 itself does before it starts any unit -- in the initrd and again
-# after switch-root -- as systemd records it (manager properties, CLOCK_MONOTONIC
-# in µs). On the tablet 6.5 s passed between switch-root and the first unit.
+# PID 1's own work before starting units (initrd and after switch-root),
+# from manager *TimestampMonotonic properties (µs).
 MANAGER_PHASES = [
     ("InitRDSecurity", "initrd", "PID 1: SELinux policy"),
     ("InitRDGenerators", "initrd", "PID 1: generators"),
@@ -1258,9 +1197,8 @@ CHAIN_LINE = re.compile(r"^[\s│└├─]*([^\s@]+)(?:\s+@(.+?))?(?:\s+\+(.+))
 
 
 def critical_chain(unit):
-    """What `unit` waited for, as systemd sees it -- each step [{unit, at,
-    took}] with `at` in seconds since the kernel started (systemd-analyze
-    counts from userspace start). Explains a gap where nothing runs long."""
+    """`unit`'s critical chain as [{unit, at, took}]; `at` is seconds since
+    kernel start (systemd-analyze counts from userspace start)."""
     try:
         out = run(["systemd-analyze", "critical-chain", "--no-pager", unit], timeout=20)
         base = int(run(["systemctl", "show", "-p", "UserspaceTimestampMonotonic", "--value"],
@@ -1294,19 +1232,15 @@ def boot_timing():
             out["total"] = m.group(1).strip() if m else ""
         except (ApiError, IndexError) as e:
             out["error"] = str(e)  # "Bootup is not yet finished" until graphical.target
-        # Timeline and slowest units come from the journal (initrd included);
-        # systemd-analyze blame/critical-chain added nothing Settings shows.
         out.update(boot_journal())
-        # PID 1's own phases ranked among the units: what fills the gap
-        # between switch-root and the first unit that starts.
+        # Rank PID 1's own phases among the units.
         out["slowest"] = sorted(out.get("slowest", []) + manager_phases(), key=lambda u: -u["dur"])[:15]
-        # The two waits that matter: the real root's file systems (udev,
-        # /boot, everything before sysinit hangs on them) and the kiosk.
+        # The two waits that matter: root file systems and the kiosk.
         out["chains"] = [
             {"title": "file systems mounted (local-fs)", "steps": critical_chain("local-fs.target")},
             {"title": "the kiosk starting (cage)", "steps": critical_chain(CAGE_UNIT)},
         ]
-        # Nothing about this boot changes once it has finished.
+        # A finished boot never changes: cache it.
         if out.get("total") and "journal_error" not in out:
             BOOT_CACHE["done"] = dict(out)
     out["hmi_shown"] = HMI_SHOWN["at"]
@@ -1331,12 +1265,10 @@ IMAGE_REF = re.compile(r"^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][
 # ---------------------------------------------------------------- installer
 
 def power_state():
-    """Charger plugged in (True/False/None = can't tell), battery %, battery status.
+    """{ac_online (None = unknown), battery %, battery_status}.
 
-    Tablets charge over USB: their charger shows up as a "USB*" supply, or
-    not at all -- then the battery's own status (Charging/Discharging) is
-    the only hint, so it counts too. Only "Mains" was checked before, and
-    the 408 showed "—" for the charger.
+    USB-charged tablets report the charger as "USB*" or not at all, so the
+    battery's Charging/Discharging status counts too.
     """
     ac, battery, status = None, None, None
     for ps in Path("/sys/class/power_supply").glob("*"):
@@ -1402,7 +1334,6 @@ def list_disks():
             "internal": bool(internal),
             "is_boot_medium": name == boot,
         })
-    # Internal eMMC first: that's the one meant.
     disks.sort(key=lambda d: (d["is_boot_medium"], not d["name"].startswith("mmcblk"), not d["internal"]))
     return disks
 
@@ -1431,7 +1362,7 @@ def job_install(disk_path):
         job.add_log(f"Size: {size / 1e9:.2f} GB, compressed {payload['compressed'] / 1e9:.2f} GB")
         job.add_log(f"Target disk: {disk_path}")
 
-        # Anything mounted from the target (an older install, auto-mounted) goes first.
+        # Unmount anything on the target.
         job.stage = "Preparing the disk"
         job.add_log(job.stage)
         mounted = run(["lsblk", "-nrpo", "NAME,MOUNTPOINT", disk_path], check=False)
@@ -1440,7 +1371,7 @@ def job_install(disk_path):
             if len(parts) == 2 and parts[1]:
                 job.add_log(f"  unmounting {parts[0]} ({parts[1]})")
                 run(["umount", "-l", parts[0]], check=False)
-        # Old partition tables, the backup GPT at the end of the disk included.
+        # Wipe old signatures, backup GPT included.
         for line in run(["wipefs", "-a", disk_path], check=False).splitlines():
             job.add_log(f"  {line}")
 
@@ -1466,8 +1397,7 @@ def job_install(disk_path):
                     view = view[n:]
                 written += len(buf)
                 since_sync += len(buf)
-                # Sync in steps, so the bar shows what actually reached the
-                # eMMC instead of racing ahead into the page cache.
+                # Periodic sync: progress tracks the disk, not the page cache.
                 if since_sync >= SYNC_EVERY:
                     os.fdatasync(fd)
                     since_sync = 0
@@ -1520,8 +1450,7 @@ def job_install(disk_path):
 
         job.stage = "Finishing"
         job.add_log(job.stage)
-        # The image is smaller than the eMMC: move the backup GPT to the real
-        # end of the disk. The root partition itself grows on first boot.
+        # Move the backup GPT to the disk's end; root grows on first boot.
         for cmd in (["sgdisk", "-e", disk_path], ["blockdev", "--rereadpt", disk_path]):
             p = subprocess.run(cmd, capture_output=True, text=True)
             for line in (p.stdout + p.stderr).splitlines():
@@ -1595,9 +1524,8 @@ class Handler(BaseHTTPRequestHandler):
         return route(body, query)
 
     def serve_events(self):
-        """Server-Sent Events: "change" with the topics that changed, a
-        comment line every 25 s otherwise (a gone client shows up as a write
-        error, and ends this thread)."""
+        """SSE: "change" events with topic lists, else a ping every 25 s
+        (a gone client surfaces as a write error)."""
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -1616,8 +1544,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def dispatch(self, method):
         try:
-            # No X-Kiosk header from EventSource: only topic names go out
-            # here, and the Host check still applies.
+            # EventSource can't send X-Kiosk; only topic names go out, Host is checked.
             if method == "GET" and urlsplit(self.path).path == "/api/events":
                 self.guard()
                 return self.serve_events()
@@ -1690,8 +1617,7 @@ def memory_mb():
     return None
 
 
-# The pieces of the system worth naming in Settings > System: they change
-# with an update (rpm's database is the image's). Read once per kioskd.
+# Component versions for Settings > System; fixed per image, read once.
 _components = {}
 
 
@@ -1716,7 +1642,6 @@ def r_info(body, q):
     return {
         "mode": mode(),
         "hostname": socket.gethostname(),
-        # What the hardware says about itself (DMI).
         "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor"),
                    "cpu": cpu_model(), "memory_mb": memory_mb()},
         "power": power_state(),
@@ -1787,9 +1712,7 @@ def r_wifi_forget(body, q):
 
 
 def r_wifi_disconnect(body, q):
-    """Drop the current Wi-Fi connection. NetworkManager doesn't reconnect
-    the device by itself after a manual disconnect -- until a network is
-    picked again (or the next boot)."""
+    """NetworkManager won't auto-reconnect until a network is picked or reboot."""
     dev = wifi_device()
     if dev and dev["state"].startswith(("connected", "connecting")):
         run(["nmcli", "dev", "disconnect", dev["device"]], timeout=30)
@@ -1825,16 +1748,10 @@ def r_hostname_set(body, q):
 
 # ---------------------------------------------------------------- touch rotation
 #
-# The screen is rotated by the compositor (wlr-randr --transform), but cage
-# only maps a touchscreen onto an output when the device names one, which
-# these tablets' touchscreens don't. Without that, touch keeps the panel's
-# native axes: a left-right swipe scrolls up-down and taps land in the wrong
-# place. The fix lives in libinput (the input driver layer), not the page: a
-# udev rule sets LIBINPUT_CALIBRATION_MATRIX on every touchscreen to match
-# the output transform.
-#
-# The matrix maps normalized touch coordinates (0..1, panel-native) to the
-# rotated screen's: x' = a*x + b*y + c, y' = d*x + e*y + f.
+# cage maps touch to an output only if the device names one, which these
+# touchscreens don't, so touch keeps the panel's native axes. A udev rule
+# sets LIBINPUT_CALIBRATION_MATRIX to match the output transform:
+# x' = a*x + b*y + c, y' = d*x + e*y + f on normalized (0..1) coordinates.
 TOUCH_MATRICES = {
     "normal": "1 0 0 0 1 0",
     "90": "0 -1 1 1 0 0",
@@ -1844,22 +1761,16 @@ TOUCH_MATRICES = {
 TOUCH_RULE = Path("/etc/udev/rules.d/99-immutable-kiosk-touch.rules")
 CAGE_UNIT = "immutable-kiosk-cage.service"
 
-# The boot splash (plymouth, from the initramfs) knows the screen's rotation
-# only from the kernel: video=<connector>:panel_orientation=... . The image
-# sets it per device (images/x86 kargs.d, from devices.toml); a rotation
-# picked in Settings rewrites it in the boot entries' options lines, so from
-# the next start the splash is turned like the kiosk. ostree reads a
-# deployment's kernel arguments back from those entries, and bootc upgrade
-# applies only what changed in the image's kargs.d: the choice stays.
-# (Not `ostree admin kargs edit-in-place`: it can only append, and the
-# kernel takes the first video=<connector> it finds.) Which orientation is which
-# transform: the HP Pro Tablet 408's left_side_up is the kiosk's "90".
+# Plymouth learns rotation only from video=<connector>:panel_orientation=.
+# A Settings rotation rewrites it in the BLS entries' options lines; ostree
+# reads kargs back from there, so it survives bootc upgrade. (Not `ostree
+# admin kargs edit-in-place`: it only appends, and the kernel takes the
+# first video=<connector>.) HP 408: left_side_up is the kiosk's "90".
 PANEL_ORIENTATIONS = {"normal": "normal", "90": "left_side_up",
                       "180": "upside_down", "270": "right_side_up"}
 BLS_ENTRIES = Path("/boot/loader/entries")
 _splash_lock = threading.Lock()
-# For Display (GET /api/splash, event "splash"): rewriting the boot entries
-# takes a few seconds; a restart in the middle would keep the old rotation.
+# GET /api/splash: rewriting takes seconds; a restart mid-way keeps the old rotation.
 SPLASH_STATE = {"state": None, "orientation": None, "error": None}
 
 
@@ -1914,14 +1825,12 @@ def r_splash(body, q):
     return SPLASH_STATE
 
 
-# What kiosk-shell sees of the screen (its window's scale and size, cage's
-# outputs): Display shows it, for when the picture is the wrong size.
+# kiosk-shell's view of the screen (scale, size, outputs), shown in Display.
 DISPLAY_INFO = {}
 
 
-# cage's unit only deactivates plymouth (its last frame stays up until the
-# kiosk draws); it's ended here once kiosk-shell has drawn -- its first
-# report -- or at boot ok, whichever comes first.
+# cage only deactivates plymouth; quit it on kiosk-shell's first display
+# report or at boot ok, whichever comes first.
 _plymouth = {"done": False}
 
 
@@ -1955,12 +1864,10 @@ def touchscreens_present():
 
 
 def r_touch_set(body, q):
-    """kiosk-shell reports the transform it gave the panel; make touch follow it.
+    """Make touch follow the panel transform kiosk-shell reports.
 
-    libinput reads the calibration matrix only when a device is added, i.e.
-    when cage starts -- so if the rule changed, cage is restarted once. The
-    rule lives in /etc and udev applies it at boot, before cage starts: after
-    that first time, no restart.
+    libinput reads the matrix only when a device is added, so cage restarts
+    once when the rule changes; later boots get it from udev before cage.
     """
     transform = str(body.get("transform", ""))
     matrix = TOUCH_MATRICES.get(transform)
@@ -1998,9 +1905,8 @@ def r_touch_set(body, q):
 
 
 def r_system(body, q):
-    # While bootc upgrade/switch runs it holds the sysroot lock and `bootc
-    # status` waits for it -- 30 s, then "Updates unavailable" in
-    # the middle of a download. Answer from the last good status instead.
+    # During upgrade/switch `bootc status` blocks on the sysroot lock: use the
+    # last good status.
     job = CURRENT_JOB
     cached = LAST_STATUS["value"]
     if job and job.state == "running" and job.kind != "install" and cached:
@@ -2009,14 +1915,12 @@ def r_system(body, q):
         st = bootc_status()
         if not st.get("available") and cached:
             st = dict(cached, checked=LAST_CHECK, stale=st.get("error"))
-    # Left by boot-counter when a new version never came up and the previous
-    # one was booted (and made the default again) automatically.
+    # Written by boot-counter after an automatic fallback to the previous version.
     try:
         st["fallback"] = json.loads(BOOT_FALLBACK_NOTE.read_text())
     except (OSError, ValueError):
         st["fallback"] = None
-    # Fedora release of what runs: names old builds' "latest.<date>-<sha>"
-    # labels "v45.<date>-<sha>" in Settings.
+    # Used by Settings to label old builds' "latest.<date>-<sha>" versions.
     try:
         st["fedora"] = next((ln.split("=", 1)[1].strip().strip('"') for ln in
                              Path("/usr/lib/os-release").read_text().splitlines()
@@ -2043,9 +1947,8 @@ def r_boot_hmi(body, q):
 
 
 def r_boot_ok(body, q):
-    """kiosk-shell rendered its first page: this boot is good (automatic
-    rollback, see boot-counter). Runs bootc rollback after a fallback, so
-    it can take a while."""
+    """First page rendered: mark the boot good (boot-counter). Slow after a
+    fallback (runs bootc rollback)."""
     plymouth_quit()
     out = run([BOOT_COUNTER, "ok"], timeout=150)
     EVENTS.emit("system")  # after a fallback the deployments changed order
@@ -2096,9 +1999,7 @@ ROLLBACK_STEPS = [("rollback", "Set the previous version as default"),
 
 
 def job_rollback(job):
-    """The previous deployment, now: bootc rollback, then a restart.
-    Already queued (bootc rollback toggles: a second one would undo the
-    first), only the restart."""
+    """bootc rollback, then reboot; if already queued only reboot (rollback toggles)."""
     st = bootc_status()
     if not st.get("available"):
         raise RuntimeError(st.get("error") or "bootc is unavailable")
@@ -2115,7 +2016,7 @@ def job_rollback(job):
     job.step("reboot", "The screen goes dark for a moment, then the previous version starts")
     time.sleep(2)  # the page gets to show this step
     run(["systemctl", "reboot"], timeout=30)
-    # Normally the end of this process. Still here: something holds it up.
+    # The reboot should have ended this process.
     time.sleep(120)
     raise RuntimeError("The system didn't restart — the previous version will start on the next boot")
 
@@ -2128,17 +2029,9 @@ DEFAULT_TIMEZONE = "Europe/Warsaw"  # the image's (build_files/05-base.sh)
 
 
 def reset_everything():
-    """Everything back to how the installer left it, then the kiosk again:
-      - kioskd's config: HMI address, rotation, scale, corners, accent,
-        language... (the rotation's default also brings the boot splash's
-        and the touch matrix back when kiosk-shell applies it);
-      - the HMI's browser data (its login, cookies, cache), kiosk-shell's
-        cached rotation;
-      - every NetworkManager connection: saved Wi-Fi networks, static IP
-        settings (a cable gets a fresh automatic "Wired connection");
-      - the host name and the time zone.
-    In a thread, after the reply: the request comes from inside cage, and
-    dropping the network takes the reply's way out with it."""
+    """Factory reset, then restart the kiosk: kioskd config, HMI browser data,
+    kiosk-shell cache, all NM connections, hostname and time zone.
+    Runs in a thread after the reply (request comes from inside cage)."""
     import pwd
     import shutil
     time.sleep(1.0)
@@ -2171,9 +2064,7 @@ def reset_everything():
 
 
 def r_settings_reset(body, q):
-    """Back to how it was installed -- network, name and time zone too (see
-    reset_everything). The kiosk then comes up as after an installation:
-    Settings first, no Wi-Fi, no HMI."""
+    """Factory reset (see reset_everything)."""
     threading.Thread(target=reset_everything, daemon=True).start()
     return {"ok": True}
 
@@ -2182,7 +2073,7 @@ def r_power(body, q):
     action = body.get("action")
     if action not in ("reboot", "poweroff"):
         raise ApiError("Unknown action")
-    # Answer first, act a moment later, so the page gets its reply.
+    # Reply first, act a moment later.
     threading.Timer(1.0, subprocess.run, args=(["systemctl", action],)).start()
     return {"ok": True}
 
@@ -2256,8 +2147,7 @@ def main():
     srv = ThreadingHTTPServer(LISTEN, Handler)
     srv.daemon_threads = True
     start_watchers()
-    # Re-apply the saved brightness: systemd-backlight only restores what it
-    # saved at a clean shutdown, and a panel is often just switched off.
+    # systemd-backlight only restores after a clean shutdown.
     saved = load_config().get("brightness")
     if saved is not None:
         try:
