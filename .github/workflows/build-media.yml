@@ -1,7 +1,12 @@
 name: Build installer ISOs
 
-# Called by build.yml after a release is published (attaches to it), or run
-# by hand from the Actions UI (artifacts only, unless publish + tag).
+# Called by build.yml after a release is published (attaches to it), by
+# promote.yml (the promoted release's ISOs again, from :latest), or run by
+# hand from the Actions UI (artifacts only, unless publish + tag).
+#
+# The image comes from image_tag (latest = stable, dev), and an installed
+# system keeps following that tag: a dev pre-release's ISO installs a kiosk
+# on the dev channel.
 #
 # Per device in images/devices.toml:
 #   1. raw disk image of the published system image (image-builder), shrunk
@@ -25,6 +30,10 @@ on:
         description: "Existing release tag (required if publish is checked)"
         type: string
         default: ""
+      image_tag:
+        description: "Image tag to install and follow (latest = stable, dev)"
+        type: string
+        default: "latest"
   workflow_call:
     inputs:
       publish:
@@ -33,10 +42,13 @@ on:
       tag:
         type: string
         default: ""
+      image_tag:
+        type: string
+        default: "latest"
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
-  DEFAULT_TAG: "latest"
+  DEFAULT_TAG: ${{ inputs.image_tag || 'latest' }}
   LOCAL_REGISTRY: "localhost:5000"
 
 concurrency:
@@ -219,10 +231,11 @@ jobs:
           path: release/
           retention-days: 3
 
+      # gh, not action-gh-release: that one rewrites the release itself too
+      # (pre-release flag, "latest"); this only adds files, --clobber
+      # replaces the same names (promote.yml's ISOs from :latest).
       - name: Attach to release
         if: inputs.publish == true
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          tag_name: ${{ inputs.tag }}
-          fail_on_unmatched_files: true
-          files: release/*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" release/* --clobber --repo "${{ github.repository }}"

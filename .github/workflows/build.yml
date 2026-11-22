@@ -3,6 +3,13 @@ name: Build container image
 # Fedora's own kernel, nothing out-of-tree): build every variant, rechunk,
 # push, sign; then publish a release and hand over to build-media.yml for the
 # disk images and the installer ISO.
+#
+# Channels (what a kiosk follows -- Settings -> System -> Kanał):
+#   dev branch  -> :dev     + one rolling pre-release, replaced by every build;
+#   main        -> :latest  + a release (stable).
+# A main push whose tree is a pre-release's tree (dev merged into main) builds
+# nothing: promote.yml moves :latest to the image that was tested on dev and
+# turns that pre-release into the release. Other branches: testing-<branch>.
 on:
   pull_request:
     paths-ignore: &ignored
@@ -34,12 +41,59 @@ jobs:
     outputs:
       variants: ${{ steps.list.outputs.variants }}
       release_tag: ${{ steps.release-tag.outputs.tag }}
+      channel: ${{ steps.channel.outputs.channel }}
+      image_tag: ${{ steps.channel.outputs.image_tag }}
+      released_as: ${{ steps.channel.outputs.released_as }}
+      promote_tag: ${{ steps.channel.outputs.promote_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
+
+      # stable / dev / testing (other branches) / none (pull requests: never
+      # pushed), and the image tag it publishes. On main, a pre-release with
+      # this exact tree is promoted instead of rebuilt (see the header).
+      - name: Compute channel
+        id: channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHANNEL=none; IMAGE_TAG=latest
+          elif [[ "${{ github.ref }}" == "refs/heads/${{ github.event.repository.default_branch }}" ]]; then
+            CHANNEL=stable; IMAGE_TAG=latest
+          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            CHANNEL=dev; IMAGE_TAG=dev
+          else
+            CHANNEL=testing
+            IMAGE_TAG="testing-$(printf '%s' "${{ github.ref_name }}" | tr -c 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z')"
+          fi
+          # The newest release with this exact tree: a pre-release is promoted;
+          # one already promoted (on GitHub, before the merge) needs nothing.
+          # Not on schedule: that run exists to pick up Fedora's updates.
+          SAME="" PROMOTE=""
+          if [[ "${CHANNEL}" == "stable" && "${{ github.event_name }}" != "schedule" ]]; then
+            TREE=$(git rev-parse 'HEAD^{tree}')
+            while IFS=$'\t' read -r TAG PRE; do
+              [[ -n "${TAG}" ]] || continue
+              if [[ "$(git rev-parse "${TAG}^{tree}" 2>/dev/null)" == "${TREE}" ]]; then
+                SAME="${TAG}"
+                [[ "${PRE}" == "true" ]] && PROMOTE="${TAG}"
+                break
+              fi
+            done < <(gh release list --limit 20 --json tagName,isPrerelease,isDraft \
+                       --jq '.[] | select(.isDraft | not) | "\(.tagName)\t\(.isPrerelease)"')
+          fi
+          echo "Channel ${CHANNEL}, image tag ${IMAGE_TAG}${SAME:+, same tree as ${SAME}}${PROMOTE:+ (promoting it)}"
+          {
+            echo "channel=${CHANNEL}"
+            echo "image_tag=${IMAGE_TAG}"
+            echo "released_as=${SAME}"
+            echo "promote_tag=${PROMOTE}"
+          } >> "$GITHUB_OUTPUT"
 
       # Release tag = Fedora version + date, .1/.2/... for a same-day repeat.
       # Computed before the build, so the image carries it (label + os-release:
@@ -77,6 +131,7 @@ jobs:
   build_push:
     name: Build and push image (${{ matrix.variant }})
     needs: discover
+    if: needs.discover.outputs.released_as == ''
     strategy:
       matrix:
         variant: ${{ fromJson(needs.discover.outputs.variants) }}
@@ -104,27 +159,12 @@ jobs:
         run: echo "IMAGE_NAME=immutable-kiosk-${{ matrix.variant }}" >> $GITHUB_ENV
 
       - name: Default Tag
-        run: echo "DEFAULT_TAG=$(just generate-default-tag)" >> $GITHUB_ENV
+        run: echo "DEFAULT_TAG=${{ needs.discover.outputs.image_tag }}" >> $GITHUB_ENV
 
       - name: Prepare environment
         run: |
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
-
-      # A push/dispatch on a non-default branch publishes testing-<branch>
-      # only -- never latest, never a release (see immutable-sbc's build.yml).
-      - name: Compute test-branch mode
-        id: test-mode
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" != "pull_request" \
-                && "${{ github.ref }}" != "refs/heads/${{ github.event.repository.default_branch }}" ]]; then
-            BRANCH_SLUG=$(printf '%s' "${{ github.ref_name }}" | tr -c 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z')
-            echo "test_mode=true" >> "$GITHUB_OUTPUT"
-            echo "DEFAULT_TAG=testing-${BRANCH_SLUG}" >> "$GITHUB_ENV"
-          else
-            echo "test_mode=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Build Image
         env:
@@ -133,7 +173,7 @@ jobs:
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || steps.test-mode.outputs.test_mode == 'true')
+        if: needs.discover.outputs.channel != 'none'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -141,21 +181,28 @@ jobs:
 
       - name: Check package changes
         id: check-changes
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: needs.discover.outputs.channel == 'stable' || needs.discover.outputs.channel == 'dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           NEW_IMAGE="${IMAGE_NAME}:${DEFAULT_TAG}"
           PKG_CHANGELOG="/tmp/package-changelog-${{ matrix.variant }}.md"
-          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
+          # Against the current stable release on both channels: a
+          # pre-release lists everything it would bring to stable.
+          PREV_TAG=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           PREV_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:no-previous-release"
           if [[ -n "${PREV_TAG}" ]]; then
-            while IFS= read -r CANDIDATE_SHA; do
-              CANDIDATE_REF="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-${CANDIDATE_SHA}"
+            # Its version tag; builds from before the channels only have
+            # latest-<sha> (dev-<sha> since).
+            while IFS= read -r CANDIDATE_REF; do
               if podman pull --quiet "${CANDIDATE_REF}" >/dev/null 2>&1; then
                 PREV_IMAGE="${CANDIDATE_REF}"
                 break
               fi
-            done < <(git log --format='%h' "${PREV_TAG}")
+            done < <(echo "${IMAGE_REGISTRY}/${IMAGE_NAME}:${PREV_TAG}"
+                     git log --format='%h' "${PREV_TAG}" | head -50 |
+                       sed -e "s|^|${IMAGE_REGISTRY}/${IMAGE_NAME}:latest-|p" -e "s|:latest-|:dev-|")
           fi
           ./scripts/diff-packages.sh "${PREV_IMAGE}" "${NEW_IMAGE}" "${PKG_CHANGELOG}" "${PKG_CHANGELOG%.md}.tsv"
           if grep -qx 'No package changes\.' "${PKG_CHANGELOG}"; then
@@ -194,18 +241,27 @@ jobs:
       # Push once, add the other tags with skopeo: every podman push makes a
       # new digest, which left :latest unsigned in lm-server (see its history).
       - name: Push To GHCR
-        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || steps.test-mode.outputs.test_mode == 'true') && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
+        if: needs.discover.outputs.channel != 'none' && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
         id: push-image
         env:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
-          TEST_MODE: ${{ steps.test-mode.outputs.test_mode }}
+          CHANNEL: ${{ needs.discover.outputs.channel }}
+          RELEASE_TAG: ${{ needs.discover.outputs.release_tag }}
         run: |
           set -euox pipefail
           podman push --digestfile=/tmp/digestfile "${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${DEFAULT_TAG}"
           digest=$(< /tmp/digestfile)
-          for tag in ${ALIAS_TAGS}; do
+          TAGS="${ALIAS_TAGS}"
+          # The version tag: what promote.yml moves :latest to, and the
+          # package diff's previous release.
+          if [[ "${CHANNEL}" == "stable" || "${CHANNEL}" == "dev" ]]; then
+            TAGS+=" ${RELEASE_TAG}"
+          fi
+          for tag in ${TAGS}; do
             [[ "${tag}" == "${DEFAULT_TAG}" ]] && continue
-            if [[ "${TEST_MODE}" == "true" && "${tag}" != testing-* ]]; then
+            # Off main only <channel tag>-* (and the version): the bare
+            # date tags are stable's.
+            if [[ "${CHANNEL}" != "stable" && "${tag}" != "${DEFAULT_TAG}"-* && "${tag}" != "${RELEASE_TAG}" ]]; then
               continue
             fi
             skopeo copy --all "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}@${digest}" "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
@@ -213,12 +269,12 @@ jobs:
           echo "digest=${digest}" >> $GITHUB_OUTPUT
 
       - name: Upload published marker
-        if: steps.push-image.outcome == 'success' && steps.test-mode.outputs.test_mode != 'true'
+        if: steps.push-image.outcome == 'success' && (needs.discover.outputs.channel == 'stable' || needs.discover.outputs.channel == 'dev')
         run: touch published.marker
 
       - name: Upload published marker artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: steps.push-image.outcome == 'success' && steps.test-mode.outputs.test_mode != 'true'
+        if: steps.push-image.outcome == 'success' && (needs.discover.outputs.channel == 'stable' || needs.discover.outputs.channel == 'dev')
         with:
           name: published-${{ matrix.variant }}
           path: published.marker
@@ -292,10 +348,20 @@ jobs:
       - name: Generate changelog
         env:
           VARIANTS: ${{ needs.discover.outputs.variants }}
+          CHANNEL: ${{ needs.discover.outputs.channel }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mapfile -t VARIANT_LIST < <(echo "${VARIANTS}" | jq -r '.[]')
-          ./scripts/merge-changelogs.sh changelog-artifacts "${VARIANT_LIST[@]}" > changelog.md
+          : > changelog.md
+          if [[ "${CHANNEL}" == "dev" ]]; then
+            {
+              echo "> Wersja testowa (kanał **dev**, gałąź \`dev\`): zastępuje ją każda kolejna zmiana."
+              echo "> Stabilna staje się po scaleniu \`dev\` do \`main\` albo po odznaczeniu *Pre-release*."
+              echo
+            } >> changelog.md
+          fi
+          ./scripts/merge-changelogs.sh changelog-artifacts "${VARIANT_LIST[@]}" >> changelog.md
           {
             echo "## Instalacja"
             echo
@@ -313,7 +379,8 @@ jobs:
             echo "## Commits"
             echo
           } >> changelog.md
-          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -1 || true)
+          # Since the current stable release (a pre-release: all it would add).
+          PREV_TAG=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           if [[ -n "${PREV_TAG}" ]]; then
             git log --pretty='- %h %s' "${PREV_TAG}..HEAD" >> changelog.md
           else
@@ -333,8 +400,27 @@ jobs:
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.discover.outputs.release_tag }}
-          name: ${{ needs.discover.outputs.release_tag }}
+          name: ${{ needs.discover.outputs.release_tag }}${{ needs.discover.outputs.channel == 'dev' && ' (dev)' || '' }}
           body_path: changelog.md
+          prerelease: ${{ needs.discover.outputs.channel == 'dev' }}
+          make_latest: ${{ needs.discover.outputs.channel == 'stable' && 'true' || 'false' }}
+
+      # One pre-release at a time: the one just published replaces the
+      # others (and their tags; their images stay in the registry).
+      - name: Remove older pre-releases
+        if: needs.discover.outputs.channel == 'dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.discover.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release list --limit 50 --json tagName,isPrerelease \
+              --jq '.[] | select(.isPrerelease) | .tagName' |
+            while IFS= read -r OLD; do
+              [[ -z "${OLD}" || "${OLD}" == "${TAG}" ]] && continue
+              echo "Removing pre-release ${OLD}"
+              gh release delete "${OLD}" --cleanup-tag --yes
+            done
 
   build-media:
     name: Build installer ISOs
@@ -344,5 +430,18 @@ jobs:
     with:
       publish: true
       tag: ${{ needs.release-meta.outputs.tag }}
+      # What the installed system then follows: the channel's tag.
+      image_tag: ${{ needs.discover.outputs.image_tag }}
     permissions:
       contents: write
+
+  promote:
+    name: Promote ${{ needs.discover.outputs.promote_tag }} to stable
+    needs: discover
+    if: needs.discover.outputs.promote_tag != ''
+    uses: ./.github/workflows/promote.yml
+    with:
+      tag: ${{ needs.discover.outputs.promote_tag }}
+    permissions:
+      contents: write
+      packages: write
