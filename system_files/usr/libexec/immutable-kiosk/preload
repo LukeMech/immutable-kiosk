@@ -1,0 +1,8 @@
+#!/bin/sh
+# immutable-kiosk-preload.service: cage's libraries first, then kiosk-shell's.
+for f in /usr/lib64/libgallium-*.so /usr/lib64/libLLVM.so.* \
+         /usr/lib64/libgtk-4.so.1 /usr/lib64/libjavascriptcoregtk-6.0.so.1 \
+         /usr/lib64/libwebkitgtk-6.0.so.4; do
+    f=$(readlink -f "$f") && [ -f "$f" ] && cat "$f" > /dev/null
+done
+exit 0

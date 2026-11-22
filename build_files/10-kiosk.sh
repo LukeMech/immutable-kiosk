@@ -45,6 +45,7 @@ passwd -l kiosk
 
 systemctl enable immutable-kiosk-backend.service
 systemctl enable immutable-kiosk-cage.service
+systemctl enable immutable-kiosk-preload.service
 # Automatic rollback when a new version never brings the kiosk up.
 systemctl enable immutable-kiosk-boot-counter.service immutable-kiosk-boot-watchdog.service
 systemctl set-default graphical.target

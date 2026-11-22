@@ -1,0 +1,20 @@
+# Reads the kiosk's biggest libraries into the page cache early, in the
+# background: cage loads Mesa (libgallium + libLLVM, ~200 MB) when it starts
+# and kiosk-shell GTK and WebKit (~140 MB). Read cold from the eMMC that took
+# ~5 s of black screen between plymouth and the kiosk. Nothing waits for it.
+[Unit]
+Description=Preload the kiosk's libraries
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=simple
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+ExecStart=/usr/libexec/immutable-kiosk/preload
+
+[Install]
+WantedBy=sysinit.target
