@@ -364,6 +364,33 @@ def wifi_state(rescan):
     return {"enabled": radio, "networks": nets, "saved": saved, "device": wifi_device()}
 
 
+def net_brief():
+    """For Settings' top bar (polled every 5 s while it's open), so cheap:
+    the connected device -- Ethernet wins over Wi-Fi -- and for Wi-Fi the
+    signal from NetworkManager's last scan (no rescan). None = offline."""
+    try:
+        rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"], timeout=5)
+    except ApiError:
+        return None
+    best = None
+    for _dev, typ, state, conn in rows:
+        if typ not in ("ethernet", "wifi") or not state.startswith("connected"):
+            continue
+        item = {"type": typ, "name": conn if conn not in ("", "--") else typ}
+        if typ == "ethernet":
+            return item
+        best = best or item
+    if best:
+        try:
+            for in_use, signal in nm_rows(["-f", "IN-USE,SIGNAL", "dev", "wifi", "list", "--rescan", "no"], timeout=5):
+                if in_use == "*":
+                    best["signal"] = int(signal or 0)
+                    break
+        except (ApiError, ValueError):
+            pass
+    return best
+
+
 def wifi_device():
     """The Wi-Fi adapter's state for the status line: {device, state,
     connection, address} -- state is nmcli's (connected, connecting
@@ -1229,6 +1256,7 @@ def r_info(body, q):
         "device": {"key": key, "name": dev.get("name", ""), "product": read_dmi("product_name"),
                    "vendor": read_dmi("sys_vendor")},
         "power": power_state(),
+        "net": net_brief(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "timezone": current_timezone(),
     }

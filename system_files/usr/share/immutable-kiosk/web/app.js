@@ -134,8 +134,15 @@ function showTab(name) {
     ({ hmi: loadHmi, net, screen: loadScreen, system: loadSystem })[name]();
 }
 
-// kiosk-shell calls this whenever Settings becomes visible.
-window.kioskShown = () => { if (cfg && cfg.mode !== "installer") showTab(currentTab); };
+// kiosk-shell calls these when Settings is shown / the HMI replaces it. The
+// page keeps running behind the HMI (document.hidden stays false there), so
+// polling checks settingsVisible -- no nmcli every 5 s under the HMI.
+let settingsVisible = true;
+window.kioskShown = () => {
+    settingsVisible = true;
+    if (cfg && cfg.mode !== "installer") { showTab(currentTab); refreshDevice(); }
+};
+window.kioskHidden = () => { settingsVisible = false; };
 
 /* ---------- HMI */
 let hmiDraft = null;
@@ -856,6 +863,14 @@ function renderBar(i) {
     } else {
         b.hidden = true;
     }
+    // Network, only while connected: Wi-Fi signal + name, or Ethernet.
+    const n = i.net, nb = $("netbar");
+    nb.hidden = !n;
+    if (n) {
+        const icon = n.type === "wifi" ? wifiIcon(n.signal != null ? sigLevel(n.signal) : 3) : ICONS.ethernet;
+        nb.innerHTML = `${icon}<span>${esc(n.type === "wifi" ? n.name : "Ethernet")}</span>`;
+        nb.title = n.type === "wifi" && n.signal != null ? `${n.name} · sygnał ${n.signal}%` : n.name;
+    }
 }
 
 let tzZones = null, tzCurrent = null;
@@ -997,7 +1012,7 @@ function initSystem() {
     });
 
     // The top bar (battery, clock) on every tab; the clock ticks locally in between.
-    setInterval(() => { if (!document.hidden) refreshDevice(); }, 5000);
+    setInterval(() => { if (settingsVisible && !document.hidden) refreshDevice(); }, 5000);
     setInterval(renderClock, 1000);
 }
 
