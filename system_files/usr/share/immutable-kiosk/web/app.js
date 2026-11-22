@@ -795,13 +795,9 @@ let hostSaved = null;
 async function refreshDevice() {
     const i = await api("/info").catch(() => null);
     if (!i) return;
-    const p = i.power;
-    const low = p.ac_online === false && p.battery != null && p.battery <= 15;
-    setStatus("dev-st", low ? "warn" : p.ac_online ? "ok" : "",
-              p.ac_online ? ICONS.plug : p.battery != null ? ICONS.battery : ICONS.tablet,
-              i.device.name || i.device.product || "Tablet",
-              [i.device.vendor, powerText(p)].filter(Boolean).join(" · "));
-    $("dev-time").textContent = i.time;
+    renderBar(i);
+    $("dev-model").textContent = i.device.name || i.device.product || "—";
+    $("dev-vendor").textContent = i.device.vendor || "—";
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {
         h.value = i.hostname;
@@ -811,6 +807,52 @@ async function refreshDevice() {
     if (tzZones && i.timezone !== tzCurrent && document.activeElement !== $("tz-city")) {
         tzCurrent = i.timezone;
         renderTz();
+    }
+}
+
+/* Top bar: battery and clock, next to "Wróć do HMI". */
+function batteryIcon(p) {
+    const lvl = Math.max(0, Math.min(100, p.battery));
+    const charging = p.battery_status === "Charging" || (p.ac_online === true && p.battery_status !== "Full");
+    const fill = charging || p.battery_status === "Full" ? "var(--ok)"
+        : lvl <= 10 ? "var(--bad)" : lvl <= 20 ? "var(--warn)" : "var(--text)";
+    const w = (21 * lvl / 100).toFixed(1);
+    return `<svg viewBox="0 0 32 16" width="36" height="18" aria-hidden="true">
+        <rect x="1" y="1" width="26" height="14" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".75"/>
+        <rect x="28.2" y="5" width="2.6" height="6" rx="1.2" fill="currentColor" opacity=".75"/>
+        <rect x="3.5" y="3.5" width="${w}" height="9" rx="1.8" fill="${fill}"/>
+        ${charging ? '<path d="M15.6 1.8 10.4 9h3.7l-1.5 5.2 5.3-7.4h-3.8z" fill="#fff" stroke="var(--bg)" stroke-width="1" stroke-linejoin="round"/>' : ""}
+      </svg>`;
+}
+
+let clockBase = null;  // {sec: seconds since midnight from kioskd, at: performance.now()}
+function renderClock() {
+    if (!clockBase) return;
+    const t = Math.floor(clockBase.sec + (performance.now() - clockBase.at) / 1000) % 86400;
+    const hh = String(Math.floor(t / 3600)).padStart(2, "0"), mm = String(Math.floor(t / 60) % 60).padStart(2, "0");
+    $("clock").textContent = `${hh}:${mm}`;
+}
+// kioskd's clock, not the browser's: WebKit keeps the time zone it started
+// with, so a zone changed in Settings would show up only after a restart.
+function setClock(time) {
+    const m = /(\d\d):(\d\d):(\d\d)$/.exec(time || "");
+    if (!m) return;
+    clockBase = { sec: +m[1] * 3600 + +m[2] * 60 + +m[3], at: performance.now() };
+    renderClock();
+}
+
+function renderBar(i) {
+    setClock(i.time);
+    const p = i.power, b = $("batt");
+    if (p.battery != null) {
+        b.innerHTML = `${batteryIcon(p)}<span>${p.battery}%</span>`;
+        b.title = powerText(p);
+        b.hidden = false;
+    } else if (p.ac_online === true) {
+        b.innerHTML = `<span class="plug">${ICONS.plug}</span>`;
+        b.hidden = false;
+    } else {
+        b.hidden = true;
     }
 }
 
@@ -940,13 +982,15 @@ function initSystem() {
         if (!tz) return;
         api("/timezone", { timezone: tz }).then(r => {
             tzCurrent = r.timezone;
-            $("dev-time").textContent = r.time;
+            setClock(r.time);
             renderTz();
             toast(`Strefa czasowa: ${r.timezone}`);
         }).catch(err => { toast(err.message, true); renderTz(); });
     });
 
-    setInterval(() => { if (currentTab === "system" && !document.hidden) refreshDevice(); }, 5000);
+    // The top bar (battery, clock) on every tab; the clock ticks locally in between.
+    setInterval(() => { if (!document.hidden) refreshDevice(); }, 5000);
+    setInterval(renderClock, 1000);
 }
 
 async function initSettings() {
@@ -960,6 +1004,7 @@ async function initSettings() {
     initWifi();
     initScreen();
     initSystem();
+    refreshDevice();  // the top bar's battery and clock right away
     if (location.hash === "#recovery") openRecovery(); else showTab("hmi");
 }
 

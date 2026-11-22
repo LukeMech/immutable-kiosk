@@ -13,7 +13,13 @@
   <div class="top">
   <header class="bar">
     <h1>Ustawienia</h1>
-    <button id="back" class="btn primary">← Wróć do HMI</button>
+    <div class="bar-end">
+      <div class="sysinfo">
+        <span class="batt" id="batt" hidden></span>
+        <span class="clock" id="clock"></span>
+      </div>
+      <button id="back" class="btn primary">← Wróć do HMI</button>
+    </div>
   </header>
 
   <nav class="tabs" id="tabs">
@@ -214,15 +220,9 @@
       </div>
       <div class="card">
         <h2>Urządzenie</h2>
-        <div class="status" id="dev-st">
-          <div class="status-icon" id="dev-st-icon"></div>
-          <div class="status-text">
-            <div class="status-title" id="dev-st-title">Wczytywanie…</div>
-            <div class="status-sub" id="dev-st-sub"></div>
-          </div>
-        </div>
         <dl class="kv" id="dev-info">
-          <dt>Czas</dt><dd id="dev-time">—</dd>
+          <dt>Model</dt><dd id="dev-model">—</dd>
+          <dt>Producent</dt><dd id="dev-vendor">—</dd>
           <dt>Strefa czasowa</dt>
           <dd class="inline">
             <select id="tz-region" aria-label="Region"></select>
