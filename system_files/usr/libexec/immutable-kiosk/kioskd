@@ -698,10 +698,11 @@ def run_bootc_with_progress(job, args):
         raise RuntimeError(job.log[-1] if job.log else f"bootc zakończył się kodem {proc.returncode}")
 
 
-# The image's version label is "<tag>.<date>-<git sha>" (Justfile): the sha
-# ties a deployment to its commit, and through the release tag on that commit
-# to its GitHub release (changelog).
-VERSION_SHA = re.compile(r"-([0-9a-f]{7,40})$")
+# The image's version label ends in its git sha (Justfile): "v45.20261122.1-
+# 778b844" (stable), "v45.3f30f95" (dev: the tag is the commit). The sha ties
+# a deployment to its commit, and through the release tag on that commit to
+# its GitHub release (changelog).
+VERSION_SHA = re.compile(r"(?:-|^v\d+\.)([0-9a-f]{7,40})$")
 
 # Last `bootc upgrade --check` (this kioskd's lifetime): the page checks on its
 # own when this is old or missing, and shows when it was.

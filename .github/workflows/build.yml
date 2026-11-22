@@ -5,8 +5,9 @@ name: Build container image
 # disk images and the installer ISO.
 #
 # Channels (what a kiosk follows -- Settings -> System -> Kanał):
-#   dev branch  -> :dev     + one rolling pre-release, replaced by every build;
-#   main        -> :latest  + a release (stable).
+#   dev branch  -> :dev     + one rolling pre-release (v<fedora>.<commit>),
+#                             replaced by every build;
+#   main        -> :latest  + a release (stable, v<fedora>.<date>[.N]).
 # A main push whose tree is a pre-release's tree (dev merged into main) builds
 # nothing: promote.yml moves :latest to the image that was tested on dev and
 # turns that pre-release into the release. Other branches: testing-<branch>.
@@ -104,6 +105,13 @@ jobs:
           set -euo pipefail
           FEDORA_VER=$(awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}' Containerfile)
           [[ -n "${FEDORA_VER}" ]] || { echo "error: no Fedora version in Containerfile" >&2; exit 1; }
+          # Off main: Fedora version + commit (v45.3f30f95) -- dates and
+          # their .1/.2 are stable's. promote.yml gives a promoted
+          # pre-release its dated tag.
+          if [[ "${{ steps.channel.outputs.channel }}" != "stable" ]]; then
+            echo "tag=v${FEDORA_VER}.$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
           if ! git rev-parse -q --verify "refs/tags/${PREFIX}" >/dev/null \
               && [[ -z "$(git tag -l "${PREFIX}.*")" ]]; then
@@ -393,8 +401,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           TAG="${{ needs.discover.outputs.release_tag }}"
-          git tag -a "${TAG}" -m "${TAG}"
-          git push origin "${TAG}"
+          if [[ "${{ needs.discover.outputs.channel }}" == "dev" ]]; then
+            # The same commit built again (a re-run, a dispatch): its
+            # pre-release is updated in place.
+            git tag -f -a "${TAG}" -m "${TAG}"
+            git push -f origin "${TAG}"
+          else
+            git tag -a "${TAG}" -m "${TAG}"
+            git push origin "${TAG}"
+          fi
 
       - name: Publish release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4

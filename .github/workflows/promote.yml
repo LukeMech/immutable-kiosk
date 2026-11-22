@@ -40,7 +40,7 @@ jobs:
       contents: write
       packages: write
     outputs:
-      tag: ${{ steps.tag.outputs.tag }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -102,16 +102,55 @@ jobs:
             echo "${REPO}:latest -> ${TAG} (${DIGEST})"
           done
 
+      # A dev pre-release is tagged v<fedora>.<commit>; a stable release
+      # v<fedora>.<date>[.N] (build.yml's rule): the release moves to a
+      # dated tag on the same commit, the images get it too, the old tag
+      # and the ISOs named after it go (media below makes them again).
       - name: Make it the latest release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
+          MEDIA: ${{ github.event_name != 'workflow_dispatch' || inputs.media }}
         run: |
           set -euo pipefail
-          NAME=$(gh release view "${TAG}" --json name --jq .name)
+          NEW="${TAG}"
+          if ! [[ "${TAG}" =~ ^v[0-9]+\.[0-9]{8}(\.[0-9]+)?$ ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            FEDORA_VER=$(git show "${TAG}:Containerfile" | awk -F'[:@]' '/^FROM quay.io\/fedora\/fedora-bootc:/ {print $2; exit}')
+            PREFIX="v${FEDORA_VER}.$(date -u +%Y%m%d)"
+            if ! git rev-parse -q --verify "refs/tags/${PREFIX}" >/dev/null \
+                && [[ -z "$(git tag -l "${PREFIX}.*")" ]]; then
+              NEW="${PREFIX}"
+            else
+              LAST_NUM=$(git tag -l "${PREFIX}.*" | sed -E "s/^${PREFIX}\.//" | sort -n | tail -1)
+              NEW="${PREFIX}.$(( 10#${LAST_NUM:-0} + 1 ))"
+            fi
+            git tag -a "${NEW}" -m "${NEW}" "${TAG}^{commit}"
+            git push origin "${NEW}"
+            REGISTRY="${IMAGE_REGISTRY,,}"
+            for VARIANT in $(python3 -c '
+          import tomllib
+          with open("images/variants.toml", "rb") as f:
+              print(" ".join(sorted(v["suffix"] for v in tomllib.load(f).values())))
+          '); do
+              REPO="${REGISTRY}/immutable-kiosk-${VARIANT}"
+              skopeo copy --all --preserve-digests "docker://${REPO}:latest" "docker://${REPO}:${NEW}"
+            done
+          fi
           # Without build.yml's "> Wersja testowa..." lead.
           gh release view "${TAG}" --json body --jq .body | sed '/^> /d' | sed '/./,$!d' > notes.md
-          gh release edit "${TAG}" --prerelease=false --latest --title "${NAME% (dev)}" --notes-file notes.md
+          gh release edit "${TAG}" --tag "${NEW}" --prerelease=false --latest --title "${NEW}" --notes-file notes.md
+          if [[ "${NEW}" != "${TAG}" ]]; then
+            git push origin ":refs/tags/${TAG}"
+            if [[ "${MEDIA}" == "true" ]]; then
+              gh release view "${NEW}" --json assets --jq '.assets[].name' | grep -F -- "-${TAG}." |
+                while IFS= read -r ASSET; do gh release delete-asset "${NEW}" "${ASSET}" --yes; done
+            fi
+          fi
+          echo "Released as ${NEW}"
+          echo "tag=${NEW}" >> "$GITHUB_OUTPUT"
 
   media:
     name: Installer ISOs from :latest

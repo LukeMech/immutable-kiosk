@@ -705,6 +705,7 @@ const CHECK_EVERY = 15 * 60;  // s: opening System checks again after this
 
 // A version label, readable without a matching GitHub release:
 //   "v45.20261122.1-778b844" (CI builds carry their release tag) -> "v45.20261122.1"
+//   "v45.3f30f95" (dev builds: the tag is the commit) -> as it is
 //   "latest.20261121-22d3877" (older builds) -> "v45.20261121-22d3877"
 //     (Fedora version from kioskd; the date+commit still says which build)
 function labelVersion(v) {

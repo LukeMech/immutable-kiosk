@@ -48,8 +48,11 @@ build $variant="x86" $target_image=(image_name + "-" + variant) $tag=default_tag
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
         # The release tag CI computed up front (build.yml, discover) when there
         # is one: "v45.20261122.1-778b844" -- what Settings shows. Local
-        # builds keep "latest.<date>-<sha>".
-        if [[ -n "${RELEASE_TAG:-}" ]]; then
+        # builds keep "latest.<date>-<sha>". A dev build's tag is the commit
+        # already ("v45.3f30f95"): not twice.
+        if [[ -n "${RELEASE_TAG:-}" && "${RELEASE_TAG}" == *".${GIT_SHA}" ]]; then
+            LABELS+=("--label" "org.opencontainers.image.version=${RELEASE_TAG}")
+        elif [[ -n "${RELEASE_TAG:-}" ]]; then
             LABELS+=("--label" "org.opencontainers.image.version=${RELEASE_TAG}-${GIT_SHA}")
         else
             LABELS+=("--label" "org.opencontainers.image.version={{ default_tag }}.$(date +%Y%m%d)-${GIT_SHA}")

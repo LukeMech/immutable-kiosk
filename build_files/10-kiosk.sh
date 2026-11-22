@@ -77,6 +77,10 @@ find /etc/systemd /usr/lib/systemd -lname '*kmscon*' -print -delete
 # say "dev". IMAGE_ID/IMAGE_VERSION carry the same. NAME/ID/VERSION_ID stay
 # Fedora's: dnf, bootc and friends key off those.
 IK_VERSION="${RELEASE_TAG:-dev}${GIT_SHA:+-${GIT_SHA}}"
+# A dev build's tag is the commit already: "v45.3f30f95", not "...-3f30f95".
+if [[ -n "${GIT_SHA:-}" && "${RELEASE_TAG:-}" == *".${GIT_SHA}" ]]; then
+    IK_VERSION="${RELEASE_TAG}"
+fi
 sed -i -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"immutable-kiosk ${IK_VERSION}\"|" \
     -e '/^IMAGE_ID=/d' -e '/^IMAGE_VERSION=/d' /usr/lib/os-release
 printf 'IMAGE_ID="immutable-kiosk"\nIMAGE_VERSION="%s"\n' "${IK_VERSION}" >> /usr/lib/os-release
