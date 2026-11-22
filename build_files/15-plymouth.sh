@@ -18,10 +18,14 @@
 set -ouex pipefail
 
 # Weak dependencies are off for the whole build (00-pre-build.sh): Plymouth's
-# own themes, fonts and the label plugin stay out. plymouth-graphics-libs
-# hard-requires "system-logos" (dnf brings the release's own, fedora-logos):
-# the package stays for that, its files and directories go below.
-dnf install -y plymouth plymouth-plugin-script
+# own themes stay out. plymouth-graphics-libs hard-requires "system-logos"
+# (dnf brings the release's own, fedora-logos): the package stays for that,
+# its files and directories go below.
+# plymouth-plugin-label is needed although the script draws no text: the
+# script plugin hides its console viewer on every refresh, and without the
+# label plugin there is none -- plymouthd segfaulted in
+# ply_console_viewer_hide() on the tablet (no splash, a backtrace instead).
+dnf install -y plymouth plymouth-plugin-script plymouth-plugin-label
 
 THEME=/usr/share/plymouth/themes/immutable-kiosk
 mkdir -p "${THEME}"

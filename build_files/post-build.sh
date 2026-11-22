@@ -105,7 +105,7 @@ dnf -y clean all
 for pkg in bootc bootupd ostree skopeo podman kernel-core NetworkManager NetworkManager-wifi \
     cage wlr-randr python3 python3-gobject gtk4 webkitgtk6.0 mesa-dri-drivers \
     shim-ia32 grub2-efi-ia32 grub2-tools efibootmgr btrfs-progs e2fsprogs dosfstools gdisk \
-    cloud-utils-growpart zstd plymouth plymouth-plugin-script policycoreutils \
+    cloud-utils-growpart zstd plymouth plymouth-plugin-script plymouth-plugin-label policycoreutils \
     chrony zram-generator; do
     rpm -q "${pkg}" >/dev/null || { echo "error: ${pkg} was removed" >&2; exit 1; }
 done
