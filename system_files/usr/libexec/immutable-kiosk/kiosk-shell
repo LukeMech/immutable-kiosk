@@ -99,6 +99,16 @@ WebKit = None  # load_webkit()
 API = "http://127.0.0.1:8088"
 SETTINGS_URL = f"{API}/"
 OSK_JS = Path("/usr/share/immutable-kiosk/web/osk.js")
+# An HMI page's own <meta name="viewport"> makes WebKit on the touch panel
+# lay it out at the panel's native width (800 px in landscape) and stretch
+# it. Removed as soon as it shows up: the page is laid out at the window's
+# real size, like Settings (index.html has no viewport meta either).
+NO_VIEWPORT_JS = """(function () {
+    const drop = () => document.querySelectorAll('meta[name="viewport"]').forEach(m => m.remove());
+    new MutationObserver(drop).observe(document, { childList: true, subtree: true });
+    document.addEventListener("DOMContentLoaded", drop);
+    drop();
+})();"""
 DATA = Path(GLib.get_user_data_dir()) / "immutable-kiosk"
 CACHE = Path(GLib.get_user_cache_dir()) / "immutable-kiosk"
 
@@ -673,6 +683,10 @@ class KioskShell(Gtk.Application):
 
         ucm = self.hmi.get_user_content_manager()
         ucm.remove_all_scripts()
+        # Always, keyboard or not: no viewport meta of the HMI's (NO_VIEWPORT_JS).
+        ucm.add_script(WebKit.UserScript.new(
+            NO_VIEWPORT_JS, WebKit.UserContentInjectedFrames.ALL_FRAMES,
+            WebKit.UserScriptInjectionTime.START, None, None))
         if cfg.get("osk_in_hmi", True) and OSK_JS.exists():
             ucm.add_script(WebKit.UserScript.new(
                 OSK_JS.read_text(), WebKit.UserContentInjectedFrames.ALL_FRAMES,

@@ -2,8 +2,10 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Ustawienia</title>
+<!-- Deliberately no <meta name="viewport">: with one, WebKit on the touch
+     tablet lays the page out at the panel's native 800 px in landscape and
+     stretches it. Without it the page uses the window's real size. -->
+<title>Settings</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -152,6 +154,9 @@
           <button data-v="270">270°</button>
         </div>
         <p class="hint" id="rot-hint"></p>
+        <!-- Diagnosis: the page's own idea of its size (landscape pages
+             came up ~1.6x too big). translate="no": numbers only. -->
+        <p class="hint" id="page-metrics" translate="no"></p>
         <!-- The boot splash follows the rotation (kioskd rewrites a kernel
              argument): while that's being written, and when it's done. -->
         <div class="status" id="splash-st" hidden>

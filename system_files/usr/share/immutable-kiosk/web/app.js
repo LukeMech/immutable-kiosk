@@ -572,7 +572,17 @@ async function loadDisplay() {
     seg($("res"), cfg.resolution || "", v => saveCfg({ resolution: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
 }
 
+// What the page itself sees: its size, the screen's per WebKit, the
+// viewport's scale. In landscape it should read 1280 wide at scale 1.
+function renderPageMetrics() {
+    const vv = window.visualViewport;
+    $("page-metrics").textContent = `Page ${innerWidth}×${innerHeight} · screen ${screen.width}×${screen.height}` +
+        ` · viewport scale ${vv ? vv.scale.toFixed(2) : "?"} · DPR ${devicePixelRatio}`;
+}
+window.addEventListener("resize", () => { if (currentTab === "screen") renderPageMetrics(); });
+
 function loadScreen() {
+    renderPageMetrics();
     renderAccent();
     loadSplash();
     loadDisplay();
