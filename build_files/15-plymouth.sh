@@ -1,73 +1,103 @@
 #!/bin/bash
-# Boot splash: Plymouth with our own theme. The firmware's logo (BGRT -- the
-# vendor logo UEFI shows) stays where the firmware drew it, our spinner turns
-# below it, from the initramfs until cage takes the screen over
-# (immutable-kiosk-cage.service: `plymouth quit --retain-splash`). The same on
-# shutdown and reboot. Without a firmware logo: just the spinner on black.
+# Boot splash: Plymouth with our own theme and nothing else -- the "script"
+# plugin running immutable-kiosk.script: the whole screen in the Settings
+# background colour, a ring with a fading comet tail turning in the middle
+# over a slowly breathing glow. Images are drawn by 16-plymouth-images.py.
+# The same on shutdown and reboot. kiosk-shell opens on the same picture
+# (cage takes over with `plymouth quit --retain-splash`), so the hand-over to
+# the kiosk shows no black screen.
 #
 # Orientation: Plymouth rotates by the panel's DRM "panel orientation", which
-# the x86 variant sets per device from devices.toml (kernel argument
-# video=<connector>:panel_orientation=...). It needs the real GPU driver for
-# that -- simpledrm has no orientation, and Fedora's Plymouth ignores it --
-# so the x86 initramfs has i915 again (probed asynchronously, see there).
+# the x86 variant sets per device from devices.toml (video=<connector>:
+# panel_orientation=...). simpledrm -- the firmware framebuffer, which Fedora's
+# Plymouth uses until the real GPU driver is up -- has no orientation: the
+# splash came up sideways for its first seconds. Off (UseSimpledrm=0 here and
+# plymouth.use-simpledrm=0 on the kernel command line): Plymouth waits for
+# i915 (in the x86 initramfs, probed asynchronously).
 
 set -ouex pipefail
 
-dnf5 install -y plymouth plymouth-plugin-two-step plymouth-theme-spinner
+# No weak dependencies: Plymouth's own themes, fonts and the label plugin
+# stay out. plymouth-graphics-libs hard-requires "system-logos" (Fedora:
+# fedora-logos), so that package comes in -- its files go below.
+dnf install -y --setopt=install_weak_deps=False plymouth plymouth-plugin-script
 
 THEME=/usr/share/plymouth/themes/immutable-kiosk
 mkdir -p "${THEME}"
 
-# Password/keyboard dialog images two-step loads even if never shown (no
-# LUKS here): the spinner theme's.
-for f in bullet capslock entry keyboard keymap-render lock; do
-    cp "/usr/share/plymouth/themes/spinner/${f}.png" "${THEME}/"
-done
-
-# The spinner frames (throbber-NNNN.png): 16-plymouth-frames.py, next.
-
 cat > "${THEME}/immutable-kiosk.plymouth" <<EOF
 [Plymouth Theme]
 Name=immutable-kiosk
-Description=Firmware logo with a spinner below it
-ModuleName=two-step
+Description=immutable-kiosk boot splash
+ModuleName=script
 
-[two-step]
+[script]
 ImageDir=${THEME}
-HorizontalAlignment=.5
-VerticalAlignment=.78
-DialogHorizontalAlignment=.5
-DialogVerticalAlignment=.382
-Transition=none
-TransitionDuration=0.0
-BackgroundStartColor=0x000000
-BackgroundEndColor=0x000000
-MessageBelowAnimation=true
-DialogClearsFirmwareBackground=true
-
-[boot-up]
-UseEndAnimation=false
-UseFirmwareBackground=true
-
-[shutdown]
-UseEndAnimation=false
-UseFirmwareBackground=true
-
-[reboot]
-UseEndAnimation=false
-UseFirmwareBackground=true
+ScriptFile=${THEME}/immutable-kiosk.script
 EOF
 
-# No splash delay; and wait longer than Fedora's 8 s for the GPU before
-# falling back to text: i915 is probed asynchronously and on the Atom comes
-# up several seconds into the initramfs.
+# Plymouth script: Window/Sprite/Image API, called 50 times a second.
+cat > "${THEME}/immutable-kiosk.script" <<'EOF'
+# immutable-kiosk boot splash (build_files/15-plymouth.sh).
+# Background: the Settings UI's #10151c over the whole screen -- it also
+# covers the firmware's logo, which the firmware draws in the panel's native
+# (portrait) orientation.
+Window.SetBackgroundTopColor(0.063, 0.082, 0.110);
+Window.SetBackgroundBottomColor(0.063, 0.082, 0.110);
+
+ring = Image("ring.png");
+glow = Image("glow.png");
+
+cx = Window.GetX() + Window.GetWidth() / 2;
+cy = Window.GetY() + Window.GetHeight() / 2;
+
+glow_sprite = Sprite(glow);
+glow_sprite.SetPosition(cx - glow.GetWidth() / 2, cy - glow.GetHeight() / 2, 0);
+glow_sprite.SetOpacity(0);
+ring_sprite = Sprite();
+ring_sprite.SetOpacity(0);
+
+t = 0;
+fun refresh_callback ()
+{
+    t = t + 1;
+    # One turn per ~1.1 s, with a gentle surge every second turn.
+    angle = t * 0.115 + Math.Sin(t * 0.0571) * 0.6;
+    rotated = ring.Rotate(angle);
+    ring_sprite.SetImage(rotated);
+    ring_sprite.SetPosition(cx - rotated.GetWidth() / 2, cy - rotated.GetHeight() / 2, 1);
+    # Fade in over the first half second, then the glow breathes.
+    fade = Math.Min(t / 25, 1);
+    ring_sprite.SetOpacity(fade);
+    glow_sprite.SetOpacity(fade * (0.55 + 0.45 * Math.Sin(t * 0.0628)));
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+EOF
+
+# Images (ring.png, glow.png): 16-plymouth-images.py, next.
+
+# No splash delay; wait longer than Fedora's 8 s for the GPU before falling
+# back to text (i915 is probed asynchronously and on the Atom comes up
+# several seconds into the initramfs); no simpledrm (see the top).
 mkdir -p /etc/plymouth
 cat > /etc/plymouth/plymouthd.conf <<'EOF'
 [Daemon]
 Theme=immutable-kiosk
 ShowDelay=0
 DeviceTimeout=15
+UseSimpledrm=0
 EOF
+
+# Ours is the only theme: everything else under themes/ goes (fedora-logos'
+# "charge" among them) except Plymouth's built-in text fallbacks.
+find /usr/share/plymouth/themes -mindepth 1 -maxdepth 1 -type d \
+    ! -name immutable-kiosk ! -name text ! -name details -exec rm -rf {} +
+# fedora-logos' files (anaconda artwork, Fedora icons): the package has to
+# stay installed for the dependency above, nothing here shows any of it.
+rpm -ql fedora-logos | while read -r f; do
+    case "${f}" in /usr/share/licenses/*) continue ;; esac
+    if [[ -f "${f}" || -L "${f}" ]]; then rm -f "${f}"; fi
+done
 
 # Default theme for plymouthd and for dracut's plymouth module (the x86
 # initramfs is built later, by initramfs.sh).

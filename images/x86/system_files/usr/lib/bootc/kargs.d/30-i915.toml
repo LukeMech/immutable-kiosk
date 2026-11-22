@@ -7,4 +7,7 @@
 # - i915.fastboot=1: take over the mode the firmware set instead of a full
 #   modeset, which blanked the panel once mid-boot. (The per-chip default
 #   already covers newer generations; explicit here for Bay Trail.)
-kargs = ["driver_async_probe=i915", "i915.fastboot=1"]
+# - plymouth.use-simpledrm=0: no splash on simpledrm, which has no panel
+#   orientation -- it came up sideways for its first seconds; Plymouth waits
+#   for i915 instead (also UseSimpledrm=0 in plymouthd.conf, 15-plymouth.sh).
+kargs = ["driver_async_probe=i915", "i915.fastboot=1", "plymouth.use-simpledrm=0"]

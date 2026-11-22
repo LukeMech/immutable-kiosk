@@ -285,7 +285,7 @@ done
 grep -q 'usr/lib/modprobe.d/i915-backlight.conf' /tmp/initramfs-new.list ||
     { echo "error: i915-backlight.conf (PWM before i915) missing from the initramfs" >&2; exit 1; }
 grep -qx plymouth <<<"${NEW_MODS}" || { echo "error: dracut's plymouth module is not in the initramfs" >&2; exit 1; }
-grep -q 'usr/share/plymouth/themes/immutable-kiosk/throbber-0001.png' /tmp/initramfs-new.list ||
+grep -q 'usr/share/plymouth/themes/immutable-kiosk/ring.png' /tmp/initramfs-new.list ||
     { echo "error: the immutable-kiosk Plymouth theme is not in the initramfs" >&2; exit 1; }
 # No firmware (see the top): i915's would be ~10 MB.
 if grep -q 'usr/lib/firmware/i915/' /tmp/initramfs-new.list; then
