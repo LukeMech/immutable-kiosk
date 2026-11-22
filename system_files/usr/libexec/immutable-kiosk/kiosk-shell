@@ -416,13 +416,7 @@ class KioskShell(Gtk.Application):
     # -- config
     def apply_hmi_config(self, force_load=False):
         cfg = self.cfg
-        h, v = CORNERS.get(cfg.get("settings_corner", "top-right"), CORNERS["top-right"])
-        self.hotcorner.set_halign(h)
-        self.hotcorner.set_valign(v)
-        corner = cfg.get("settings_corner", "top-right")
-        h, v = CORNERS[OPPOSITE.get(corner, "bottom-left")]
-        self.recovery_corner.set_halign(h)
-        self.recovery_corner.set_valign(v)
+        self.place_corners()
 
         ucm = self.hmi.get_user_content_manager()
         ucm.remove_all_scripts()
@@ -432,6 +426,22 @@ class KioskShell(Gtk.Application):
                 WebKit.UserScriptInjectionTime.END, None, None))
         if force_load or cfg.get("hmi_url") != self.loaded_url:
             self.load_hmi()
+
+    def place_corners(self):
+        """Settings corner where Ekran says, recovery corner opposite it.
+        Removed and added back, not just re-aligned: a changed halign/valign
+        on an overlay child that's already placed didn't move it (the
+        recovery corner stayed bottom-left whatever Ekran said)."""
+        corner = self.cfg.get("settings_corner", "top-right")
+        if corner not in CORNERS:
+            corner = "top-right"
+        for box, name in ((self.hotcorner, corner), (self.recovery_corner, OPPOSITE[corner])):
+            h, v = CORNERS[name]
+            self.overlay.remove_overlay(box)
+            box.set_halign(h)
+            box.set_valign(v)
+            self.overlay.add_overlay(box)
+        log(f"corners: settings {corner}, recovery {OPPOSITE[corner]}")
 
     def apply_scale(self):
         """Screen scaling = WebKit zoom: Settings (and its keyboard) at the
