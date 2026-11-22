@@ -267,7 +267,7 @@ for f in etc/modprobe.d/i915-initramfs.conf usr/lib/systemd/system/i915-early.se
     grep -q "${f}" /tmp/initramfs-new.list || { echo "error: ${f} missing from the initramfs" >&2; exit 1; }
 done
 grep -qx plymouth <<<"${NEW_MODS}" || { echo "error: dracut's plymouth module is not in the initramfs" >&2; exit 1; }
-grep -q 'usr/share/plymouth/themes/immutable-kiosk/ember-0-0.png' /tmp/initramfs-new.list ||
+grep -q 'usr/share/plymouth/themes/immutable-kiosk/outer.png' /tmp/initramfs-new.list ||
     { echo "error: the immutable-kiosk Plymouth theme is not in the initramfs" >&2; exit 1; }
 if grep -q 'usr/lib/firmware/i915/' /tmp/initramfs-new.list; then
     echo "error: i915 firmware ended up in the initramfs (--fwdir ignored?)" >&2
