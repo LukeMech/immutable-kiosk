@@ -122,7 +122,8 @@ def api_post(path, data, timeout=20):
 INTERNAL_OUTPUTS = ("eDP", "DSI", "LVDS")
 
 def wlr_outputs():
-    """[(name, width, height)] of enabled outputs, size in the panel's native orientation."""
+    """[(name, current mode, preferred mode)] of enabled outputs; a mode is
+    (width, height, refresh), in the panel's native orientation."""
     try:
         out = subprocess.run(["wlr-randr", "--json"], capture_output=True, text=True, timeout=5)
         outputs = json.loads(out.stdout)
@@ -133,10 +134,28 @@ def wlr_outputs():
     for o in outputs:
         if not o.get("enabled", True):
             continue
-        mode = next((m for m in o.get("modes", []) if m.get("current")), None)
-        if mode:
-            result.append((o["name"], mode["width"], mode["height"]))
+        modes = [(m["width"], m["height"], m.get("refresh") or 0, m) for m in o.get("modes", [])]
+        cur = next((m[:3] for m in modes if m[3].get("current")), None)
+        pref = next((m[:3] for m in modes if m[3].get("preferred")), cur)
+        if cur:
+            result.append((o["name"], cur, pref))
     return result
+
+
+def same_mode(res, cur, pref):
+    """Is Display > Resolution's "WxH[@R]" (None: preferred) the current mode?"""
+    if not res:
+        want = pref
+    else:
+        size, _, rate = res.partition("@")
+        w, _, h = size.partition("x")
+        try:
+            want = (int(w), int(h), float(rate) if rate else None)
+        except ValueError:
+            return True  # unparseable: leave the mode alone
+    if want is None or want[:2] != cur[:2]:
+        return False
+    return want[2] is None or abs(want[2] - cur[2]) < 0.5
 
 
 def wlr_state():
@@ -176,7 +195,8 @@ def apply_output(cfg):
     touch_transform = None
     panel = ""
     applied = []
-    for name, w, h in outputs:
+    for name, cur, pref in outputs:
+        w, h = cur[:2]
         if rotation == "portrait":
             transform = "90" if w > h else "normal"
         elif rotation == "landscape":
@@ -185,7 +205,12 @@ def apply_output(cfg):
             transform = rotation
         # Display > Resolution applies to the built-in panel only.
         res = cfg.get("resolution") if name.startswith(INTERNAL_OUTPUTS) else None
-        mode = ["--mode", res.replace("@", "@") + ("Hz" if "@" in res else "")] if res else ["--preferred"]
+        # A mode only when it changes: setting one is a full modeset, and the
+        # DSI panel goes dark for a second or two (rotation doesn't need one).
+        if same_mode(res, cur, pref):
+            mode = []
+        else:
+            mode = ["--mode", res + ("Hz" if "@" in res else "")] if res else ["--preferred"]
         log(f"output {name} {w}x{h}: transform {transform} ({rotation}), mode {res or 'preferred'}")
         subprocess.run(["wlr-randr", "--output", name, *mode, "--transform", transform,
                         "--scale", str(scale)], timeout=5)

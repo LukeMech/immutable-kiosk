@@ -5,8 +5,10 @@ CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/immutable-kiosk"
 if [ -r "$CACHE/outputs" ]; then
     while read -r name transform res; do
         [ -n "$name" ] && [ -n "$transform" ] || continue
+        # The preferred mode is already up: no mode means no modeset (the DSI
+        # panel would go dark for a second or two).
         case "$res" in
-            ""|preferred) mode="--preferred" ;;
+            ""|preferred) mode="" ;;
             *@*) mode="--mode ${res}Hz" ;;
             *) mode="--mode $res" ;;
         esac

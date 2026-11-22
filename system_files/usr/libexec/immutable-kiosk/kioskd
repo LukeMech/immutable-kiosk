@@ -1094,8 +1094,10 @@ def boot_journal():
     (systemd-analyze blame misses the initrd and is skewed by .device units)."""
     try:
         out = run(["journalctl", "-b", "-o", "json", "--no-pager",
-                   "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT,_SYSTEMD_UNIT",
-                   "_PID=1", "+", "_TRANSPORT=kernel", "+", f"_SYSTEMD_UNIT={CAGE_UNIT}"], timeout=30)
+                   "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT,"
+                   "_SYSTEMD_UNIT,SYSLOG_IDENTIFIER",
+                   "_PID=1", "+", "_TRANSPORT=kernel", "+", f"_SYSTEMD_UNIT={CAGE_UNIT}",
+                   "+", "SYSLOG_IDENTIFIER=cage"], timeout=30)
     except ApiError as e:
         return {"journal_error": str(e)}
     switch = None
@@ -1123,7 +1125,10 @@ def boot_journal():
                     marks.append({"t": t, "label": label})
             continue
         # "<prog>: milestone: <label>" lines in cage's unit; first of each.
-        if e.get("_SYSTEMD_UNIT") == CAGE_UNIT and e.get("UNIT") is None:
+        # (Matched by identifier too: the PAM session may move cage's processes
+        # out of the unit's cgroup.)
+        if (e.get("_SYSTEMD_UNIT") == CAGE_UNIT or e.get("SYSLOG_IDENTIFIER") == "cage") \
+                and e.get("UNIT") is None:
             label = msg.partition("milestone: ")[2].strip()
             if label and label not in seen:
                 seen.add(label)
