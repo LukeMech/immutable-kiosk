@@ -20,7 +20,8 @@ Same idea as greenboot on Fedora IoT, cut down to what a kiosk needs:
 
 The GRUB side lives in /boot/grub2/custom.cfg, which bootupd's static
 grub.cfg sources after the boot entries (41_custom.cfg) -- written at
-runtime, so devices installed before this existed get it too.
+runtime, so devices installed before this existed get it too. The same
+file hides the GRUB menu (see GRUB_CFG).
 
 Python stdlib only.
 """
@@ -48,6 +49,13 @@ ENV_SIZE = 1024
 GRUB_CFG = f"""\
 # immutable-kiosk -- written by /usr/libexec/immutable-kiosk/boot-counter at
 # every boot; edits here are overwritten.
+
+# No visible menu. The tablet's volume keys move the selection, but nothing
+# on it can confirm one, and any key stops the countdown -- the menu just sat
+# there. With "hidden" those keys are ignored; Esc / F4 / holding Shift on a
+# USB keyboard still opens the menu.
+set timeout_style=hidden
+set timeout=1
 
 # Automatic rollback: kiosk_tries is set to {TRIES} at shutdown when the next
 # boot is a new deployment; every boot spends one, the kiosk's first page

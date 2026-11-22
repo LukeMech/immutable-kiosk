@@ -559,8 +559,9 @@ const rawVersion = v => {
     return r ? r.tag : v.replace(/^[^.]*\./, "");
 };
 const AUTO_TRIES = 3;  // boot-counter's TRIES
-const GRUB_HINT = "Ręcznie, gdy system nie startuje: klawiatura USB, w menu GRUB (pierwsze sekundy startu) " +
-    "druga pozycja strzałkami i Enterem.";
+// The GRUB menu is hidden (boot-counter's custom.cfg / 05_timeout.cfg).
+const GRUB_HINT = "Ręcznie, gdy system nie startuje: klawiatura USB, zaraz po włączeniu trzymaj Shift " +
+    "(albo naciskaj Esc), w menu GRUB druga pozycja strzałkami i Enterem.";
 
 function fmtAgo(t) {
     const s = Date.now() / 1000 - t;
