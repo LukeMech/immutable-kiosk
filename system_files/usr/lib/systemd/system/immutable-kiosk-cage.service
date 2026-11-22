@@ -53,9 +53,11 @@ RestartSec=2
 UtmpIdentifier=tty1
 UtmpMode=user
 TTYPath=/dev/tty1
-TTYReset=yes
+# No TTYReset / TTYVTDisallocate: both put tty1 back into text mode (and
+# clear it) as cage's process starts -- after plymouth deactivated, so its
+# still frame gave way to a black console for the ~2 s until cage drew.
+# tty1 stays in the graphics mode plymouth left it in.
 TTYVHangup=yes
-TTYVTDisallocate=yes
 StandardInput=tty-fail
 StandardOutput=journal
 # Also on the console: while cage runs it owns the screen, so this is only
