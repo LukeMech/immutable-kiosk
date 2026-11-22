@@ -12,6 +12,7 @@ and the kiosk's first frame look alike.
 """
 
 import math
+import os
 import struct
 import zlib
 
@@ -70,3 +71,29 @@ def glow(x, y):
 png(f"{THEME}/ring.png", S, S, ring)
 png(f"{THEME}/glow.png", G, G, glow)
 print(f"ring.png, glow.png in {THEME}")
+
+
+# kiosk-splash's frames: the ring turned clockwise in FRAMES steps, drawn
+# straight from ring() (no resampling) over the kiosk's background colour,
+# opaque XRGB8888 (bytes B, G, R, X) -- what it copies into its Wayland
+# buffer, no image decoding at start-up. File: "IKSR", size, count (u16 LE),
+# then the frames, zlib-compressed.
+SPLASH = "/usr/share/immutable-kiosk/splash-ring.bin"
+BG = (16, 21, 28)                          # #10151c, kiosk-shell's background
+FRAMES = 64
+frames = bytearray()
+for k in range(FRAMES):
+    a = 2 * math.pi * k / FRAMES
+    ca, sa = math.cos(a), math.sin(a)
+    for y in range(S):
+        for x in range(S):
+            # The point that lands on (x, y) when the ring turns by a (y down).
+            dx, dy = x - c, y - c
+            r, gr, b, al = ring(c + dx * ca + dy * sa, c - dx * sa + dy * ca)
+            al = clamp(al)
+            frames += bytes((round(BG[2] + (b - BG[2]) * al), round(BG[1] + (gr - BG[1]) * al),
+                             round(BG[0] + (r - BG[0]) * al), 255))
+os.makedirs(os.path.dirname(SPLASH), exist_ok=True)
+with open(SPLASH, "wb") as f:
+    f.write(b"IKSR" + struct.pack("<HH", S, FRAMES) + zlib.compress(bytes(frames), 9))
+print(f"{SPLASH}: {FRAMES} frames of {S} px")

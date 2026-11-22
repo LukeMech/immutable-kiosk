@@ -1,0 +1,21 @@
+#!/bin/sh
+# cage's client (immutable-kiosk-cage.service): the start-up screen first,
+# then the kiosk.
+#
+#   1. The rotation kiosk-shell applied last time (it keeps it in its cache),
+#      before anything is drawn -- no portrait first frame.
+#   2. kiosk-splash: the kiosk's background with the boot splash's ring,
+#      on screen a fraction of a second after cage takes over from plymouth.
+#   3. kiosk-shell (exec: cage ends with it), which maps its window over the
+#      splash and ends it once the first page is rendered.
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/immutable-kiosk"
+if [ -r "$CACHE/outputs" ]; then
+    while read -r name transform; do
+        [ -n "$name" ] && [ -n "$transform" ] &&
+            wlr-randr --output "$name" --transform "$transform" --scale 1 2>/dev/null
+    done < "$CACHE/outputs"
+fi
+/usr/libexec/immutable-kiosk/kiosk-splash &
+KIOSK_SPLASH_PID=$!
+export KIOSK_SPLASH_PID
+exec /usr/libexec/immutable-kiosk/kiosk-shell

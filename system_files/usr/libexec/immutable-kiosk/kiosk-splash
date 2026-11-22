@@ -1,0 +1,322 @@
+#!/usr/bin/python3 -IS
+"""kiosk-splash -- the start-up screen in cage, up within a fraction of a second.
+
+cage clears the screen the moment it takes it over from the boot splash,
+and kiosk-shell (Python + GTK + WebKit) needs seconds on an Atom before its
+first frame: that used to be ~10 s of black. This client is first on screen
+instead (kiosk-session starts it right before kiosk-shell): the kiosk's
+background with the boot splash's ring turning in the middle -- the picture
+kiosk-shell's own start-up screen shows too, so when kiosk-shell's window
+maps over it nothing seems to change. kiosk-shell ends it (SIGTERM) once
+its first page is rendered.
+
+The Wayland protocol by hand, standard library only (no pywayland, no GTK:
+importing those would cost the time this is here to hide): wl_shm buffers,
+an xdg_toplevel cage shows fullscreen, frame callbacks for the animation.
+The frames come pre-drawn (build_files/16-plymouth-images.py): one row copy
+per line of the ring, no drawing here. The rotation is cage's: kiosk-session
+applies the last one before this starts.
+"""
+
+import mmap
+import os
+import socket
+import struct
+import sys
+import time
+import zlib
+
+FRAMES = "/usr/share/immutable-kiosk/splash-ring.bin"
+BG = bytes((0x1c, 0x15, 0x10, 0xff))      # #10151c as XRGB8888 (B, G, R, X)
+TURN_S = 1.1                              # one turn, as kiosk-shell's CSS
+GIVE_UP_S = 180                           # kiosk-shell never ended it
+XRGB8888 = 1
+
+
+def log(*a):
+    print("kiosk-splash:", *a, file=sys.stderr, flush=True)
+
+
+def load_frames():
+    with open(FRAMES, "rb") as f:
+        data = f.read()
+    if data[:4] != b"IKSR":
+        raise ValueError("not a splash-ring file")
+    size, count = struct.unpack_from("<HH", data, 4)
+    frames = zlib.decompress(data[8:])
+    if len(frames) != size * size * 4 * count:
+        raise ValueError("truncated splash-ring file")
+    return size, count, frames
+
+
+def pack(fmt, args):
+    """Wayland wire arguments: u/i/n/o 32-bit, s string; fds go separately."""
+    out = b""
+    for f, a in zip(fmt, args):
+        if f == "i":
+            out += struct.pack("<i", a)
+        elif f in "uno":
+            out += struct.pack("<I", a)
+        elif f == "s":
+            s = a.encode() + b"\0"
+            out += struct.pack("<I", len(s)) + s + b"\0" * (-len(s) % 4)
+    return out
+
+
+class Reader:
+    def __init__(self, data):
+        self.data, self.pos = data, 0
+
+    def u(self):
+        v = struct.unpack_from("<I", self.data, self.pos)[0]
+        self.pos += 4
+        return v
+
+    def i(self):
+        v = struct.unpack_from("<i", self.data, self.pos)[0]
+        self.pos += 4
+        return v
+
+    def s(self):
+        n = self.u()
+        v = self.data[self.pos:self.pos + max(n - 1, 0)].decode(errors="replace")
+        self.pos += n + (-n % 4)
+        return v
+
+
+class Splash:
+    def __init__(self):
+        self.size, self.count, self.frames = load_frames()
+        name = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
+        path = name if name.startswith("/") else os.path.join(os.environ["XDG_RUNTIME_DIR"], name)
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(path)
+        self.out = bytearray()
+        self.inbuf = b""
+        self.next = 2                 # 1 is wl_display
+        self.handlers = {1: self.on_display}
+        self.globals = {}             # interface -> (name, version)
+        self.output_size = None       # fallback size from wl_output
+        self.output_transform = 0
+        self.width = self.height = 0
+        self.pending = None           # (width, height) from xdg_toplevel.configure
+        self.buffers = []             # [id, busy]
+        self.pool = self.fd = self.mm = None
+        self.cur = 0
+        self.frame_cb = None
+        self.t0 = time.monotonic()
+
+    # -- wire
+    def new(self, handler=None):
+        oid = self.next
+        self.next += 1
+        if handler:
+            self.handlers[oid] = handler
+        return oid
+
+    def req(self, obj, op, fmt="", *args):
+        body = pack(fmt, args)
+        self.out += struct.pack("<II", obj, ((8 + len(body)) << 16) | op) + body
+
+    def flush(self, fd=None):
+        if fd is None:
+            self.sock.sendall(self.out)
+        else:
+            self.sock.sendmsg([bytes(self.out)], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack("i", fd))])
+        self.out.clear()
+
+    def dispatch(self, timeout=None):
+        self.sock.settimeout(timeout)
+        try:
+            data = self.sock.recv(65536)
+        except socket.timeout:
+            return
+        if not data:
+            raise ConnectionError("the compositor closed the connection")
+        self.inbuf += data
+        while len(self.inbuf) >= 8:
+            obj, word = struct.unpack_from("<II", self.inbuf)
+            size = word >> 16
+            if len(self.inbuf) < size:
+                break
+            payload, self.inbuf = self.inbuf[8:size], self.inbuf[size:]
+            handler = self.handlers.get(obj)
+            if handler:
+                handler(word & 0xffff, Reader(payload))
+
+    def roundtrip(self):
+        done = []
+        cb = self.new(lambda op, r: done.append(True))
+        self.req(1, 0, "n", cb)          # wl_display.sync
+        self.flush()
+        while not done:
+            self.dispatch()
+
+    # -- events
+    def on_display(self, op, r):
+        if op == 0:                      # error
+            obj, code, msg = r.u(), r.u(), r.s()
+            raise RuntimeError(f"protocol error on object {obj} (code {code}): {msg}")
+        if op == 1:                      # delete_id
+            self.handlers.pop(r.u(), None)
+
+    def on_registry(self, op, r):
+        if op == 0:
+            name, iface, version = r.u(), r.s(), r.u()
+            self.globals.setdefault(iface, (name, version))
+
+    def bind(self, iface, want, handler=None):
+        name, version = self.globals[iface]
+        version = min(version, want)
+        oid = self.new(handler)
+        self.req(self.registry, 0, "usun", name, iface, version, oid)
+        return oid, version
+
+    def on_wm_base(self, op, r):
+        if op == 0:                      # ping
+            self.req(self.wm_base, 3, "u", r.u())
+            self.flush()
+
+    def on_output(self, op, r):
+        if op == 0:                      # geometry: transform is the last field
+            r.i(), r.i(), r.i(), r.i(), r.i(), r.s(), r.s()
+            self.output_transform = r.i()
+        elif op == 1:                    # mode
+            flags, w, h = r.u(), r.i(), r.i()
+            if flags & 1:                # current
+                self.output_size = (w, h)
+
+    def on_toplevel(self, op, r):
+        if op == 0:                      # configure
+            self.pending = (r.i(), r.i())
+        elif op == 1:                    # close
+            raise SystemExit(0)
+
+    def on_xdg_surface(self, op, r):
+        if op != 0:
+            return
+        serial = r.u()
+        self.req(self.xdg_surface, 4, "u", serial)   # ack_configure
+        w, h = self.pending or (0, 0)
+        if w <= 0 or h <= 0:
+            # No size from cage (yet): the output's, turned as it is.
+            w, h = self.output_size or (1280, 800)
+            if self.output_transform in (1, 3, 5, 7):
+                w, h = h, w
+        if (w, h) != (self.width, self.height):
+            self.make_buffers(w, h)
+            self.draw(full=True)
+        self.flush()
+
+    def on_frame(self, op, r):
+        self.frame_cb = None
+        self.draw()
+        self.flush()
+
+    def on_buffer(self, idx):
+        def handler(op, r):
+            if op == 0:                  # release
+                self.buffers[idx][1] = False
+        return handler
+
+    # -- drawing
+    def make_buffers(self, w, h):
+        for bid, _ in self.buffers:
+            self.req(bid, 0)             # wl_buffer.destroy
+        if self.pool:
+            self.req(self.pool, 1)       # wl_shm_pool.destroy
+            self.mm.close()
+            os.close(self.fd)
+        self.width, self.height = w, h
+        one = w * h * 4
+        self.fd = os.memfd_create("kiosk-splash", os.MFD_CLOEXEC)
+        os.ftruncate(self.fd, 2 * one)
+        self.mm = mmap.mmap(self.fd, 2 * one)
+        background = BG * (w * h)
+        self.mm[0:one] = background
+        self.mm[one:2 * one] = background
+        self.pool = self.new()
+        self.req(self.shm, 0, "ni", self.pool, 2 * one)  # create_pool (fd alongside)
+        self.flush(fd=self.fd)
+        self.buffers = []
+        for idx in range(2):
+            bid = self.new(self.on_buffer(idx))
+            self.req(self.pool, 0, "niiiiu", bid, idx * one, w, h, w * 4, XRGB8888)
+            self.buffers.append([bid, False])
+
+    def draw(self, full=False):
+        if not self.buffers:
+            return
+        idx = self.cur ^ 1
+        if self.buffers[idx][1]:         # still the compositor's: try next frame
+            idx = self.cur
+            if self.buffers[idx][1] and not full:
+                self.request_frame()
+                self.req(self.surface, 6)
+                return
+        s, w = self.size, self.width
+        k = int((time.monotonic() - self.t0) / TURN_S * self.count) % self.count
+        x0, y0 = max(0, (w - s) // 2), max(0, (self.height - s) // 2)
+        base = idx * w * self.height * 4 + (y0 * w + x0) * 4
+        src = k * s * s * 4
+        row = min(s, w - x0) * 4
+        for y in range(min(s, self.height - y0)):
+            o = base + y * w * 4
+            self.mm[o:o + row] = self.frames[src + y * s * 4:src + y * s * 4 + row]
+        bid = self.buffers[idx][0]
+        self.req(self.surface, 1, "oii", bid, 0, 0)               # attach
+        if full:
+            self.req(self.surface, 2, "iiii", 0, 0, w, self.height)  # damage
+        elif self.compositor_version >= 4:
+            self.req(self.surface, 9, "iiii", x0, y0, s, s)       # damage_buffer
+        else:
+            self.req(self.surface, 2, "iiii", x0, y0, s, s)
+        self.buffers[idx][1] = True
+        self.cur = idx
+        self.request_frame()
+        self.req(self.surface, 6)                                 # commit
+
+    def request_frame(self):
+        if self.frame_cb is None:
+            self.frame_cb = self.new(self.on_frame)
+            self.req(self.surface, 3, "n", self.frame_cb)
+
+    # -- run
+    def run(self):
+        self.registry = self.new(self.on_registry)
+        self.req(1, 1, "n", self.registry)                       # get_registry
+        self.flush()
+        self.roundtrip()
+        self.compositor, self.compositor_version = self.bind("wl_compositor", 4)
+        self.shm, _ = self.bind("wl_shm", 1)
+        self.wm_base, _ = self.bind("xdg_wm_base", 1, self.on_wm_base)
+        if "wl_output" in self.globals:
+            self.bind("wl_output", 2, self.on_output)
+        self.surface = self.new()
+        self.req(self.compositor, 0, "n", self.surface)
+        self.xdg_surface = self.new(self.on_xdg_surface)
+        self.req(self.wm_base, 2, "no", self.xdg_surface, self.surface)
+        self.toplevel = self.new(self.on_toplevel)
+        self.req(self.xdg_surface, 1, "n", self.toplevel)
+        self.req(self.toplevel, 2, "s", "Kiosk")                  # set_title
+        self.req(self.toplevel, 3, "s", "io.github.lukemech.ImmutableKiosk.Splash")
+        self.req(self.toplevel, 11, "o", 0)                       # set_fullscreen
+        self.req(self.surface, 6)                                 # commit: configure me
+        self.flush()
+        end = time.monotonic() + GIVE_UP_S
+        while time.monotonic() < end:
+            self.dispatch(timeout=1.0)
+        log(f"still up after {GIVE_UP_S} s, leaving")
+
+
+def main():
+    try:
+        Splash().run()
+    except (OSError, ValueError, RuntimeError, KeyError, ConnectionError) as e:
+        # Never worth more than a log line: kiosk-shell comes up regardless.
+        log(e)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

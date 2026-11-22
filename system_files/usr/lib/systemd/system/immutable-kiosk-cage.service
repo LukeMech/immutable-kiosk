@@ -9,7 +9,8 @@ Wants=dbus.socket systemd-logind.service immutable-kiosk-backend.service
 # The boot splash hands the screen over to cage the way display managers do
 # it: plymouth-quit (the generic "stop the splash" at multi-user) is replaced
 # by our own `plymouth quit --retain-splash` right before cage starts, so the
-# splash's last frame stays up until the kiosk draws -- no black gap.
+# splash's last frame stays up until cage draws, with kiosk-splash (see
+# ExecStart) right after it.
 After=plymouth-start.service plymouth-quit.service
 Conflicts=plymouth-quit.service
 ConditionPathExists=/dev/tty0
@@ -31,8 +32,10 @@ ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do ls /dev/dri/card* >/dev/null 2>
 ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
 PAMName=login
 Environment=XDG_SESSION_TYPE=wayland
-# -d: no client-side decorations, kiosk-shell is the only (fullscreen) window.
-ExecStart=/usr/bin/cage -d -- /usr/libexec/immutable-kiosk/kiosk-shell
+# -d: no client-side decorations. kiosk-session: the last rotation, then
+# kiosk-splash (on screen at once) and kiosk-shell over it -- cage's black
+# first frame lasts a fraction of a second, not all of kiosk-shell's start.
+ExecStart=/usr/bin/cage -d -- /usr/libexec/immutable-kiosk/kiosk-session
 Restart=always
 RestartSec=2
 UtmpIdentifier=tty1

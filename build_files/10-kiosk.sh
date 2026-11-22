@@ -24,7 +24,9 @@ chmod 0755 /usr/libexec/immutable-kiosk/*
 python3 -m py_compile \
     /usr/libexec/immutable-kiosk/kiosk-shell \
     /usr/libexec/immutable-kiosk/kioskd \
-    /usr/libexec/immutable-kiosk/boot-counter
+    /usr/libexec/immutable-kiosk/boot-counter \
+    /usr/libexec/immutable-kiosk/kiosk-splash
+sh -n /usr/libexec/immutable-kiosk/kiosk-session
 find /usr/libexec/immutable-kiosk -name '__pycache__' -prune -exec rm -rf {} +
 
 # The kiosk account: no password, no sudo, no shell login -- it only runs

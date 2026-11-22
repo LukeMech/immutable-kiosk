@@ -26,6 +26,7 @@ only the Settings view registers.
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -183,6 +184,8 @@ def apply_output(cfg):
     scale = 1
     outputs = sorted(wlr_outputs(), key=lambda o: not o[0].startswith(INTERNAL_OUTPUTS))
     touch_transform = None
+    panel = ""
+    applied = []
     for name, w, h in outputs:
         if rotation == "portrait":
             transform = "90" if w > h else "normal"
@@ -193,8 +196,18 @@ def apply_output(cfg):
         log(f"output {name} {w}x{h}: transform {transform} ({rotation})")
         subprocess.run(["wlr-randr", "--output", name, "--transform", transform,
                         "--scale", str(scale)], timeout=5)
+        applied.append(f"{name} {transform}\n")
         if touch_transform is None:
             touch_transform = transform
+            panel = name if name.startswith(INTERNAL_OUTPUTS) else ""
+    # kiosk-session applies these at the next start before anything is drawn:
+    # kiosk-splash comes up rotated already.
+    try:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        (CACHE / "outputs.tmp").write_text("".join(applied))
+        (CACHE / "outputs.tmp").replace(CACHE / "outputs")
+    except OSError as e:
+        log("output cache:", e)
     # Touch follows the panel: kioskd sets libinput's calibration matrix
     # (udev) and restarts cage once if it changed -- see kioskd r_touch_set.
     # In the background: at start-up this runs before the first frame.
@@ -207,6 +220,17 @@ def apply_output(cfg):
             except (OSError, ValueError) as e:
                 log("touch rotation:", e)
         threading.Thread(target=set_touch, daemon=True).start()
+
+
+def end_splash():
+    """kiosk-splash (kiosk-session) has been on screen under our window:
+    once the first page shows, it's not needed any more."""
+    pid = os.environ.pop("KIOSK_SPLASH_PID", "")
+    if pid.isdigit():
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except OSError:
+            pass
 
 
 # ------------------------------------------------------------ error page
@@ -269,9 +293,12 @@ class KioskShell(Gtk.Application):
 
     # -- setup
     def do_activate(self):
-        """Up on screen as fast as Python and GTK allow: the boot splash's
-        picture (same background, same turning ring), rotated already.
-        Everything heavy -- WebKit and its views -- follows in setup()."""
+        """kiosk-splash (started before us by kiosk-session) is on screen and
+        turning while all of this runs: GTK, the rotation, WebKit and its
+        views. Only then the window maps over it, showing the same picture
+        (same background, same turning ring) until the first page is
+        rendered -- and now the main loop is free, so the ring keeps turning
+        while the page loads."""
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
@@ -294,11 +321,10 @@ class KioskShell(Gtk.Application):
             ring.set_vexpand(True)
             splash.append(ring)
         self.stack.add_named(splash, "splash")
+        self.setup()
         self.win.fullscreen()
         self.win.present()
         milestone("kiosk-shell: ekran startowy")
-        # A moment for the first frame, then the rest.
-        GLib.timeout_add(150, self.setup)
 
     def setup(self):
         load_webkit()
@@ -339,13 +365,13 @@ class KioskShell(Gtk.Application):
             self.pending = "settings"  # first boot: nothing to show yet but Settings
             self.ensure_settings()
         GLib.timeout_add_seconds(30, self.reveal)
-        return GLib.SOURCE_REMOVE
 
     def reveal(self):
         if self.pending:
             name, self.pending = self.pending, None
             self.show(name)
             milestone("kiosk-shell: pierwsza strona")
+            end_splash()
         return GLib.SOURCE_REMOVE
 
     def wait_for_config(self):
