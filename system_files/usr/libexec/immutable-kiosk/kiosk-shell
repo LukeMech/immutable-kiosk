@@ -536,7 +536,7 @@ class KioskShell(Gtk.Application):
         if self.hmi:
             self.hotcorner.set_visible(name == "hmi")
         # Settings' page keeps running behind the HMI: tell it when it's on
-        # screen, so it polls (battery, clock, network) only then.
+        # screen, so it reloads on kioskd's events (network, battery...) only then.
         if name == "settings":
             self.settings.evaluate_javascript("window.kioskShown && window.kioskShown()", -1,
                                               None, None, None, None, None)

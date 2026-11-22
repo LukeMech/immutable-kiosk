@@ -520,12 +520,16 @@ def network_set(body):
 
 # ---------------------------------------------------------------- events
 #
-# The Settings page doesn't poll: GET /api/events (Server-Sent Events) says
-# what changed -- "net", "power", "clock", "device", "config", "splash" --
-# and the page reloads that part. Sources: NetworkManager's D-Bus signals
-# (state, addresses, the list of networks, signal), udev's power_supply
-# events plus a battery check, the kernel's "clock was set", and kioskd's
-# own changes.
+# Nothing in cage polls kioskd: GET /api/events (Server-Sent Events) says
+# what changed and the reader (Settings, the installer, kiosk-shell) reloads
+# that part. Topics and their sources:
+#   net     NetworkManager's D-Bus signals: state, addresses, the list of
+#           networks, signal
+#   power   udev power_supply events, plus a battery check (below)
+#   disks   udev block events: the installer's disk list
+#   clock   the kernel's "wall clock was set"
+#   job     a running job's progress and its end
+#   device, config, splash, boot, system   kioskd's own changes
 
 class Events:
     def __init__(self):
@@ -627,6 +631,9 @@ def start_watchers():
     net = Debounce("net", 1.0)
     threading.Thread(target=watch_lines, daemon=True, name="nm", args=(
         ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager")).start()
+    # A USB disk in or out (the installer's list), partitions coming and going.
+    threading.Thread(target=watch_lines, daemon=True, name="udev-block", args=(
+        ["udevadm", "monitor", "--udev", "--subsystem-match=block"], Debounce("disks", 1.0), "disks")).start()
     threading.Thread(target=watch_power, daemon=True, name="power").start()
     threading.Thread(target=watch_clock, daemon=True, name="clock").start()
 
@@ -689,6 +696,15 @@ class Job:
             elif st["state"] == "pending" and not error:
                 st["state"] = "skipped"
         JOB_CHANGED.poke()
+
+    # Whatever a job does to its stage, bar, detail, state or result (the
+    # installer sets them directly) is a "job" event for the page.
+    WATCHED = frozenset(("stage", "fraction", "detail", "state", "result", "finished"))
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name in self.WATCHED:
+            JOB_CHANGED.poke()
 
     def add_log(self, line):
         line = line.rstrip()
@@ -1876,6 +1892,7 @@ def r_boot(body, q):
 def r_boot_hmi(body, q):
     if HMI_SHOWN["at"] is None:
         HMI_SHOWN["at"] = time.monotonic()
+        EVENTS.emit("boot")  # the boot card's last point
     return {"hmi_shown": HMI_SHOWN["at"]}
 
 
@@ -1884,6 +1901,7 @@ def r_boot_ok(body, q):
     rollback, see boot-counter). Runs bootc rollback after a fallback, so
     it can take a while."""
     out = run([BOOT_COUNTER, "ok"], timeout=150)
+    EVENTS.emit("system")  # after a fallback the deployments changed order
     try:
         return json.loads(out.strip().splitlines()[-1])
     except (ValueError, IndexError):

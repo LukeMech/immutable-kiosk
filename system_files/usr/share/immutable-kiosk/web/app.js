@@ -633,7 +633,6 @@ function initScreen() {
 }
 
 /* ---------- System */
-let pollTimer = null;
 
 function renderJob(job, { box, stage, bar, detail }) {
     box.hidden = !job;
@@ -646,19 +645,15 @@ function renderJob(job, { box, stage, bar, detail }) {
     detail.textContent = job.detail || "";
 }
 
-// The running job: fetched when kioskd says it changed ("job" event, see
-// initEvents); polled every 0.7 s only without the event stream (the
-// installer, or while it reconnects).
-let jobTick = null, liveConnected = false;
-function pollJob(onUpdate) {
-    clearTimeout(pollTimer);
+// The running job: fetched when kioskd says it changed (the "job" event,
+// see listen) -- no polling.
+let jobTick = null;
+function followJob(onUpdate) {
     const tick = async () => {
-        clearTimeout(pollTimer);
         let job = null;
         try { job = (await api("/job")).job; } catch (_) { /* kioskd restarting */ }
         if (job) job.at = performance.now();  // for the active step's clock
         onUpdate(job);
-        if (job && job.state === "running" && !liveConnected) pollTimer = setTimeout(tick, 700);
     };
     jobTick = tick;
     tick();
@@ -671,7 +666,7 @@ function fmtDur(s) {
 }
 const STEP_ICONS = { done: ICONS.ok, active: ICONS.busy, failed: ICONS.err };
 
-// kioskd's job.steps as a chain. Kept as DOM between polls (every 0.7 s):
+// kioskd's job.steps as a chain. Kept as DOM between updates (several a second):
 // rebuilt, the bars would restart their animation each time.
 function renderSteps(job, el) {
     const steps = (job && job.steps) || [];
@@ -952,8 +947,8 @@ function maybeAutoCheck() {
     startSysJob("/system/check");
 }
 
-function pollSysJob() {
-    pollJob(job => {
+function followSysJob() {
+    followJob(job => {
         const was = sysWasRunning;
         sysJob = job && UPDATE_JOBS.includes(job.kind) ? job : null;
         sysWasRunning = !!(sysJob && sysJob.state === "running");
@@ -973,7 +968,7 @@ async function startSysJob(path) {
         sysJob = await api(path, {});
         sysWasRunning = true;
         renderUpdate();
-        pollSysJob();
+        followSysJob();
     } catch (e) { toast(e.message, true); }
 }
 
@@ -992,7 +987,7 @@ async function loadSystem() {
     catch (e) { sys = { available: false, error: e.message }; }
     renderSysInfo();
     renderUpdate();
-    pollSysJob();
+    followSysJob();
     refreshDevice();
     loadTimezones();
     loadBoot();
@@ -1201,14 +1196,14 @@ function initSystem() {
         renderChannel(!!(sysJob && sysJob.state === "running"));
     });
     holdButton($("chan-switch"), () => api("/system/channel", { channel: chanPick })
-        .then(j => { chanPick = null; sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
+        .then(j => { chanPick = null; sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
     holdButton($("sys-switch"), () => api("/system/switch", { image: $("sys-image").value.trim() })
-        .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
+        .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
     // A job: bootc rollback, then the restart (kioskd), steps in the card.
     holdButton($("sys-rollback"), () => api("/system/rollback", {})
-        .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); pollSysJob(); })
+        .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
     const power = action => () => api("/power", { action }).then(() => toast(action === "reboot" ? "Ponowne uruchamianie…" : "Wyłączanie…"))
         .catch(e => toast(e.message, true));
@@ -1258,38 +1253,42 @@ function initSystem() {
     }, 1000);
 }
 
-/* Live updates: kioskd says what changed (GET /api/events, Server-Sent
-   Events) and only that part is reloaded -- no polling. The top bar always,
-   tab contents when their tab is open. A reconnect (kioskd restarted) may
-   have missed changes: everything visible is reloaded then. */
-function initEvents() {
-    const net = () => {
-        refreshDevice();
-        if (currentTab === "net") { loadWifi(false, true); loadNet(true); }
-    };
-    const LIVE = {
-        net, power: refreshDevice, clock: refreshDevice, device: refreshDevice,
-        splash: () => { if (currentTab === "screen") loadSplash(); },
-        config: () => api("/config").then(c => { cfg = c; if (currentTab === "screen") loadScreen(); }).catch(() => {}),
-        job: () => jobTick?.(),
-    };
+/* Live updates, the page's only way of hearing about changes: kioskd says
+   what changed (GET /api/events, Server-Sent Events) and handlers[topic]
+   reloads that part. EventSource reconnects by itself (kioskd restarted);
+   what changed meanwhile is caught up with onReconnect. */
+function listen(handlers, onReconnect) {
     let opened = false;
     const es = new EventSource("/api/events");
     es.addEventListener("change", e => {
         let topics = [];
         try { topics = JSON.parse(e.data); } catch (_) { return; }
-        // Under the HMI nothing is reloaded: kioskShown does it on the way
-        // back. A job is followed anyway (its end matters, e.g. a restart).
-        for (const t of topics) if (settingsVisible || t === "job") LIVE[t]?.();
+        for (const t of topics) handlers[t]?.();
     });
     es.addEventListener("open", () => {
-        liveConnected = true;
-        if (opened) { net(); LIVE.config(); }
-        LIVE.job();  // anything missed while away
+        if (opened) onReconnect();
         opened = true;
     });
-    // EventSource reconnects by itself; meanwhile a running job is polled.
-    es.addEventListener("error", () => { liveConnected = false; LIVE.job(); });
+}
+
+// Settings: the top bar always, a tab's contents while it's open; nothing
+// under the HMI (kioskShown reloads on the way back) but a job's progress.
+function initEvents() {
+    const vis = fn => () => { if (settingsVisible) fn(); };
+    const net = () => {
+        refreshDevice();
+        if (currentTab === "net") { loadWifi(false, true); loadNet(true); }
+    };
+    const config = () => api("/config").then(c => { cfg = c; if (currentTab === "screen") loadScreen(); }).catch(() => {});
+    const system = () => { if (currentTab === "system") loadSystem(); };
+    listen({
+        net: vis(net), power: vis(refreshDevice), clock: vis(refreshDevice), device: vis(refreshDevice),
+        splash: vis(() => { if (currentTab === "screen") loadSplash(); }),
+        config: vis(config),
+        boot: vis(() => { if (currentTab === "system") loadBoot(); }),
+        system: vis(system),
+        job: () => jobTick?.(),
+    }, () => { if (settingsVisible) { net(); config(); system(); } jobTick?.(); });
 }
 
 async function initSettings() {
@@ -1367,7 +1366,7 @@ async function initInstaller() {
         msg($("inst-msg"), "");
         try {
             await api("/installer/start", { disk: chosenDisk });
-            pollJob(renderInstallJob);
+            followJob(renderInstallJob);
         } catch (e) { msg($("inst-msg"), e.message, "err"); }
     });
     holdButton($("inst-reboot"), () => api("/power", { action: "reboot" }).catch(e => toast(e.message, true)));
@@ -1378,9 +1377,10 @@ async function initInstaller() {
     });
     await loadInstaller();
     // Page reloaded mid-install (kiosk-shell restarted): pick the job back up.
-    pollJob(renderInstallJob);
-    // Disks come and go (USB): refresh the list while choosing.
-    setInterval(() => { if (!$("inst-choose").hidden) loadInstaller(); }, 5000);
+    followJob(renderInstallJob);
+    // Disks come and go (USB), the charger too: kioskd's events, no polling.
+    const refresh = () => { if (!$("inst-choose").hidden) loadInstaller(); };
+    listen({ disks: refresh, power: refresh, job: () => jobTick?.() }, () => { refresh(); jobTick?.(); });
 }
 
 /* ======================================================= boot */
