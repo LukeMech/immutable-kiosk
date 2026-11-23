@@ -272,6 +272,8 @@ div.inline { margin-top: 6px; }
 .md th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
 
 .msg { min-height: 1.4em; margin: 12px 0 0; font-size: 16px; }
+/* No message, no gap (e.g. above Network's Apply). */
+.msg:empty { display: none; }
 .msg.ok { color: var(--ok); }
 .msg.err { color: var(--bad); }
 .msg.warn { color: var(--warn); }
