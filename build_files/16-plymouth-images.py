@@ -8,6 +8,10 @@
       immutable-kiosk-update-splash.service) it fills slowly.
   kiosk-splash (in cage)  splash-bar.json: the same bar, colours and label,
       continuing from the hand-over ("Starting the kiosk…", 80 %).
+  GRUB  kioskd draws the script's first boot frame (empty bar, label-0;
+      splash-bar.json "boot_labels") for GRUB, which shows it from its start
+      until Plymouth draws the same frame -- so the boot screen doesn't fade
+      in, it is already there.
 
 The labels are rendered here with Pango in English and Polish, so plymouth
 and kiosk-splash show the same pixels. Plymouth can't read the settings:
@@ -179,7 +183,8 @@ SCRIPT = f"""# immutable-kiosk boot screen: a progress bar with a label under it
 # bar from the hand-over on).
 #   boot: systemd sends every unit it starts as a status update; the units
 #     in stage_of move the bar to their stage, and between stages it creeps
-#     on towards the next one. On "handover" (kioskd's unit, before cage's
+#     on towards the next one. No fade-in: GRUB has shown this first frame
+#     since it started (kioskd's set_grub_splash), it is drawn at once. On "handover" (kioskd's unit, before cage's
 #     quits plymouth) it settles at {num(HANDOVER)} -- where kiosk-splash continues;
 #   shutdown / reboot: a loading animation;
 #   updates (immutable-kiosk-update-splash.service): fills slowly.
@@ -220,8 +225,13 @@ handover = 0;
 kind = -1;
 prog = 0;
 
+# Booting: shown at once (GRUB's frame); other modes fade in.
+boot = 0;
+if (Plymouth.GetMode() == "boot")
+    boot = 1;
+
 label_s = Sprite();
-label_s.SetOpacity(0);
+label_s.SetOpacity(boot);
 fun show_label (img)
 {{
     label_s.SetImage(img);
@@ -238,8 +248,8 @@ fr = Sprite(load("fill-r.png"));
 tl.SetPosition(BX, BY, 1);
 tm.SetPosition(BX + CAP, BY, 1);
 tr.SetPosition(BX + BW - CAP, BY, 1);
-tl.SetOpacity(0); tm.SetOpacity(0); tr.SetOpacity(0);
-fl.SetOpacity(0); fm.SetOpacity(0); fr.SetOpacity(0);
+tl.SetOpacity(boot); tm.SetOpacity(boot); tr.SetOpacity(boot);
+fl.SetOpacity(boot); fm.SetOpacity(boot); fr.SetOpacity(boot);
 
 # The fill from x0 to x1, px into the bar (x1 - x0 at least two caps).
 fun set_fill (x0, x1)
@@ -248,6 +258,14 @@ fun set_fill (x0, x1)
     fm.SetImage(fm_img.Scale(Math.Max(x1 - x0 - 2 * CAP, 1), {BAR_H}));
     fm.SetPosition(BX + x0 + CAP, BY, 2);
     fr.SetPosition(BX + x1 - CAP, BY, 3);
+}}
+
+# The first frame complete before the first refresh.
+if (boot)
+{{
+    kind = 0;
+    show_label(lab[0]);
+    set_fill(0, 2 * CAP);
 }}
 
 fun stage_of (s)
@@ -294,8 +312,8 @@ fun refresh_callback ()
         else
             show_label(Image(pre + "label-updates.png"));
     }}
-    # Fades in over the first half second.
-    if (t <= 25)
+    # Fades in over the first half second (not booting: see boot).
+    if (boot == 0 && t <= 25)
     {{
         level = t / 25;
         label_s.SetOpacity(level);
@@ -353,6 +371,9 @@ with open(DATA, "w") as f:
         "cap_l": alphas(left), "cap_r": alphas(right),
         "labels": {lang: {"w": w, "h": h, "a": alphas(cov)}
                    for (lang, name), (w, h, cov) in labels.items() if name == f"label-{len(STAGES) - 1}"},
+        # GRUB's frame (kioskd): the first stage's label.
+        "boot_labels": {lang: {"w": w, "h": h, "a": alphas(cov)}
+                        for (lang, name), (w, h, cov) in labels.items() if name == "label-0"},
         "accents": {k: list(v) for k, v in ACCENTS.items()}, "default_accent": "blue",
         "overrides": OVERRIDES,
         "start": HANDOVER, "end": END, "tau": TAU,

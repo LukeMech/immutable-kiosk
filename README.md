@@ -40,6 +40,11 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
   when it downloads), the installer. Any
   other page (the HMI included) is kept out by a required `X-Kiosk` header
   (no CORS) and a `Host` check.
+- **Boot screen**: one progress bar from GRUB to the HMI. GRUB draws its
+  first frame (kioskd turns it into glyphs of a GRUB font for the panel's
+  rotation, accent and language: `/boot/grub2/console.cfg`); it stays up
+  while the kernel starts, Plymouth takes over the same frame once i915 is
+  up, and `kiosk-splash` in cage finishes the bar.
 - **On-screen keyboard** ([`osk.js`](system_files/usr/share/immutable-kiosk/web/osk.js)):
   Polish letters via the `ąę` key, numeric pad for number/IP fields, shadow
   DOM. Used by Settings and injected into the HMI page (switchable), so

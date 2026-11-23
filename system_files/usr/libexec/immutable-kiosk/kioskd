@@ -1954,9 +1954,12 @@ def r_config_get(body, q):
 def r_config_set(body, q):
     cfg = save_config(body)
     EVENTS.emit("config")
+    def look(what):
+        set_splash_look(what)
+        set_grub_splash()
     for what in ("accent", "language"):
         if what in body:
-            threading.Thread(target=set_splash_look, args=(what,), daemon=True).start()
+            threading.Thread(target=look, args=(what,), daemon=True).start()
     return cfg
 
 
@@ -2260,6 +2263,326 @@ def set_splash_look(what=""):
             splash_state(look={"state": "failed", "what": what, "error": str(e)})
 
 
+# ---------------------------------------------------------------- GRUB's boot screen
+#
+# Until i915 is up (~8 s) Plymouth can't draw, and GRUB reading the kernel
+# and the initramfs through the firmware is most of that. So GRUB shows the
+# boot screen's first frame -- the empty bar, "Starting…" -- from its start,
+# and that frame stays while the kernel boots (fbcon waits for text, quiet
+# prints none, i915.fastboot keeps the firmware's framebuffer) until
+# Plymouth draws the same frame there (immutable-kiosk.script: no fade-in).
+#
+# Fedora's signed GRUB has no PNG background without a module it doesn't
+# contain (gfxterm_background), and can't load one under Secure Boot. What
+# it has built in: gfxterm and fonts. So the frame becomes a font: its 8x16
+# tiles, already turned for the panel, as glyphs (kiosk-splash.pf2), printed
+# in GRUB's 16 colours, dithered where the colour lies between one and black.
+#
+# console.cfg (bootupd's grub.cfg sources it before the boot entries; ours
+# alone, nothing else writes it) loads the fonts, switches to gfxterm, draws
+# the frame, and sets blsuki_save_default / save_default: every boot entry
+# then starts with "savedefault" -- defined there to draw the frame again,
+# after GRUB clears the screen to boot. Entries' commands must not fail (an
+# error holds the boot 10 s for "Press any key"), so the entries only call
+# it when everything worked; no console.cfg, no "savedefault" either.
+
+GRUB_DIR = Path("/boot/grub2")
+GRUB_CONSOLE_CFG = GRUB_DIR / "console.cfg"
+GRUB_FONT = GRUB_DIR / "kiosk-splash.pf2"
+GRUB_FONT_NAME = "kiosk-splash"
+CELL_W, CELL_H = 8, 16          # glyph cell (Unifont's, the menu's fallback font)
+GFXTERM_BORDER = 10             # gfxterm's text starts this far in (DEFAULT_BORDER_WIDTH)
+# GRUB's palette (grub_video_fbstd_colors), black left out: it's the background.
+GRUB_COLORS = {"blue": (0, 0, 168), "green": (0, 168, 0), "cyan": (0, 168, 168),
+               "red": (168, 0, 0), "magenta": (168, 0, 168), "brown": (168, 84, 0),
+               "light-gray": (168, 168, 168), "dark-gray": (84, 84, 84),
+               "light-blue": (84, 84, 254), "light-green": (84, 254, 84),
+               "light-cyan": (84, 254, 254), "light-red": (254, 84, 84),
+               "light-magenta": (254, 84, 254), "yellow": (254, 254, 84), "white": (254, 254, 254)}
+BAYER = (0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5)
+# The panel the kiosk last reported (r_touch_set): output, wlr-randr transform.
+_panel = {"output": None, "transform": None}
+
+
+def native_mode(output):
+    """(w, h) of a connector's preferred mode -- the size of the firmware's
+    framebuffer GRUB draws into. No output named: the first connected one."""
+    drm = Path("/sys/class/drm")
+    dirs = sorted(drm.glob(f"card*-{output}")) if output else []
+    if not dirs:
+        dirs = [d for d in sorted(drm.glob("card*-*"))
+                if (d / "status").is_file() and (d / "status").read_text().strip() == "connected"]
+    for d in dirs:
+        try:
+            first = (d / "modes").read_text().split()
+        except OSError:
+            continue
+        m = re.fullmatch(r"(\d+)x(\d+)\D*", first[0]) if first else None
+        if m:
+            return int(m[1]), int(m[2])
+    return None
+
+
+def boot_frame(nw, nh, transform, d, accent, lang):
+    """Plymouth's first boot frame (immutable-kiosk.script at stage 0: the
+    track, set_fill(0, 2 * CAP), label-0) on black, RGB, in the panel's
+    native nw x nh, turned the way Plymouth turns it (wlr-randr transform:
+    content rotated that many degrees counter-clockwise). Also returns the
+    native bounding box of what was drawn."""
+    lw, lh = (nh, nw) if transform in ("90", "270") else (nw, nh)
+    buf = bytearray(nw * nh * 3)
+    box = [nw, nh, -1, -1]
+
+    def blend(u, v, rgb, a):
+        if a <= 0 or not (0 <= u < lw and 0 <= v < lh):
+            return
+        if transform == "90":
+            x, y = v, lw - 1 - u
+        elif transform == "180":
+            x, y = nw - 1 - u, nh - 1 - v
+        elif transform == "270":
+            x, y = nw - 1 - v, u
+        else:
+            x, y = u, v
+        i = (y * nw + x) * 3
+        for c in range(3):
+            buf[i + c] = (rgb[c] * a + buf[i + c] * (255 - a) + 127) // 255
+        box[:] = [min(box[0], x), min(box[1], y), max(box[2], x), max(box[3], y)]
+
+    bar = d["bar"]
+    bh, cap = bar["h"], bar["cap"]
+    # The script's sums: BW, BX, BY, LY; the label centred (Math.Int).
+    bw = int(min(lw * bar["frac"], bar["max"]) / 2) * 2
+    bx, by = (lw - bw) // 2, lh // 2 - bh // 2
+    ly = by + bh + bar["gap"]
+    cap_l, cap_r = base64.b64decode(d["cap_l"]), base64.b64decode(d["cap_r"])
+
+    def piece(x0, w, alphas, rgb):
+        for j in range(bh):
+            for i in range(w):
+                blend(x0 + i, by + j, rgb, alphas[j * w + i] if alphas else 255)
+    track, fill = tuple(d["track"]), tuple(d["accents"][accent])
+    piece(bx, cap, cap_l, track)
+    piece(bx + cap, bw - 2 * cap, None, track)
+    piece(bx + bw - cap, cap, cap_r, track)
+    piece(bx + cap, 1, None, fill)          # the fill's middle, 1 px under its ends
+    piece(bx, cap, cap_l, fill)
+    piece(bx + cap, cap, cap_r, fill)
+    lab = d["boot_labels"][lang]
+    a = base64.b64decode(lab["a"])
+    lx = (lw - lab["w"]) // 2
+    text = tuple(d["text"])
+    for j in range(lab["h"]):
+        for i in range(lab["w"]):
+            blend(lx + i, ly + j, text, a[j * lab["w"] + i])
+    return buf, box
+
+
+def frame_tiles(buf, nw, nh, box):
+    """The frame in gfxterm's grid: {(col, row): (colour name, bits)}, bits
+    CELL_W x CELL_H 0/1 row-major. Per cell the GRUB colour that best gives
+    its pixels as a share of that colour on black; the share is
+    Bayer-dithered (continuous across cells)."""
+    c0, r0 = (box[0] - GFXTERM_BORDER) // CELL_W, (box[1] - GFXTERM_BORDER) // CELL_H
+    c1, r1 = (box[2] - GFXTERM_BORDER) // CELL_W, (box[3] - GFXTERM_BORDER) // CELL_H
+    tiles = {}
+    for row in range(max(r0, 0), r1 + 1):
+        for col in range(max(c0, 0), c1 + 1):
+            px = []
+            for j in range(CELL_H):
+                y = GFXTERM_BORDER + row * CELL_H + j
+                for i in range(CELL_W):
+                    x = GFXTERM_BORDER + col * CELL_W + i
+                    k = (y * nw + x) * 3 if x < nw and y < nh else -1
+                    px.append((x, y, tuple(buf[k:k + 3]) if k >= 0 else (0, 0, 0)))
+            if all(max(t) < 6 for _, _, t in px):
+                continue
+            best = None
+            for name, f in GRUB_COLORS.items():
+                ff = f[0] * f[0] + f[1] * f[1] + f[2] * f[2]
+                err, shares = 0, []
+                for _, _, t in px:
+                    s = min(max((t[0] * f[0] + t[1] * f[1] + t[2] * f[2]) / ff, 0.0), 1.0)
+                    err += sum((t[c] - s * f[c]) ** 2 for c in range(3))
+                    shares.append(s)
+                if best is None or err < best[0]:
+                    best = (err, name, shares)
+            _, name, shares = best
+            # Something solid in it (text, the accent's dot): crisp edges.
+            # Only a dim colour (the track) is dithered.
+            if max(shares) > 0.85:
+                bits = tuple(1 if s >= 0.5 else 0 for s in shares)
+            else:
+                bits = tuple(1 if s * 16 > BAYER[(y % 4) * 4 + x % 4] + 0.5 else 0
+                             for (x, y, _), s in zip(px, shares))
+            if any(bits):
+                tiles[col, row] = (name, bits)
+    return tiles
+
+
+def pf2_font(glyphs):
+    """A GRUB PFF2 font: glyphs {code: bits}, CELL_W x CELL_H each, top of the
+    cell at its top (ascent = cell height), plus an empty space."""
+    def sec(tag, data):
+        return tag + struct.pack(">I", len(data)) + data
+    u16 = lambda v: struct.pack(">H", v)
+    head = (sec(b"FILE", b"PFF2") + sec(b"NAME", GRUB_FONT_NAME.encode() + b"\0")
+            + sec(b"FAMI", GRUB_FONT_NAME.encode() + b"\0") + sec(b"WEIG", b"normal\0")
+            + sec(b"SLAN", b"normal\0") + sec(b"PTSZ", u16(CELL_H)) + sec(b"MAXW", u16(CELL_W))
+            + sec(b"MAXH", u16(CELL_H)) + sec(b"ASCE", u16(CELL_H)) + sec(b"DESC", u16(0)))
+    glyphs = {**glyphs, 32: (0,) * (CELL_W * CELL_H)}
+    codes = sorted(glyphs)
+    data_at = len(head) + 8 + 9 * len(codes) + 8
+    index, data = bytearray(), bytearray()
+    for code in codes:
+        bits = glyphs[code]
+        index += struct.pack(">IBI", code, 0, data_at + len(data))
+        packed = bytearray((len(bits) + 7) // 8)
+        for i, b in enumerate(bits):
+            if b:
+                packed[i // 8] |= 0x80 >> (i % 8)
+        data += struct.pack(">HHhhh", CELL_W, CELL_H, 0, 0, CELL_W) + packed
+    return head + sec(b"CHIX", bytes(index)) + b"DATA" + struct.pack(">I", 0xFFFFFFFF) + bytes(data)
+
+
+def grub_splash_files(nw, nh, transform, d, accent, lang):
+    """(console.cfg text, kiosk-splash.pf2 bytes), or None if the frame
+    doesn't fit gfxterm's grid."""
+    buf, box = boot_frame(nw, nh, transform, d, accent, lang)
+    if box[2] < 0:
+        return None
+    tiles = frame_tiles(buf, nw, nh, box)
+    columns = (nw - 2 * GFXTERM_BORDER) // CELL_W
+    rows = (nh - 2 * GFXTERM_BORDER) // CELL_H
+    # Lines shorter than the screen (a full one wraps), none scrolled away.
+    if not tiles or max(c for c, _ in tiles) >= columns - 1 or max(r for _, r in tiles) >= rows - 2:
+        return None
+    codes, glyphs = {}, {}
+    for _, bits in tiles.values():
+        if bits not in codes:
+            codes[bits] = 0xE000 + len(codes)    # Private Use Area
+            glyphs[codes[bits]] = bits
+    lines, colour = [], None
+    for row in range(max(r for _, r in tiles) + 1):
+        cells = sorted(c for c, r in tiles if r == row)
+        if not cells:
+            lines.append("  echo")
+            continue
+        col, run = 0, ""
+        out = []
+        for c in cells:
+            name, bits = tiles[c, row]
+            if name != colour and run:
+                out.append(f'  echo -n "{run}"')
+                run = ""
+            if name != colour:
+                out.append(f"  set color_normal={name}/black")
+                colour = name
+            run += " " * (c - col) + chr(codes[bits])
+            col = c + 1
+        out.append(f'  echo "{run}"')
+        lines += out
+    cfg = f"""\
+# immutable-kiosk boot screen -- written by kioskd (set_grub_splash) with
+# kiosk-splash.pf2 for this panel, its rotation, the accent and the
+# language; edits here are overwritten. Sourced by grub.cfg before the boot
+# entries. Plymouth's first frame, drawn in gfxterm with the tiles of that
+# frame as glyphs; it stays up through the kernel's start.
+set kiosk_splash_ok=0
+if [ -f "$prefix/{GRUB_FONT.name}" ]; then
+  if [ -f "(memdisk)/fonts/unicode.pf2" ]; then
+    set kiosk_text_font="(memdisk)/fonts/unicode.pf2"
+  elif [ -f "$prefix/fonts/unicode.pf2" ]; then
+    set kiosk_text_font="$prefix/fonts/unicode.pf2"
+  fi
+  # Unifont for the menu (Esc) and messages, the tiles in ours on top.
+  if [ -n "$kiosk_text_font" ]; then
+    if loadfont "$kiosk_text_font"; then
+      if loadfont "$prefix/{GRUB_FONT.name}"; then
+        set gfxterm_font={GRUB_FONT_NAME}
+        set gfxmode=auto
+        set gfxpayload=keep
+        if terminal_output gfxterm; then
+          set kiosk_splash_ok=1
+        fi
+      fi
+    fi
+  fi
+fi
+
+# Nothing in here can fail (see kioskd). Ends in black: the cursor and any
+# text after it don't show.
+function kiosk_splash {{
+  clear
+{chr(10).join(lines)}
+  set color_normal=black/black
+  echo -n " "
+}}
+
+# Boot entries start with "savedefault" when these are set (blsuki; older
+# blscfg: save_default): GRUB has just cleared the screen, the kernel and
+# the initramfs are about to be read.
+function savedefault {{
+  if [ "$kiosk_splash_ok" = 1 ]; then
+    kiosk_splash
+  fi
+}}
+
+if [ "$kiosk_splash_ok" = 1 ]; then
+  set blsuki_save_default=true
+  set save_default=true
+  kiosk_splash
+fi
+"""
+    return cfg, pf2_font(glyphs)
+
+
+def set_grub_splash(output=None, transform=None):
+    """Write GRUB's boot screen (console.cfg, kiosk-splash.pf2) for the panel
+    the kiosk reports (output, transform; None: the last one) in Settings'
+    accent and language. Nothing until the kiosk has reported its panel."""
+    if output is not None:
+        _panel.update(output=output, transform=transform)
+    output, transform = _panel["output"], _panel["transform"]
+    if transform is None or mode() == "installer" or not GRUB_DIR.is_dir():
+        return
+    try:
+        d = json.loads(SPLASH_DATA.read_text())
+        if "boot_labels" not in d:
+            return
+        size = native_mode(output)
+        if not size:
+            print("kioskd: GRUB boot screen: no display mode found", flush=True)
+            return
+        cfg = load_config()
+        accent = cfg.get("accent") if cfg.get("accent") in d["accents"] else d["default_accent"]
+        lang = cfg.get("language") if cfg.get("language") in d["boot_labels"] else "en"
+        t0 = time.monotonic()
+        files = grub_splash_files(*size, transform, d, accent, lang)
+        if files is None:
+            print(f"kioskd: GRUB boot screen: the frame doesn't fit {size[0]}x{size[1]}", flush=True)
+            return
+        with _splash_lock:
+            written = []
+            # The font first: console.cfg only uses it when it's there.
+            for path, data in ((GRUB_FONT, files[1]), (GRUB_CONSOLE_CFG, files[0].encode())):
+                try:
+                    if path.read_bytes() == data:
+                        continue
+                except OSError:
+                    pass
+                p = subprocess.run([BOOT_COUNTER, "write-boot", str(path)], input=data,
+                                   capture_output=True, timeout=60)
+                if p.returncode != 0:
+                    raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
+                written.append(path.name)
+        if written:
+            print(f"kioskd: GRUB boot screen: {size[0]}x{size[1]} turned {transform}, accent {accent}, "
+                  f"language {lang}: {', '.join(written)} ({time.monotonic() - t0:.1f} s)", flush=True)
+    except (ApiError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
+        print(f"kioskd: GRUB boot screen: {e}", flush=True)
+
+
 def r_splash(body, q):
     return SPLASH_STATE
 
@@ -2308,6 +2631,7 @@ def r_touch_set(body, q):
     def splash():
         set_splash_orientation(str(body.get("output") or ""), transform)
         set_splash_look()
+        set_grub_splash(str(body.get("output") or ""), transform)
     threading.Thread(target=splash, daemon=True).start()
     rule = (
         "# Written by kioskd: touch follows the screen rotation "
