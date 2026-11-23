@@ -2164,6 +2164,7 @@ def usage_sample():
     return {
         "cpu": cpu_busy(),
         "cores": os.cpu_count(),
+        "load": round(os.getloadavg()[0], 2),
         "temp_c": cpu_temp(),
         "mem": {"total_mb": mb("MemTotal"), "used_mb": mb("MemTotal") - mb("MemAvailable")},
         "swap": {"total_mb": mb("SwapTotal"), "used_mb": mb("SwapTotal") - mb("SwapFree"), "zram": zram_swap()},
@@ -2181,17 +2182,128 @@ def usage_loop():
     while True:
         s = usage_sample()
         USAGE["now"] = s
-        USAGE["history"] = (USAGE["history"] + [{
+        point = {
             "cpu": s["cpu"], "temp_c": s["temp_c"],
-            "mem": pct(s["mem"]["used_mb"], s["mem"]["total_mb"]),
-            "swap": pct(s["swap"]["used_mb"], s["swap"]["total_mb"]),
-        }])[-USAGE_KEEP:]
+            "mem": pct(s["mem"]["used_mb"], s["mem"]["total_mb"]), "mem_mb": s["mem"]["used_mb"],
+            "swap": pct(s["swap"]["used_mb"], s["swap"]["total_mb"]), "swap_mb": s["swap"]["used_mb"],
+        }
+        USAGE["history"] = (USAGE["history"] + [point])[-USAGE_KEEP:]
+        try:
+            track_peaks(point)
+        except OSError as e:
+            print(f"kioskd: usage peaks: {e}", flush=True)
         time.sleep(USAGE_EVERY_S)
 
 
+# ---- High usage: a measure at PEAK_AT or more (% or °C), from the first
+# sample there to the first below. Each one is kept (PEAKS_FILE, the last
+# PEAKS_KEEP) with its highest value, the other measures then, and what
+# used the most (top_cpu / top_mem); and goes to the journal when it ends.
+PEAK_AT = 85
+PEAKS_FILE = STATE_DIR / "usage-peaks.json"
+PEAKS_KEEP = 100
+PEAK_TOP = {"cpu": "cpu", "temp_c": "cpu", "mem": "VmRSS", "swap": "VmSwap"}
+PEAK_UNIT = {"cpu": "%", "temp_c": " °C", "mem": "%", "swap": "%"}
+_peaks = {"open": {}, "done": None}
+
+
+def proc_dirs():
+    return [d for d in Path("/proc").iterdir() if d.name.isdigit()]
+
+
+def top_cpu(window=0.5, n=3):
+    """The programs using the most processor over `window` s, in % of the
+    whole machine (all cores); a program's processes counted together."""
+    def times():
+        out = {}
+        for d in proc_dirs():
+            try:
+                st = (d / "stat").read_text()
+                f = st[st.rindex(")") + 2:].split()
+                out[d.name] = (st[st.index("(") + 1:st.rindex(")")], int(f[11]) + int(f[12]))  # utime + stime
+            except (OSError, ValueError, IndexError):
+                pass
+        return out
+    a = times()
+    time.sleep(window)
+    b = times()
+    per = {}
+    for pid, (name, t) in b.items():
+        if pid in a:
+            per[name] = per.get(name, 0) + t - a[pid][1]
+    whole = window * os.sysconf("SC_CLK_TCK") * (os.cpu_count() or 1)
+    best = sorted(per.items(), key=lambda kv: -kv[1])[:n]
+    return [{"name": k, "pct": round(100 * v / whole)} for k, v in best if v > 0]
+
+
+def top_mem(field="VmRSS", n=3):
+    """The programs holding the most memory (VmRSS) or swap (VmSwap), in MB."""
+    per = {}
+    for d in proc_dirs():
+        try:
+            name, kb = None, 0
+            for line in (d / "status").read_text().splitlines():
+                if line.startswith("Name:"):
+                    name = line.split(None, 1)[1] if len(line.split()) > 1 else "?"
+                elif line.startswith(field + ":"):
+                    kb = int(line.split()[1])
+            if name and kb:
+                per[name] = per.get(name, 0) + kb
+        except (OSError, ValueError, IndexError):
+            pass
+    best = sorted(per.items(), key=lambda kv: -kv[1])[:n]
+    return [{"name": k, "mb": round(v / 1024)} for k, v in best if v >= 1024]
+
+
+def peaks_done():
+    if _peaks["done"] is None:
+        try:
+            _peaks["done"] = json.loads(PEAKS_FILE.read_text())[-PEAKS_KEEP:]
+        except (OSError, ValueError):
+            _peaks["done"] = []
+    return _peaks["done"]
+
+
+def track_peaks(point):
+    now = time.time()
+    for key in PEAK_TOP:
+        v, ev = point.get(key), _peaks["open"].get(key)
+        if v is not None and v >= PEAK_AT:
+            if ev is None or v > ev["peak"]:
+                top = top_cpu() if PEAK_TOP[key] == "cpu" else top_mem(PEAK_TOP[key])
+                if ev is None:
+                    ev = _peaks["open"][key] = {"what": key, "start": now}
+                ev.update(peak=v, mb=point.get(f"{key}_mb"), top=top,
+                          then={k: point.get(k) for k in ("cpu", "temp_c", "mem", "swap")})
+        elif ev is not None:
+            del _peaks["open"][key]
+            ev["seconds"] = max(USAGE_EVERY_S, round(now - ev["start"]))
+            done = peaks_done()
+            done.append(ev)
+            del done[:-PEAKS_KEEP]
+            PEAKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = PEAKS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(done))
+            tmp.replace(PEAKS_FILE)
+            tops = ", ".join(f"{t['name']} {t['pct']}%" if "pct" in t else f"{t['name']} {t['mb']} MB"
+                             for t in ev["top"])
+            print(f"kioskd: high usage: {key} {ev['peak']}{PEAK_UNIT[key]} for {ev['seconds']} s"
+                  + (f" ({tops})" if tops else ""), flush=True)
+
+
 def r_usage(body, q):
-    """Settings > System > Usage: now and the last minute (oldest first)."""
-    return {**(USAGE["now"] or usage_sample()), "history": USAGE["history"], "every_s": USAGE_EVERY_S}
+    """Settings > System > Usage: now, the last minute (oldest first) and the
+    high-usage events (newest first, one still going included)."""
+    now = time.time()
+    going = [{**ev, "seconds": round(now - ev["start"]), "going": True} for ev in _peaks["open"].values()]
+    return {**(USAGE["now"] or usage_sample()), "history": USAGE["history"], "every_s": USAGE_EVERY_S,
+            "peak_at": PEAK_AT, "peaks": sorted(going, key=lambda e: -e["start"]) + peaks_done()[::-1]}
+
+
+def r_usage_peaks_clear(body, q):
+    _peaks["done"] = []
+    PEAKS_FILE.unlink(missing_ok=True)
+    return {"ok": True}
 
 
 # Component versions for Settings > System; fixed per image, read once.
@@ -3301,6 +3413,7 @@ def r_installer_start(body, q):
 ROUTES = {
     ("GET", "/api/info"): r_info,
     ("GET", "/api/usage"): r_usage,
+    ("POST", "/api/usage/peaks/clear"): r_usage_peaks_clear,
     ("GET", "/api/config"): r_config_get,
     ("POST", "/api/config"): r_config_set,
     ("POST", "/api/hmi/test"): r_hmi_test,

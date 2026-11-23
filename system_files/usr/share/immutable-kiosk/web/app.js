@@ -1066,36 +1066,75 @@ async function loadUsage() {
     const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
     const keep = 30, hist = u.history || [];
     const s = u.swap;
+    const num = (v, d) => v.toLocaleString(LOCALE(), { minimumFractionDigits: d, maximumFractionDigits: d });
+    const temps = hist.map(h => h.temp_c).filter(v => v != null);
+    // Two one-line rows under the number (the columns line up across tiles);
+    // `at`: a tapped column's value, in % and in GB/MB where there's both.
     const tiles = [
         { key: "cpu", label: "Processor", now: u.cpu, unit: "%",
-          sub: _("{cores} cores", { cores: u.cores }) },
-        { key: "temp_c", label: "Temperature", now: u.temp_c, unit: " °C", sub: "" },
+          rows: [_("{cores} cores", { cores: u.cores }), _("load {load}", { load: num(u.load ?? 0, 2) })],
+          at: h => `${h.cpu}%` },
+        { key: "temp_c", label: "Temperature", now: u.temp_c, unit: " °C",
+          rows: [temps.length ? _("highest {t} °C", { t: Math.max(...temps) }) : "", ""],
+          at: h => `${h.temp_c} °C` },
         { key: "mem", label: "Memory", now: pct(u.mem.used_mb, u.mem.total_mb), unit: "%",
-          sub: `${fmtGB(u.mem.used_mb)} / ${fmtGB(u.mem.total_mb)}` },
+          rows: [`${fmtGB(u.mem.used_mb)} / ${fmtGB(u.mem.total_mb)}`,
+                 _("{free} free", { free: fmtGB(u.mem.total_mb - u.mem.used_mb) })],
+          at: h => `${h.mem}% · ${fmtGB(h.mem_mb ?? 0)}` },
         { key: "swap", label: "Swap (zram)", now: s.total_mb ? pct(s.used_mb, s.total_mb) : null, unit: "%",
-          sub: !s.total_mb ? "none" : s.zram
-              ? _("{used} / {total} MB · {packed} MB in memory", { used: s.used_mb, total: s.total_mb, packed: s.zram.packed_mb })
-              : `${s.used_mb} / ${s.total_mb} MB` },
+          rows: !s.total_mb ? ["none", ""] : [`${s.used_mb} / ${s.total_mb} MB`,
+                 s.zram ? _("{packed} MB in memory", { packed: s.zram.packed_mb }) : ""],
+          at: h => `${h.swap}% · ${h.swap_mb ?? 0} MB` },
     ];
     const tip = usageTip && usageTip.until > Date.now() ? usageTip : null;
     $("usage").innerHTML = tiles.map(t => {
-        const vals = hist.map(h => h[t.key]);
-        const pad = Array(Math.max(0, keep - vals.length)).fill(undefined);
-        const cols = [...pad, ...vals.slice(-keep)].map((v, i) => v == null
+        const pts = [...Array(Math.max(0, keep - hist.length)).fill(null), ...hist.slice(-keep)];
+        const cols = pts.map((h, i) => h == null || h[t.key] == null
             ? `<i class="none"></i>`
-            : `<i data-key="${t.key}" data-i="${i}" class="${v >= 85 ? "high" : ""}${tip && tip.key === t.key && tip.i === i ? " on" : ""}"
-                 style="height:${Math.max(2, Math.min(100, v))}%"></i>`).join("");
-        let sub = t.sub;
-        if (tip && tip.key === t.key) {
-            const v = [...pad, ...vals.slice(-keep)][tip.i];
+            : `<i data-key="${t.key}" data-i="${i}" class="${h[t.key] >= 85 ? "high" : ""}${tip && tip.key === t.key && tip.i === i ? " on" : ""}"
+                 style="height:${Math.max(2, Math.min(100, h[t.key]))}%"></i>`).join("");
+        let rows = t.rows, tipped = false;
+        const h = tip && tip.key === t.key ? pts[tip.i] : null;
+        if (h && h[t.key] != null) {
             const ago = (keep - 1 - tip.i) * (u.every_s || 2);
-            sub = v == null ? sub : `${v}${t.unit} · ${ago ? _("{n} s ago", { n: ago }) : _("now")}`;
+            rows = [t.at(h), ago ? _("{n} s ago", { n: ago }) : _("now")];
+            tipped = true;
         }
-        return `<div class="tile">
+        return `<div class="tile${tipped ? " tipped" : ""}">
             <div class="t-label">${esc(_(t.label))}</div>
             <div class="t-now">${t.now == null ? "—" : esc(t.now + t.unit)}</div>
-            <div class="t-sub${tip && tip.key === t.key ? " tip" : ""}">${esc(sub)}</div>
+            <div class="t-sub">${esc(_(rows[0]))}</div>
+            <div class="t-sub">${esc(_(rows[1]))}</div>
             <div class="cols">${cols}</div></div>`;
+    }).join("");
+    renderPeaks(u);
+}
+
+// High-usage events (kioskd track_peaks): when, how high, for how long, the
+// other measures then, and what used the most.
+const PEAK_LABEL = { cpu: "Processor", temp_c: "Temperature", mem: "Memory", swap: "Swap (zram)" };
+function renderPeaks(u) {
+    $("peaks-head").textContent = _("High usage ({at}% / {at} °C and up)", { at: u.peak_at ?? 85 });
+    const peaks = u.peaks || [];
+    $("peaks-clear").hidden = !peaks.length;
+    if (!peaks.length) {
+        $("usage-peaks").innerHTML = `<li class="empty">${esc(_("None so far."))}</li>`;
+        return;
+    }
+    const unit = k => k === "temp_c" ? " °C" : "%";
+    const dur = s => s < 120 ? _("{n} s", { n: s }) : _("{n} min", { n: Math.round(s / 60) });
+    const when = t => new Date(t * 1000).toLocaleString(LOCALE(), { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    $("usage-peaks").innerHTML = peaks.map(p => {
+        const mb = p.mb == null ? "" : p.what === "mem" ? ` (${fmtGB(p.mb)})` : ` (${p.mb} MB)`;
+        const th = p.then || {};
+        const then = _("Then: processor {cpu}% · {temp} °C · memory {mem}% · swap {swap}%",
+                       { cpu: th.cpu ?? "—", temp: th.temp_c ?? "—", mem: th.mem ?? "—", swap: th.swap ?? "—" });
+        const top = (p.top || []).map(t => `${t.name} ${t.pct != null ? t.pct + "%" : t.mb + " MB"}`).join(" · ");
+        return `<li><div class="p-head"><span class="p-time">${esc(when(p.start))}</span>
+              <span class="p-what${p.going ? " going" : ""}">${esc(_(PEAK_LABEL[p.what] || p.what))} ${esc(p.peak + unit(p.what) + mb)}</span>
+              <span>${esc(p.going ? _("going on, {d}", { d: dur(p.seconds) }) : dur(p.seconds))}</span></div>
+            ${top ? `<div class="p-sub">${esc(_("Most: {list}", { list: top }))}</div>` : ""}
+            <div class="p-sub">${esc(then)}</div></li>`;
     }).join("");
 }
 
@@ -1315,6 +1354,7 @@ async function loadBoot() {
 
 function initSystem() {
     setInterval(() => { if (settingsVisible && currentTab === "system") loadUsage(); }, 2000);
+    holdButton($("peaks-clear"), () => api("/usage/peaks/clear", {}).then(loadUsage).catch(e => toast(e.message, true)));
     $("usage").addEventListener("pointerdown", e => {
         const c = e.target.closest("i[data-key]");
         if (!c) return;

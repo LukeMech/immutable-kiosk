@@ -257,9 +257,14 @@
       </div>
       <div class="card">
         <h2>Usage</h2>
-        <p class="hint">The last minute. Tap a column for its value.</p>
         <!-- Tiles drawn by app.js (loadUsage). -->
         <div class="tiles" id="usage"></div>
+        <details class="log fold" id="usage-more">
+          <summary>Usage details</summary>
+          <h3 id="peaks-head">High usage</h3>
+          <ul class="peaks" id="usage-peaks"></ul>
+          <div class="actions"><button class="btn hold" data-hold="1500" id="peaks-clear">Hold: clear the list</button></div>
+        </details>
       </div>
       <div class="card" id="power-card">
         <h2>Power</h2>
