@@ -3078,6 +3078,10 @@ def reset_everything():
     except FileNotFoundError:
         pass
     try:
+        brightness_set(100)  # the default leaves the backlight alone: full
+    except (ApiError, OSError, ValueError):
+        pass
+    try:
         home = Path(pwd.getpwnam("kiosk").pw_dir)
     except KeyError:
         home = None
