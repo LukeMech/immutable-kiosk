@@ -477,6 +477,8 @@ window.I18N_LANGS.pl = function (tr) {
         "IP address · {kind}": "Adres IP · {kind}",
         "{addresses} · static address": "{addresses} · adres statyczny",
         "{addresses} · DHCP address": "{addresses} · adres z DHCP",
+        "Static address · {address}": "Statyczny adres · {address}",
+        "IP settings: tap the network under Saved networks.": "Ustawienia IP: dotknij sieci w Zapisanych sieciach.",
         "Invalid DNS server: {dns}": "Niepoprawny serwer DNS: {dns}",
 
         // ---- Display

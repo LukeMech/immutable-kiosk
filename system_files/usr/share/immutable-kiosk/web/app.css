@@ -135,14 +135,22 @@ div.inline { margin-top: 6px; }
 .list { list-style: none; margin: 8px 0 0; padding: 0; }
 .list li { border-top: 1px solid var(--line); }
 .list li:first-child { border-top: 0; }
-.list .item { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 6px 4px; }
+.list .item { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 8px 8px; }
 .list .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .list .item .sub { color: var(--muted); font-size: 15px; font-weight: 400; }
 .list .item.open { background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: 12px 12px 0 0; }
 .list .item::after { content: "▸"; color: var(--muted); flex: none; transition: transform .15s; }
 .list .item.static::after { content: none; }
 .list .item.open::after { transform: rotate(90deg); }
-.list .expand { padding: 0 4px 16px 62px; }
+/* Open: the row and what it unfolds as one tinted block, its contents
+   under the row's name. */
+.list .expand { padding: 4px 16px 18px 66px; }
+.list .item.open + .expand {
+    background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: 0 0 12px 12px;
+}
+.list .expand > :first-child { margin-top: 0; }
+.list .expand > .hint { margin: 4px 0 10px; }
+@media (max-width: 520px) { .list .expand { padding-left: 16px; } }
 .list .empty { color: var(--muted); padding: 14px 4px; }
 /* Round icon at the start of a list row. */
 .ico {
@@ -232,6 +240,7 @@ div.inline { margin-top: 6px; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; font-size: 16px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv + .hint { margin-top: 14px; }
 .kv dd .sub { display: block; color: var(--muted); font-size: 14px; margin-top: 6px; }
 .kv dt:has(+ dd.inline), .kv dt:has(+ dd > .inline) { align-self: center; }
 /* Label centred on its buttons (Language), without .seg's top margin. */
@@ -245,7 +254,9 @@ div.inline { margin-top: 6px; }
 /* Spacing below button rows, sliders and steppers. */
 .seg + .hint, .stepper + .hint, .slider + .hint, .swatches + .hint,
 .seg + div > .hint:first-child { margin-top: 12px; }
-* + .status { margin-top: 16px; }
+/* A status line under controls (a save's result, a reset): 16px from them,
+   as every such banner. .applied holds the network IP settings' result. */
+* + .status, .applied { margin-top: 16px; }
 .card .hint:last-child { margin-bottom: 0; }
 .status-icon {
     flex: none; width: 52px; height: 52px; border-radius: 50%;

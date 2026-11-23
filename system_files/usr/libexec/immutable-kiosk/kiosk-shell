@@ -9,8 +9,7 @@ Two WebKit views in a stack:
 Until then "connecting" shows ("Connecting…", drawn here as kiosk-splash
 draws its bar), from the moment WebKit has loaded; an HMI that stops
 answering on screen gives way to it too. The Settings corner, held ~1 s,
-opens Settings from it (a hint says which), and then nothing switches by
-itself.
+opens Settings from it, and then nothing switches by itself.
 
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
 HMI never shares a JavaScript context with Settings. Settings talks back
@@ -458,7 +457,7 @@ class KioskShell(Gtk.Application):
 
     def make_connecting_view(self):
         """"Connecting…" over a loading bar, as kiosk-splash draws its own
-        (its colours and size), and which corner opens Settings."""
+        (its colours and size)."""
         try:
             d = json.loads(SPLASH_DATA.read_text())
         except (OSError, ValueError):
@@ -470,8 +469,7 @@ class KioskShell(Gtk.Application):
         css.load_from_data((
             f".connecting progressbar trough {{ background: {rgb(d.get('track'), '#2a3542')}; }}\n"
             f".connecting progressbar progress {{ background: {rgb(fill, '#2f81f7')}; }}\n"
-            f".connecting label {{ color: {rgb(d.get('text'), '#e6edf3')}; }}\n"
-            ".connecting label.hint { font-size: 15px; opacity: .6; margin-top: 24px; }\n").encode())
+            f".connecting label {{ color: {rgb(d.get('text'), '#e6edf3')}; }}\n").encode())
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
         bar = d.get("bar", {})
@@ -482,9 +480,6 @@ class KioskShell(Gtk.Application):
         self.connecting_bar.set_size_request(int(bar.get("max", 480)), -1)
         box.append(self.connecting_bar)
         box.append(Gtk.Label(label=self.t("Łączę…", "Connecting…")))
-        self.connecting_hint = Gtk.Label()
-        self.connecting_hint.add_css_class("hint")
-        box.append(self.connecting_hint)
         page = Gtk.Box(halign=Gtk.Align.FILL, valign=Gtk.Align.FILL, hexpand=True, vexpand=True)
         page.add_css_class("connecting")
         box.set_hexpand(True)
@@ -508,8 +503,30 @@ class KioskShell(Gtk.Application):
         def finish():
             self.win.remove_css_class("splashing")
             end_splash()
+            GLib.timeout_add(1000, self.ensure_active)
             return GLib.SOURCE_REMOVE
         GLib.timeout_add(self.stack.get_transition_duration() + 150, finish)
+
+    def ensure_active(self):
+        """The window must be cage's focused one once the splash is gone:
+        touches only reached the kiosk after a first tap anywhere (that tap
+        is what focuses a window in cage). cage focuses a window when it
+        maps, so one that isn't active is mapped again, once."""
+        if not self.win.is_active() and not getattr(self, "remapped", False):
+            self.remapped = True
+            log("window not active after the splash, mapping it again")
+            self.win.set_visible(False)
+            self.win.present()
+            GLib.timeout_add(300, self.focus_view)
+        return GLib.SOURCE_REMOVE
+
+    def focus_view(self):
+        """Keyboard focus to the page on screen: WebKit treats a page
+        without it as in the background until it's tapped."""
+        child = self.stack.get_visible_child()
+        if WebKit and isinstance(child, WebKit.WebView):
+            child.grab_focus()
+        return GLib.SOURCE_REMOVE
 
     def wait_for_config(self):
         # kioskd starts first, but may be slow on eMMC.
@@ -590,6 +607,7 @@ class KioskShell(Gtk.Application):
         if name == "settings":
             self.ensure_settings()
         self.stack.set_visible_child_name(name)
+        self.focus_view()
         self.splash_over()
         self.pulse(name == "connecting")
         if self.hmi:
@@ -628,9 +646,6 @@ class KioskShell(Gtk.Application):
         if corner not in CORNERS:
             corner = "top-right"
         h, v = CORNERS[corner]
-        arrow = {"top-left": "↖", "top-right": "↗", "bottom-left": "↙", "bottom-right": "↘"}[corner]
-        self.connecting_hint.set_label(self.t(f"Ustawienia: przytrzymaj róg {arrow} przez 1 s",
-                                              f"Settings: hold the {arrow} corner for 1 s"))
         self.overlay.remove_overlay(self.hotcorner)
         self.hotcorner.set_halign(h)
         self.hotcorner.set_valign(v)

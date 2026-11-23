@@ -329,7 +329,7 @@ async function loadWifi(rescan, live = false, scan = false) {
         // Saved: NetworkManager's stored password, unless "Other password".
         const remembered = n.saved && n.security;
         // A new network: DHCP or a static address from the start (a saved
-        // one's are in its IP address card).
+        // one's are under Saved networks).
         ex.innerHTML = (remembered ? '<p class="hint">Saved — connects with the remembered password.</p>' : "") +
             (n.security ? `<label class="pw"${remembered ? " hidden" : ""}>Password
                 <input type="password" autocomplete="off"></label>` : "") +
@@ -373,15 +373,47 @@ async function loadWifi(rescan, live = false, scan = false) {
         });
         li.appendChild(ex);
     }
-    const saved = $("wifi-saved");
+    renderSaved(live);
+}
+
+// Saved networks: Connect, Forget, and (tapped) the network's IP settings,
+// from /network (loadNet renders this again when that comes).
+let openSaved = null;     // uuid of the saved network shown open
+function renderSaved(live = false) {
+    const saved = $("wifi-saved"), w = wifiLast;
+    if (!w) return;
+    // Not under IP settings being edited.
+    if (live && saved.querySelector(".dirty, .expand:not([hidden]) input:focus")) return;
     saved.innerHTML = w.saved.length ? "" : '<li class="empty">No saved networks.</li>';
     for (const s of w.saved) {
+        const c = netLast && netLast.connections.find(x => x.uuid === s.uuid);
+        const sub = [s.active ? _("active") : "", c ? ipSummary(c) : ""].filter(Boolean).join(" · ");
         const li = document.createElement("li");
-        li.innerHTML = `<div class="item static">
+        li.innerHTML = `<div class="item${c ? "" : " static"}">
             <span class="ico${s.active ? " ok" : ""}">${wifiIcon(s.active ? 3 : 0)}</span>
-            <div class="name">${esc(s.ssid)}${s.active ? '<div class="sub">active</div>' : ""}</div>
+            <div class="name">${esc(s.ssid)}${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>
             ${s.active ? "" : '<button class="btn primary go">Connect</button>'}
             <button class="btn danger hold" data-hold="1000">Forget</button></div>`;
+        if (c) {
+            const item = li.querySelector(".item");
+            const ex = document.createElement("div");
+            ex.className = "expand";
+            ex.hidden = openSaved !== s.uuid;
+            item.classList.toggle("open", !ex.hidden);
+            ex.innerHTML = `<h3>IPv4 addressing</h3>` +
+                (c.active ? "" : '<p class="hint">Used on the next connection to this network.</p>');
+            ex.appendChild(ipSettings(c, li));
+            item.addEventListener("click", e => {
+                if (e.target.closest(".btn")) return;
+                openSaved = ex.hidden ? s.uuid : null;
+                saved.querySelectorAll(".expand").forEach(x => {
+                    if (x !== ex) { x.hidden = true; x.previousElementSibling.classList.remove("open"); }
+                });
+                ex.hidden = !ex.hidden;
+                item.classList.toggle("open", !ex.hidden);
+            });
+            li.appendChild(ex);
+        }
         const go = li.querySelector(".go");
         go?.addEventListener("click", () => busy(go, async () => {
             wifiOverride = { state: "busy", icon: ICONS.busy, title: _("Connecting to {name}…", { name: s.ssid }),
@@ -520,9 +552,63 @@ function ipv4Form(root, start, onPick) {
     return form;
 }
 
-// A card's last save, shown again when NetworkManager's events rebuild it.
+// A connection's last save, shown again when NetworkManager's events rebuild it.
 const netNotes = {};
+let netLast = null;       // last GET /network (Saved networks' IP settings)
+const netFolds = {};      // uuid -> an Ethernet card's IP settings left open
 
+const ipSummary = c => c.method === "manual"
+    ? _("Static address · {address}", { address: `${c.address}/${c.prefix}` }) : _("Automatic (DHCP)");
+
+// A connection's IPv4 settings (Saved networks, an Ethernet card). No Apply
+// button: saved once a field is left or the method tapped, and only what
+// changed; the result shows below them. `owner` is marked .dirty while
+// they're edited: nothing rebuilds under it.
+function ipSettings(c, owner) {
+    const cur = c.current;
+    const el = document.createElement("div");
+    el.className = "ipset";
+    el.innerHTML = `${IPV4_HTML}<div class="applied" hidden></div>`;
+    const note = el.querySelector(".applied");
+    const show = (state, ic, title, sub) => {
+        netNotes[c.uuid] = { state, ic, title, sub, at: Date.now() };
+        note.innerHTML = statusHtml(state, ic, title, sub);
+        note.hidden = false;
+    };
+    const last = netNotes[c.uuid];
+    if (last && Date.now() - last.at < 15000) show(last.state, last.ic, last.title, last.sub);
+    const form = ipv4Form(el, {
+        method: c.method,
+        address: c.address || (cur.addresses[0] || "").split("/")[0],
+        prefix: c.prefix || (cur.addresses[0] || "/24").split("/")[1],
+        gateway: c.gateway || cur.gateway,
+        dns: c.dns.length ? c.dns : cur.dns,
+    }, () => { owner.classList.add("dirty"); apply(); });
+    let applied = JSON.stringify({ ...form.read(), method: c.method === "manual" ? "manual" : "auto" });
+    const apply = async () => {
+        const b = form.read(), key = JSON.stringify(b);
+        if (key === applied || !form.complete()) return;
+        applied = key;
+        show("busy", ICONS.busy, "Saving…", "");
+        try {
+            await api("/network", { uuid: c.uuid, ...b });
+            show("ok", ICONS.ok, "Settings saved", c.active ? "Reconnecting with them…"
+                : "Used on the next connection to this network.");
+            owner.classList.remove("dirty");  // NetworkManager's events bring the new state
+        } catch (e) {
+            applied = null;
+            show("err", ICONS.err, "Couldn't save the settings", e.message);
+        }
+    };
+    el.addEventListener("input", () => owner.classList.add("dirty"));
+    el.querySelectorAll("input").forEach(i => i.addEventListener("change", apply));
+    return el;
+}
+
+// Connections that are up, with their addresses. A Wi-Fi network's IP
+// settings are under Saved networks; Ethernet's fold out of its card (also
+// one that isn't connected: its settings can be set before, for a network
+// whose DHCP server doesn't answer).
 async function loadNet(live = false) {
     const box = $("net-list"), other = $("net-other");
     // Don't rebuild a card being edited.
@@ -531,12 +617,14 @@ async function loadNet(live = false) {
     const lone = (state, icon, title, sub) => `<div class="card"><h2>Connection</h2>${statusHtml(state, icon, title, sub)}</div>`;
     try { n = await api("/network"); }
     catch (e) { box.innerHTML = lone("err", ICONS.err, "Couldn't read the network", e.message); return; }
+    netLast = n;
     box.innerHTML = other.innerHTML = "";
     if (!n.connections.some(c => c.active)) {
         box.innerHTML = `<div class="card"><h2>IP address</h2>` + statusHtml("off", ICONS.ethernet, "No connection",
             "Join a Wi-Fi network below or plug in a cable (USB-Ethernet adapter).") + `</div>`;
     }
     for (const c of n.connections) {
+        if (c.type === "wifi" && !c.active) continue;   // only under Saved networks
         const el = document.createElement("div");
         el.className = "card";
         const cur = c.current;
@@ -544,11 +632,8 @@ async function loadNet(live = false) {
         const icon = c.type === "wifi" ? wifiIcon(3) : ICONS.ethernet;
         const has = cur.addresses.length > 0;
         const how = c.method === "manual" ? "{addresses} · static address" : "{addresses} · DHCP address";
-        // Saved but not connected: its settings can still be set (a network
-        // whose DHCP server doesn't answer).
         const head = !c.active
-            ? statusHtml("off", c.type === "wifi" ? wifiIcon(0) : ICONS.ethernet, c.name,
-                         "Not connected · these settings are used on its next connection")
+            ? statusHtml("off", ICONS.ethernet, c.name, "Not connected · these settings are used on its next connection")
             : statusHtml(has ? "ok" : "busy", has ? icon : ICONS.busy, c.name,
                          has ? _(how, { addresses: cur.addresses.join(", ") }) : "Waiting for an IP address…") + `
           <dl class="kv">
@@ -556,47 +641,20 @@ async function loadNet(live = false) {
             <dt>DNS</dt><dd>${esc(cur.dns.join(", ") || "—")}</dd>
             <dt>Interface</dt><dd>${esc(c.device || "—")}</dd>
           </dl>`;
-        el.innerHTML = `<h2>${_("IP address · {kind}", { kind: esc(kind) })}</h2>` + head + `
-          <div class="sep"><h3>IPv4 addressing</h3>
-          ${IPV4_HTML}
-          <div class="applied" hidden></div></div>`;
-        const note = el.querySelector(".applied");
-        const show = (state, ic, title, sub) => {
-            netNotes[c.uuid] = { state, ic, title, sub, at: Date.now() };
-            note.innerHTML = statusHtml(state, ic, title, sub);
-            note.hidden = false;
-        };
-        const last = netNotes[c.uuid];
-        if (last && Date.now() - last.at < 15000) show(last.state, last.ic, last.title, last.sub);
-        const form = ipv4Form(el, {
-            method: c.method,
-            address: c.address || (cur.addresses[0] || "").split("/")[0],
-            prefix: c.prefix || (cur.addresses[0] || "/24").split("/")[1],
-            gateway: c.gateway || cur.gateway,
-            dns: c.dns.length ? c.dns : cur.dns,
-        }, () => { el.classList.add("dirty"); apply(); });
-        // No Apply button: applied once a field is left or the method tapped,
-        // and only what changed.
-        let applied = JSON.stringify({ ...form.read(), method: c.method === "manual" ? "manual" : "auto" });
-        const apply = async () => {
-            const b = form.read(), key = JSON.stringify(b);
-            if (key === applied || !form.complete()) return;
-            applied = key;
-            show("busy", ICONS.busy, "Saving…", "");
-            try {
-                await api("/network", { uuid: c.uuid, ...b });
-                show("ok", ICONS.ok, "Settings saved", c.active ? "Reconnecting with them…"
-                    : "Used on the next connection to this network.");
-                el.classList.remove("dirty");  // NetworkManager's events bring the new state
-            } catch (e) {
-                applied = null;
-                show("err", ICONS.err, "Couldn't save the settings", e.message);
-            }
-        };
-        el.addEventListener("input", () => el.classList.add("dirty"));
-        el.querySelectorAll("input").forEach(i => i.addEventListener("change", apply));
+        el.innerHTML = `<h2>${_("IP address · {kind}", { kind: esc(kind) })}</h2>` + head +
+            (c.type === "wifi" ? '<p class="hint">IP settings: tap the network under Saved networks.</p>' : "");
+        if (c.type !== "wifi") {
+            const fold = document.createElement("details");
+            fold.className = "log fold";
+            fold.open = !!netFolds[c.uuid];
+            fold.innerHTML = `<summary>${esc(_("IPv4 addressing"))}</summary>`;
+            fold.addEventListener("toggle", () => { netFolds[c.uuid] = fold.open; });
+            fold.appendChild(ipSettings(c, el));
+            el.appendChild(fold);
+        }
         (c.active ? box : other).appendChild(el);
     }
+    renderSaved(live);
 }
 
 /* ---------- Screen */
