@@ -2649,11 +2649,30 @@ def r_splash(body, q):
 _plymouth = {"done": False}
 
 
+def clear_fbdev():
+    """Black /dev/fb0. i915's console framebuffer is the one it took over
+    from the firmware, GRUB's boot frame still in it; when cage lets go of
+    the screen at shutdown the kernel shows it until Plymouth's shutdown
+    screen is up -- a second of a stale boot screen. Not on screen now
+    (cage is), so this shows nothing."""
+    try:
+        with open("/dev/fb0", "r+b", buffering=0) as fb:
+            zeros = bytes(1 << 20)
+            while fb.write(zeros):
+                pass
+    except OSError as e:
+        if e.errno not in (errno.ENOSPC, errno.EFBIG, errno.ENOENT, errno.ENODEV, errno.ENXIO):
+            print(f"kioskd: clearing /dev/fb0: {e}", flush=True)
+
+
 def plymouth_quit():
     if not _plymouth["done"]:
         _plymouth["done"] = True
-        threading.Thread(target=run, args=(["plymouth", "quit", "--retain-splash"],),
-                         kwargs={"check": False, "timeout": 30}, daemon=True).start()
+
+        def quit_and_clear():
+            run(["plymouth", "quit", "--retain-splash"], check=False, timeout=30)
+            clear_fbdev()
+        threading.Thread(target=quit_and_clear, daemon=True).start()
 
 
 def r_display_set(body, q):
