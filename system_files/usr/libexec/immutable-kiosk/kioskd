@@ -2398,17 +2398,23 @@ def frame_tiles(buf, nw, nh, box):
                     px.append((x, y, tuple(buf[k:k + 3]) if k >= 0 else (0, 0, 0)))
             if all(max(t) < 6 for _, _, t in px):
                 continue
+            # Per distinct colour, not per pixel: a cell has only a few
+            # (the track one or two), and this runs on the Atom.
+            counts = {}
+            for _, _, t in px:
+                counts[t] = counts.get(t, 0) + 1
             best = None
             for name, f in GRUB_COLORS.items():
                 ff = f[0] * f[0] + f[1] * f[1] + f[2] * f[2]
-                err, shares = 0, []
-                for _, _, t in px:
-                    s = min(max((t[0] * f[0] + t[1] * f[1] + t[2] * f[2]) / ff, 0.0), 1.0)
-                    err += sum((t[c] - s * f[c]) ** 2 for c in range(3))
-                    shares.append(s)
+                err, share = 0, {}
+                for t, n in counts.items():
+                    sh = min(max((t[0] * f[0] + t[1] * f[1] + t[2] * f[2]) / ff, 0.0), 1.0)
+                    err += n * ((t[0] - sh * f[0]) ** 2 + (t[1] - sh * f[1]) ** 2 + (t[2] - sh * f[2]) ** 2)
+                    share[t] = sh
                 if best is None or err < best[0]:
-                    best = (err, name, shares)
-            _, name, shares = best
+                    best = (err, name, share)
+            _, name, share = best
+            shares = [share[t] for _, _, t in px]
             # Something solid in it (text, the accent's dot): crisp edges.
             # Only a dim colour (the track) is dithered.
             if max(shares) > 0.85:
@@ -2450,9 +2456,10 @@ def pf2_font(glyphs):
     return head + sec(b"CHIX", bytes(index)) + b"DATA" + struct.pack(">I", 0xFFFFFFFF) + bytes(data)
 
 
-def grub_splash_files(nw, nh, transform, d, accent, lang):
+def grub_splash_files(nw, nh, transform, d, accent, lang, key=""):
     """(console.cfg text, kiosk-splash.pf2 bytes), or None if the frame
-    doesn't fit gfxterm's grid."""
+    doesn't fit gfxterm's grid. `key`: console.cfg's first line, what it
+    was made from (set_grub_splash)."""
     buf, box = boot_frame(nw, nh, transform, d, accent, lang)
     if box[2] < 0:
         return None
@@ -2488,6 +2495,7 @@ def grub_splash_files(nw, nh, transform, d, accent, lang):
         out.append(f'  echo "{run}"')
         lines += out
     cfg = f"""\
+# key: {key}
 # immutable-kiosk boot screen -- written by kioskd (set_grub_splash) with
 # kiosk-splash.pf2 for this panel, its rotation, the accent and the
 # language; edits here are overwritten. Sourced by grub.cfg before the boot
@@ -2543,16 +2551,21 @@ fi
 
 
 def set_grub_splash(output=None, transform=None):
-    """Write GRUB's boot screen (console.cfg, kiosk-splash.pf2) for the panel
-    the kiosk reports (output, transform; None: the last one) in Settings'
-    accent and language. Nothing until the kiosk has reported its panel."""
+    """Bring GRUB's boot screen (console.cfg, kiosk-splash.pf2) in line with
+    the panel the kiosk reports (output, transform; None: the last one) and
+    Settings' accent and language. Nothing until the kiosk has reported its
+    panel. Cheap when nothing changed (console.cfg's key line); otherwise
+    drawn by `kioskd --grub-splash` at the lowest priority -- seconds of CPU
+    on the Atom, which in here held up the API (a restart from Settings
+    waited for it)."""
     if output is not None:
         _panel.update(output=output, transform=transform)
     output, transform = _panel["output"], _panel["transform"]
     if transform is None or mode() == "installer" or not GRUB_DIR.is_dir():
         return
     try:
-        d = json.loads(SPLASH_DATA.read_text())
+        raw = SPLASH_DATA.read_bytes()
+        d = json.loads(raw)
         if "boot_labels" not in d:
             return
         size = native_mode(output)
@@ -2562,30 +2575,51 @@ def set_grub_splash(output=None, transform=None):
         cfg = load_config()
         accent = cfg.get("accent") if cfg.get("accent") in d["accents"] else d["default_accent"]
         lang = cfg.get("language") if cfg.get("language") in d["boot_labels"] else "en"
-        t0 = time.monotonic()
-        files = grub_splash_files(*size, transform, d, accent, lang)
-        if files is None:
-            print(f"kioskd: GRUB boot screen: the frame doesn't fit {size[0]}x{size[1]}", flush=True)
-            return
+        # What the files come from: the panel, the look, the bar's data and
+        # this program (a new version may draw differently) -- redrawn once
+        # after an update, otherwise left alone.
+        code = hashlib.sha256(Path(os.path.abspath(__file__)).read_bytes()).hexdigest()[:12]
+        key = (f"{size[0]}x{size[1]} {transform} {accent} {lang} "
+               f"{hashlib.sha256(raw).hexdigest()[:12]} {code}")
+        try:
+            if GRUB_FONT.is_file() and GRUB_CONSOLE_CFG.read_text().startswith(f"# key: {key}\n"):
+                return
+        except OSError:
+            pass
         with _splash_lock:
-            written = []
-            # The font first: console.cfg only uses it when it's there.
-            for path, data in ((GRUB_FONT, files[1]), (GRUB_CONSOLE_CFG, files[0].encode())):
-                try:
-                    if path.read_bytes() == data:
-                        continue
-                except OSError:
-                    pass
-                p = subprocess.run([BOOT_COUNTER, "write-boot", str(path)], input=data,
-                                   capture_output=True, timeout=60)
-                if p.returncode != 0:
-                    raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
-                written.append(path.name)
-        if written:
-            print(f"kioskd: GRUB boot screen: {size[0]}x{size[1]} turned {transform}, accent {accent}, "
-                  f"language {lang}: {', '.join(written)} ({time.monotonic() - t0:.1f} s)", flush=True)
-    except (ApiError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
+            p = subprocess.run(["nice", "-n", "19", sys.executable, os.path.abspath(__file__), "--grub-splash",
+                                key, str(size[0]), str(size[1]), transform, accent, lang],
+                               capture_output=True, text=True, timeout=600)
+        for line in (p.stdout + p.stderr).strip().splitlines():
+            print(f"kioskd: GRUB boot screen: {line}", flush=True)
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
         print(f"kioskd: GRUB boot screen: {e}", flush=True)
+
+
+def write_grub_splash(key, w, h, transform, accent, lang):
+    """`kioskd --grub-splash`: draw and write the files (set_grub_splash)."""
+    t0 = time.monotonic()
+    d = json.loads(SPLASH_DATA.read_text())
+    files = grub_splash_files(w, h, transform, d, accent, lang, key)
+    if files is None:
+        print(f"the frame doesn't fit {w}x{h}")
+        return 1
+    written = []
+    # The font first: console.cfg only uses it when it's there.
+    for path, data in ((GRUB_FONT, files[1]), (GRUB_CONSOLE_CFG, files[0].encode())):
+        try:
+            if path.read_bytes() == data:
+                continue
+        except OSError:
+            pass
+        p = subprocess.run([BOOT_COUNTER, "write-boot", str(path)], input=data, capture_output=True, timeout=60)
+        if p.returncode != 0:
+            print(p.stderr.decode(errors="replace").strip() or f"write-boot {path}: {p.returncode}")
+            return 1
+        written.append(path.name)
+    print(f"{w}x{h} turned {transform}, accent {accent}, language {lang}: "
+          f"{', '.join(written) or 'unchanged'} ({time.monotonic() - t0:.1f} s)")
+    return 0
 
 
 def r_splash(body, q):
@@ -2924,4 +2958,8 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--splash-look"]:
         set_splash_look()
         sys.exit(0)
+    # set_grub_splash: the drawing, in its own low-priority process.
+    if sys.argv[1:2] == ["--grub-splash"] and len(sys.argv) == 8:
+        k, gw, gh, gt, ga, gl = sys.argv[2:]
+        sys.exit(write_grub_splash(k, int(gw), int(gh), gt, ga, gl))
     main()
