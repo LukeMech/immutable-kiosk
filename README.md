@@ -23,7 +23,7 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
                      ▼                                                    ▼
              HMI view (WebKit)                              Settings view (WebKit)
      https://<hmi-ip>:1020/  fullscreen        http://127.0.0.1:8088/  ◄── kioskd (root)
-     hold a corner ~1 s ──────────────────────►  HMI · Network · Display · System
+     hold a corner 2 s ───────────────────────►  HMI · Network · Display · System
      HMI unreachable → error page with ⚙        "← Back to HMI"
 ```
 

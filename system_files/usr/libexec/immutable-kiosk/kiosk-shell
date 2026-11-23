@@ -8,7 +8,7 @@ Two WebKit views in a stack:
                 server answers (probe_hmi), then shown by itself.
 Until then "connecting" shows ("Connecting…", drawn here as kiosk-splash
 draws its bar), from the moment WebKit has loaded; an HMI that stops
-answering on screen gives way to it too. The Settings corner, held ~1 s,
+answering on screen gives way to it too. The Settings corner, held 2 s,
 opens Settings from it, and then nothing switches by itself.
 
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
@@ -83,7 +83,10 @@ CSS = b"""
 window, stack { background: #10151c; }
 window.splashing, window.splashing stack, window.splashing .splash { background: transparent; }
 .hotcorner { background: transparent; }
-.hotcorner.armed { background: radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%); }
+.hotcorner.armed { background: radial-gradient(circle farthest-side at 100% 0%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
+.hotcorner.armed.top-left { background: radial-gradient(circle farthest-side at 0% 0%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
+.hotcorner.armed.bottom-left { background: radial-gradient(circle farthest-side at 0% 100%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
+.hotcorner.armed.bottom-right { background: radial-gradient(circle farthest-side at 100% 100%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
 .connecting { background: #000; }
 .connecting progressbar trough, .connecting progressbar progress { min-height: 8px; border-radius: 4px; border: 0; }
 .connecting label { font-size: 20px; }
@@ -303,6 +306,8 @@ class KioskShell(Gtk.Application):
         # (as in cage), by the monitor's physical DPI: 1.97x on the 408.
         # 1 CSS px = 1 screen px; Settings' scaling is the zoom on top.
         Gtk.Settings.get_default().set_property("gtk-xft-dpi", 96 * 1024)
+        # The Settings corner's hold is twice this (make_hotcorner): 2 s.
+        Gtk.Settings.get_default().set_property("gtk-long-press-time", 1000)
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
@@ -581,17 +586,50 @@ class KioskShell(Gtk.Application):
         return view
 
     def make_hotcorner(self):
-        box = Gtk.Box(width_request=72, height_request=72)
+        """The Settings corner: a hold of 2 s anywhere in a square from the
+        screen's very corner (hotcorner_size). Watched on the whole window
+        before the page sees it (capture phase): a tap there still reaches
+        the HMI below, only the hold is taken from it. The box only shows
+        that the hold has started."""
+        box = Gtk.Box(can_target=False)
         box.add_css_class("hotcorner")
         press = Gtk.GestureLongPress(touch_only=False)
-        # ~1 s, GTK's maximum (larger factors are rejected).
+        # 2 s: twice gtk-long-press-time (set to 1 s in do_activate), the
+        # largest factor GTK takes.
         press.set_delay_factor(2.0)
-        press.connect("begin", lambda *a: box.add_css_class("armed"))
+        press.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def begin(g, seq):
+            ok, x, y = g.get_point(seq)
+            if not (ok and box.get_visible() and self.in_hotcorner(x, y)):
+                g.set_state(Gtk.EventSequenceState.DENIED)
+                return
+            size = self.hotcorner_size()
+            box.set_size_request(size, size)
+            box.add_css_class("armed")
+
+        def pressed(g, _x, _y):
+            g.set_state(Gtk.EventSequenceState.CLAIMED)  # the page's touch ends here
+            box.remove_css_class("armed")
+            self.open_settings()
+        press.connect("begin", begin)
         press.connect("end", lambda *a: box.remove_css_class("armed"))
         press.connect("cancelled", lambda *a: box.remove_css_class("armed"))
-        press.connect("pressed", lambda *a: self.open_settings())
-        box.add_controller(press)
+        press.connect("pressed", pressed)
+        self.win.add_controller(press)
         return box
+
+    def hotcorner_size(self):
+        """A fifth of the screen's shorter side (160 px at 1280x800), at least 120."""
+        return max(120, round(min(self.win.get_width(), self.win.get_height()) * 0.2))
+
+    def in_hotcorner(self, x, y):
+        size, w, h = self.hotcorner_size(), self.win.get_width(), self.win.get_height()
+        corner = self.cfg.get("settings_corner", "top-right")
+        if corner not in CORNERS:
+            corner = "top-right"
+        top, left = corner.startswith("top"), corner.endswith("left")
+        return (x <= size if left else x >= w - size) and (y <= size if top else y >= h - size)
 
     # -- switching
     def ensure_settings(self):
@@ -646,6 +684,9 @@ class KioskShell(Gtk.Application):
         if corner not in CORNERS:
             corner = "top-right"
         h, v = CORNERS[corner]
+        for c in CORNERS:
+            self.hotcorner.remove_css_class(c)
+        self.hotcorner.add_css_class(corner)  # the glow spreads from that corner
         self.overlay.remove_overlay(self.hotcorner)
         self.hotcorner.set_halign(h)
         self.hotcorner.set_valign(v)
