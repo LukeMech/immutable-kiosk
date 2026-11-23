@@ -8,9 +8,6 @@ Two WebKit views in a stack:
   * "settings": kioskd's page (http://127.0.0.1:8088/). The only view on
                 the installer ISO.
 
-A recovery corner (opposite the Settings one) held 3 s opens Settings >
-System > Recovery, even when an update broke the HMI or Settings.
-
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
 HMI never shares a JavaScript context with Settings. Settings talks back
 through the "kiosk" script message handler.
@@ -88,7 +85,6 @@ window, stack { background: #10151c; }
 window.splashing, window.splashing stack, window.splashing .splash { background: transparent; }
 .hotcorner { background: transparent; }
 .hotcorner.armed { background: radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%); }
-.hotcorner.recovery.armed { background: radial-gradient(circle, rgba(248,81,73,0.45) 0%, rgba(248,81,73,0) 70%); }
 """
 
 CORNERS = {
@@ -97,10 +93,6 @@ CORNERS = {
     "bottom-left": (Gtk.Align.START, Gtk.Align.END),
     "bottom-right": (Gtk.Align.END, Gtk.Align.END),
 }
-OPPOSITE = {"top-left": "bottom-right", "top-right": "bottom-left",
-            "bottom-left": "top-right", "bottom-right": "top-left"}
-# Long on purpose: the corner sits over the HMI. Matches RECOVERY_HOLD_S in app.js.
-RECOVERY_HOLD_MS = 3000
 
 
 def api_get(path, timeout=2):
@@ -338,8 +330,6 @@ class KioskShell(Gtk.Application):
             self.stack.add_named(self.hmi, "hmi")
             self.hotcorner = self.make_hotcorner()
             self.overlay.add_overlay(self.hotcorner)
-            self.recovery_corner = self.make_recovery_corner()
-            self.overlay.add_overlay(self.recovery_corner)
             self.apply_hmi_config(force_load=True)
             if not self.cfg.get("hmi_url"):
                 # No address at boot: an HMI set up later says nothing about
@@ -476,51 +466,6 @@ class KioskShell(Gtk.Application):
         box.add_controller(press)
         return box
 
-    def make_recovery_corner(self):
-        """Held RECOVERY_HOLD_MS: Settings > System > Recovery. A drag
-        gesture plus a timer (GestureLongPress caps at ~1 s); moving away
-        cancels."""
-        box = Gtk.Box(width_request=72, height_request=72)
-        box.add_css_class("hotcorner")
-        box.add_css_class("recovery")
-        state = {"timer": None}
-
-        def cancel(*_):
-            if state["timer"]:
-                GLib.source_remove(state["timer"])
-                state["timer"] = None
-            box.remove_css_class("armed")
-
-        def fire():
-            state["timer"] = None
-            box.remove_css_class("armed")
-            self.open_recovery()
-            return GLib.SOURCE_REMOVE
-
-        def begin(*_):
-            cancel()
-            box.add_css_class("armed")
-            state["timer"] = GLib.timeout_add(RECOVERY_HOLD_MS, fire)
-
-        def update(_g, dx, dy):
-            if dx * dx + dy * dy > 48 * 48:
-                cancel()
-
-        drag = Gtk.GestureDrag(touch_only=False)
-        drag.connect("drag-begin", begin)
-        drag.connect("drag-update", update)
-        drag.connect("drag-end", cancel)
-        drag.connect("cancel", cancel)
-        box.add_controller(drag)
-        return box
-
-    def open_recovery(self):
-        """Settings with #recovery: app.js opens System at the recovery card."""
-        log("recovery corner held: Settings > System > Recovery")
-        self.settings_loaded = True
-        self.settings.load_uri(SETTINGS_URL + "#recovery")
-        self.show("settings")
-
     # -- switching
     def ensure_settings(self):
         if not self.settings_loaded:
@@ -567,18 +512,17 @@ class KioskShell(Gtk.Application):
             self.load_hmi()
 
     def place_corners(self):
-        """Settings corner where configured, recovery corner opposite. Re-added
-        rather than re-aligned: GTK doesn't move a placed overlay child."""
+        """The Settings corner where configured. Re-added rather than
+        re-aligned: GTK doesn't move a placed overlay child."""
         corner = self.cfg.get("settings_corner", "top-right")
         if corner not in CORNERS:
             corner = "top-right"
-        for box, name in ((self.hotcorner, corner), (self.recovery_corner, OPPOSITE[corner])):
-            h, v = CORNERS[name]
-            self.overlay.remove_overlay(box)
-            box.set_halign(h)
-            box.set_valign(v)
-            self.overlay.add_overlay(box)
-        log(f"corners: settings {corner}, recovery {OPPOSITE[corner]}")
+        h, v = CORNERS[corner]
+        self.overlay.remove_overlay(self.hotcorner)
+        self.hotcorner.set_halign(h)
+        self.hotcorner.set_valign(v)
+        self.overlay.add_overlay(self.hotcorner)
+        log(f"settings corner: {corner}")
 
     def apply_scale(self):
         """Screen scaling is WebKit zoom; the HMI also gets its own zoom."""

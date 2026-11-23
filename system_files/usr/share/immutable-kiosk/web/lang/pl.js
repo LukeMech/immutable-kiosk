@@ -148,10 +148,6 @@ window.I18N_LANGS.pl = function (tr) {
         "↗ Top right": "↗ Prawy górny",
         "↙ Bottom left": "↙ Lewy dolny",
         "↘ Bottom right": "↘ Prawy dolny",
-        "↖ top left": "↖ lewy górny",
-        "↗ top right": "↗ prawy górny",
-        "↙ bottom left": "↙ lewy dolny",
-        "↘ bottom right": "↘ prawy dolny",
 
         // ---- System tab: system, update, channel, custom image
         "Updates": "Aktualizacja",
@@ -429,8 +425,6 @@ window.I18N_LANGS.pl = function (tr) {
             "Od następnego uruchomienia animacja startowa będzie w tej orientacji ($1)."],
         [/^Now: (.+?)( \(this device's default\))?$/,
             (m, v, d) => `Teraz: ${({ portrait: "pion", landscape: "poziom" })[v] || v}${d ? " (domyślna dla tego urządzenia)" : ""}`],
-        [/^Emergency: holding the opposite corner \((.+?)\) for (\d+)\s?s — in the HMI or Settings — opens System → Recovery\.$/,
-            (m, c, s) => `Awaryjnie: przytrzymanie przez ${s} s przeciwległego rogu (${tr(c)}) — w HMI i w ustawieniach — otwiera System → Odzyskiwanie.`],
 
         // ---- System: update, channel
         [/^Downloads the (\S+) channel and switches to it after a restart\.( It may be older\.)?$/,
@@ -450,8 +444,8 @@ window.I18N_LANGS.pl = function (tr) {
         [/^Went back to the previous version \((.+)\)\.$/, "Wrócono do poprzedniej ($1)."],
         [/^Went back to (.+) \((.+)\)\.$/, "Wrócono do $1 ($2)."],
         [/^Previous version: (.+)$/, "Poprzednia wersja: $1"],
-        [/^Goes back by itself after (\d+) failed starts\. Shortcut: (\d+)\s?s in the (.+?) corner\. Manually: Shift at boot\.$/,
-            (m, n, s, c) => `Sama wraca po ${n} nieudanych startach. Skrót: ${s} s w rogu ${tr(c)}. Ręcznie: Shift przy starcie.`],
+        [/^Goes back by itself after (\d+) failed starts\. Manually: Shift at boot\.$/,
+            "Sama wraca po $1 nieudanych startach. Ręcznie: Shift przy starcie."],
         [/^Changelog from (.+)$/, "Lista zmian z $1"],
         [/^Host name: (.+?)\. The router will see it on its next connection\.$/,
             "Nazwa hosta: $1. Router zobaczy ją przy następnym połączeniu."],

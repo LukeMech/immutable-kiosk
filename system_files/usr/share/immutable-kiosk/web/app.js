@@ -569,31 +569,7 @@ function loadScreen() {
         $("bright-val").textContent = b + "%";
     }
     seg($("corner"), cfg.settings_corner, v => saveCfg({ settings_corner: v }).then(loadScreen).catch(e => toast(e.message, true)));
-    $("corner-hint").textContent = `Emergency: holding the opposite corner (${CORNER_NAMES[recoveryCorner()]}) ` +
-        `for ${RECOVERY_HOLD_S} s — in the HMI or Settings — opens System → Recovery.`;
 }
-
-/* Recovery corner (kiosk-shell): opposite the Settings corner; held
-   RECOVERY_HOLD_S it opens the page with #recovery. */
-const RECOVERY_HOLD_S = 3;
-const CORNER_NAMES = { "top-left": "↖ top left", "top-right": "↗ top right", "bottom-left": "↙ bottom left", "bottom-right": "↘ bottom right" };
-const recoveryCorner = () => ({ "top-left": "bottom-right", "top-right": "bottom-left", "bottom-left": "top-right", "bottom-right": "top-left" })[(cfg && cfg.settings_corner) || "top-right"];
-
-function openRecovery() {
-    history.replaceState(null, "", location.pathname + location.search);  // the next #recovery is a change again
-    showTab("system");
-    const card = $("recovery-card");
-    const go = () => window.scrollTo({
-        top: card.getBoundingClientRect().top + window.scrollY - document.querySelector("#settings .top").offsetHeight - 12,
-        behavior: "smooth",
-    });
-    go();
-    setTimeout(go, 900);  // cards above load async and push it down
-    card.classList.remove("flash");
-    void card.offsetWidth;  // restart the animation
-    card.classList.add("flash");
-}
-window.addEventListener("hashchange", () => { if (location.hash === "#recovery") openRecovery(); });
 
 function initScreen() {
     // Apply at once, then save; revert on failure.
@@ -887,8 +863,7 @@ function renderUpdate() {
     else if (s.rollback) setStatus("rb-st", "", ICONS.ready, `Previous version: ${versionName(s.rollback)}`,
         `Now running ${versionName(s.booted)}.`);
     else setStatus("rb-st", "off", ICONS.ready, "No previous version", `Now running ${versionName(s.booted)}.`);
-    $("rb-hint").textContent = `Goes back by itself after ${AUTO_TRIES} failed starts. Shortcut: ${RECOVERY_HOLD_S} s in the ` +
-        `${CORNER_NAMES[recoveryCorner()]} corner. Manually: Shift at boot.`;
+    $("rb-hint").textContent = `Goes back by itself after ${AUTO_TRIES} failed starts. Manually: Shift at boot.`;
     renderNotes();
 }
 
@@ -1340,7 +1315,7 @@ async function initSettings() {
     initSystem();
     refreshDevice();
     initEvents();
-    if (location.hash === "#recovery") openRecovery(); else showTab("hmi");
+    showTab("hmi");
 }
 
 /* ======================================================= INSTALLER */
