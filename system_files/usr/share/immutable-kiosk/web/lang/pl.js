@@ -35,8 +35,8 @@ window.I18N_LANGS.pl = function (tr) {
         "HMI address": "Adres wizualizacji",
         "Loading…": "Wczytywanie…",
         "Server": "Serwer",
-        "Beckhoff TwinCAT HMI (TF2000): HTTPS on port 1020 or HTTP on 1010.":
-            "Beckhoff TwinCAT HMI (TF2000): HTTPS na porcie 1020 albo HTTP na 1010.",
+        "Beckhoff TwinCAT HMI (TF2000): HTTPS on port 1020 or HTTP on 1010. Leave the port empty for the default (443 / 80).":
+            "Beckhoff TwinCAT HMI (TF2000): HTTPS na porcie 1020 albo HTTP na 1010. Puste pole portu = domyślny (443 / 80).",
         "HMI server IP address or name": "Adres IP lub nazwa serwera HMI",
         "e.g. 192.168.1.50": "np. 192.168.1.50",
         "Path": "Ścieżka",

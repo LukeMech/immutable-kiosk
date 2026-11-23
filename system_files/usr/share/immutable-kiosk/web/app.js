@@ -165,6 +165,8 @@ function hmiDraftUrl() {
 }
 
 function renderHmiUrl() {
+    // Empty port: the scheme's default, shown as the placeholder.
+    $("hmi-port").placeholder = hmiDraft.scheme === "https" ? "443" : "80";
     const url = hmiDraftUrl();
     if (!url) {
         setStatus("hmi-st", "warn", ICONS.warn, "No HMI address", "Enter the HMI server's address to show the HMI.");
@@ -189,7 +191,7 @@ async function loadHmi() {
     cfg = await api("/config");
     hmiDraft = { ...cfg.hmi };
     $("hmi-host").value = hmiDraft.host;
-    $("hmi-port").value = hmiDraft.port;
+    $("hmi-port").value = hmiDraft.port ?? "";
     $("hmi-path").value = hmiDraft.path;
     seg($("hmi-scheme"), hmiDraft.scheme, v => {
         hmiDraft.scheme = v;
@@ -222,7 +224,7 @@ function initHmi() {
         hmiTest = { url, busy: true };
         renderHmiUrl();
         busy(e.currentTarget, async () => {
-            const r = await api("/hmi/test", { host: hmiDraft.host, port: hmiDraft.port });
+            const r = await api("/hmi/test", { scheme: hmiDraft.scheme, host: hmiDraft.host, port: hmiDraft.port });
             hmiTest = { url, ok: r.ok, message: r.message };
         }).catch(err => { hmiTest = { url, ok: false, message: err.message }; })
             .finally(renderHmiUrl);
