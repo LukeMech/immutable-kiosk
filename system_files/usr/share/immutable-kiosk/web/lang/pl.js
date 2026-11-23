@@ -148,17 +148,6 @@ window.I18N_LANGS.pl = function (tr) {
         "Resetting…": "Resetowanie…",
         "Back to the defaults": "Przywrócono ustawienia domyślne",
         "Couldn't reset": "Nie udało się zresetować",
-        // ---- Installer: settings only
-        "Reset the settings only": "Tylko reset ustawień",
-        "The kiosk system already on the selected disk stays as it is, with its version; its settings are forgotten: the HMI address, saved Wi-Fi networks, IP settings, the host name and the HMI's logins. For a tablet that can't reach its HMI any more. Then it starts like after installation.":
-            "System kiosku na wybranym dysku zostaje taki, jaki jest, w tej samej wersji; zapomina tylko ustawienia: adres HMI, zapisane sieci Wi-Fi, ustawienia IP, nazwę hosta i logowania w HMI. Dla tabletu, który nie może już połączyć się z HMI. Potem startuje jak po instalacji.",
-        "Hold 3 s: reset the settings": "Przytrzymaj 3 s: zresetuj ustawienia",
-        "Resetting the settings…": "Resetowanie ustawień…",
-        "Settings reset": "Ustawienia zresetowane",
-        "{disk}: {n} settings removed. Remove the USB drive and restart.":
-            "{disk}: usunięto ustawień: {n}. Wyjmij pendrive i uruchom ponownie.",
-        "Couldn't reset the settings": "Nie udało się zresetować ustawień",
-        "There's no kiosk system on this disk": "Na tym dysku nie ma systemu kiosku",
 
         // ---- Display tab
         "Brightness": "Jasność",

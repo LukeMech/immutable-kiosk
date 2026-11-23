@@ -3465,77 +3465,6 @@ def r_installer_start(body, q):
                      job_install(disk["path"])).as_dict()
 
 
-def reset_installed(disk_path):
-    """From the installer: the kiosk system on disk_path keeps its version and
-    loses its settings -- a tablet that can't reach its HMI (a wrong Wi-Fi
-    network saved, a static address of another network) starts like after
-    installation. In every deployment (each has its own /etc): kioskd's
-    settings, the HMI's browser data and kiosk-shell's cache, every saved
-    connection (Wi-Fi, IP settings), the host name. Nothing is written, only
-    deleted (the installer runs without SELinux: a new file would have no
-    label)."""
-    import shutil
-    import tempfile
-    tree = json.loads(run(["lsblk", "-J", "-p", "-o", "PATH,FSTYPE,MOUNTPOINT", disk_path]))
-    parts, todo = [], list(tree.get("blockdevices", []))
-    while todo:
-        d = todo.pop()
-        todo += d.get("children") or []
-        if d.get("fstype") == "btrfs":
-            parts.append(d)
-    cleared = []
-    for part in parts:
-        if part.get("mountpoint"):
-            run(["umount", "-l", part["path"]], check=False)
-        mnt = Path(tempfile.mkdtemp(prefix="immutable-kiosk-reset-"))
-        try:
-            run(["mount", "-t", "btrfs", part["path"], str(mnt)], timeout=60)
-        except ApiError:
-            mnt.rmdir()
-            continue
-        try:
-            for root in (mnt / "ostree" / "deploy").glob("*"):
-                var = root / "var"
-                gone = [var / "lib/immutable-kiosk/config.json"]
-                trees = [var / "home/kiosk/.local/share/immutable-kiosk/hmi", var / "home/kiosk/.cache/immutable-kiosk"]
-                for etc in (root / "deploy").glob("*/etc"):
-                    gone += list((etc / "NetworkManager/system-connections").glob("*"))
-                    gone.append(etc / "hostname")
-                for f in gone:
-                    if f.is_file() or f.is_symlink():
-                        f.unlink()
-                        cleared.append(str(f.relative_to(mnt)))
-                for t in trees:
-                    if t.is_dir():
-                        shutil.rmtree(t, ignore_errors=True)
-                        cleared.append(str(t.relative_to(mnt)))
-                cleared.append("")  # a kiosk system was found
-        finally:
-            run(["sync"], check=False, timeout=60)
-            run(["umount", str(mnt)], check=False, timeout=60)
-            try:
-                mnt.rmdir()
-            except OSError:
-                pass
-    if not cleared:
-        raise ApiError("There's no kiosk system on this disk")
-    return [c for c in cleared if c]
-
-
-def r_installer_reset(body, q):
-    if mode() != "installer":
-        raise ApiError("Only available on the installation drive", HTTPStatus.NOT_FOUND)
-    name = str(body.get("disk", ""))
-    disk = next((d for d in list_disks() if d["name"] == name), None)
-    if not disk:
-        raise ApiError("No such disk")
-    if disk["is_boot_medium"]:
-        raise ApiError("This is the drive the installer was started from")
-    if CURRENT_JOB and CURRENT_JOB.state == "running":
-        raise ApiError(Msg("Already running: {title}", title=CURRENT_JOB.title), HTTPStatus.CONFLICT)
-    return {"cleared": reset_installed(disk["path"]), "disk": disk["path"]}
-
-
 ROUTES = {
     ("GET", "/api/info"): r_info,
     ("GET", "/api/usage"): r_usage,
@@ -3571,7 +3500,6 @@ ROUTES = {
     ("POST", "/api/display"): r_display_set,
     ("GET", "/api/installer"): r_installer,
     ("POST", "/api/installer/start"): r_installer_start,
-    ("POST", "/api/installer/reset"): r_installer_reset,
 }
 
 

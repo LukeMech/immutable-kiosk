@@ -1511,7 +1511,6 @@ async function loadInstaller() {
         ? "The tablet is on battery ({pct}%). Plug in the charger before installing."
         : "The tablet is on battery. Plug in the charger before installing.", { pct: pw.battery });
     $("inst-go").disabled = !p || !chosenDisk;
-    $("inst-reset").disabled = !chosenDisk;
 }
 
 function renderInstallJob(job) {
@@ -1532,18 +1531,6 @@ function renderInstallJob(job) {
 async function initInstaller() {
     $("installer").hidden = false;
     document.title = "Installer";
-    // The system on the disk kept, its settings forgotten (kioskd reset_installed).
-    holdButton($("inst-reset"), async () => {
-        $("inst-reset-st").hidden = false;
-        setStatus("inst-reset-st", "busy", ICONS.busy, "Resetting the settings…");
-        try {
-            const r = await api("/installer/reset", { disk: chosenDisk });
-            setStatus("inst-reset-st", "ok", ICONS.ok, "Settings reset",
-                      _("{disk}: {n} settings removed. Remove the USB drive and restart.", { disk: r.disk, n: r.cleared.length }));
-        } catch (e) {
-            setStatus("inst-reset-st", "err", ICONS.err, "Couldn't reset the settings", e.message);
-        }
-    });
     holdButton($("inst-go"), async () => {
         msg($("inst-msg"), "");
         try {
