@@ -506,6 +506,14 @@ function ipv4Form(root, start, onPick) {
         // A static address needs its address and mask before it's any use.
         complete: () => form.method === "auto" || !!(f("address").value.trim() && Number(f("prefix").value)),
     };
+    // The gateway follows the address: its first three parts from the address,
+    // the last kept (.1 when there's none yet).
+    f("address").addEventListener("input", () => {
+        const a = f("address").value.trim().split(".");
+        if (a.length < 3 || !a.slice(0, 3).every(x => /^\d{1,3}$/.test(x) && Number(x) <= 255)) return;
+        const last = f("gateway").value.trim().split(".")[3];
+        f("gateway").value = [...a.slice(0, 3), /^\d{1,3}$/.test(last || "") ? last : "1"].join(".");
+    });
     const pick = v => { form.method = v; seg(segEl, v); manual.hidden = v !== "manual"; };
     seg(segEl, form.method, v => { pick(v); if (onPick) onPick(v); });
     pick(form.method);
