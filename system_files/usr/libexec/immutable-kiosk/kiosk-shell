@@ -2,23 +2,29 @@
 """kiosk-shell -- the only window cage shows.
 
 Two WebKit views in a stack:
-  * "hmi":      the configured web HMI, fullscreen. A hot corner held ~1 s
-                opens Settings; an unreachable HMI gets an error page and
-                is retried.
-  * "settings": kioskd's page (http://127.0.0.1:8088/). The only view on
-                the installer ISO.
+  * "settings": kioskd's page (http://127.0.0.1:8088/). Always the first
+                screen; the only view on the installer ISO.
+  * "hmi":      the configured web HMI, fullscreen. Loaded only once its
+                server answers (probe_hmi), then shown by itself. A hot
+                corner held ~1 s opens Settings; an HMI that stops
+                answering gets an error page and is retried.
 
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
 HMI never shares a JavaScript context with Settings. Settings talks back
 through the "kiosk" script message handler.
 """
 
+import errno
+import http.client
 import json
 import os
 import signal
+import socket
+import ssl
 import subprocess
 import sys
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -26,14 +32,6 @@ from urllib.parse import urlsplit
 
 def log(*a):
     print("kiosk-shell:", *a, file=sys.stderr, flush=True)
-
-
-def milestone(label):
-    """A boot-timeline point: kioskd reads these lines from the journal."""
-    log("milestone:", label)
-
-
-milestone("kiosk-shell: start")
 
 
 def sandbox_works():
@@ -69,7 +67,6 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
-milestone("kiosk-shell: GTK ready")
 
 WebKit = None  # load_webkit()
 
@@ -157,7 +154,6 @@ def apply_output(cfg):
             transform = "90" if h > w else "normal"
         else:
             transform = rotation
-        log(f"output {name} {w}x{h}: transform {transform} ({rotation})")
         subprocess.run(["wlr-randr", "--output", name, "--transform", transform,
                         "--scale", str(scale)], timeout=5)
         applied.append(f"{name} {transform}\n")
@@ -190,6 +186,33 @@ def end_splash():
             os.kill(int(pid), signal.SIGTERM)
         except OSError:
             pass
+
+
+# ------------------------------------------------------------ HMI probe
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):
+        return None  # a redirect (e.g. to the login page) is an answer too
+
+
+def probe_hmi(url):
+    """None if the HMI's server answers over HTTP(S) now, else why not (an
+    exception, or a gateway error's status: the proxy is up, the HMI behind
+    it isn't). Any certificate: this only asks whether the server is there,
+    WebKit then checks the certificate itself."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect,
+                                         urllib.request.HTTPSHandler(context=ctx))
+    try:
+        with opener.open(urllib.request.Request(url, headers={"Cache-Control": "no-cache"}), timeout=5) as r:
+            status = r.status
+    except urllib.error.HTTPError as e:
+        status = e.code
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        return e
+    return status if status in (502, 503, 504) else None
 
 
 # ------------------------------------------------------------ error page
@@ -249,8 +272,12 @@ class KioskShell(Gtk.Application):
         self.boot_reported = False
         self.ok_reported = False
         self.pending = None  # view to reveal once its first page is rendered
-        # HMI unreachable at start: Settings shows until the HMI loads.
+        # The HMI loads only after Settings' first page (start_hmi).
+        self.hmi_started = False
+        # From the start until the HMI has loaded: Settings shows, and the
+        # HMI replaces it by itself once its server answers.
         self.waiting_for_hmi = False
+        self.probe_gen = 0  # the newest probe_hmi; older answers are dropped
 
     # -- setup
     def do_activate(self):
@@ -267,7 +294,6 @@ class KioskShell(Gtk.Application):
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
-        milestone("kiosk-shell: config and rotation")
 
         self.win = Gtk.ApplicationWindow(application=self, title="Kiosk")
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=200)
@@ -282,7 +308,6 @@ class KioskShell(Gtk.Application):
         self.win.fullscreen()
         self.win.connect("map", self.on_first_map)
         self.win.present()
-        milestone("kiosk-shell: window sent")
 
     def on_first_map(self, win):
         """After the window's first painted frame: set up WebKit."""
@@ -291,7 +316,6 @@ class KioskShell(Gtk.Application):
 
         def painted(_clock):
             clock.disconnect(state["id"])
-            milestone("kiosk-shell: splash (window's first frame)")
             GLib.idle_add(self.setup_once)
             self.report_drawn()
         state["id"] = clock.connect("after-paint", painted)
@@ -314,7 +338,6 @@ class KioskShell(Gtk.Application):
 
     def setup(self):
         load_webkit()
-        milestone("kiosk-shell: WebKit loaded")
         self.settings = self.make_settings_view()
         self.stack.add_named(self.settings, "settings")
 
@@ -330,7 +353,7 @@ class KioskShell(Gtk.Application):
             self.stack.add_named(self.hmi, "hmi")
             self.hotcorner = self.make_hotcorner()
             self.overlay.add_overlay(self.hotcorner)
-            self.apply_hmi_config(force_load=True)
+            self.apply_hmi_config()
             if not self.cfg.get("hmi_url"):
                 # No address at boot: an HMI set up later says nothing about
                 # boot time, so the boot timing stops here.
@@ -338,22 +361,26 @@ class KioskShell(Gtk.Application):
                 threading.Thread(target=self.report_hmi_shown, args=(False,), daemon=True).start()
         self.apply_scale()
 
-        # The splash stays until the first page is rendered, at most 30 s.
-        if self.hmi and self.cfg.get("hmi_url"):
-            # Settings loads after the HMI: two web processes starting at
-            # once slow the HMI's first paint on an Atom. At the latest after
-            # 60 s, in case the HMI server never answers.
-            self.pending = "hmi"
-            GLib.timeout_add_seconds(60, self.ensure_settings)
-        else:
-            self.pending = "settings"  # first boot: nothing to show yet but Settings
-            self.ensure_settings()
+        # Settings first, always: the HMI only once its server answers
+        # (start_hmi, after Settings' first page). The splash stays until
+        # that page is rendered, at most 30 s.
+        self.pending = "settings"
+        self.ensure_settings()
         GLib.timeout_add_seconds(30, self.reveal)
         threading.Thread(target=self.listen_events, daemon=True).start()
 
+    def start_hmi(self):
+        """After Settings' first page: two web processes starting at once
+        slow both down on an Atom."""
+        if self.hmi and not self.hmi_started:
+            self.hmi_started = True
+            if self.cfg.get("hmi_url"):
+                self.set_waiting(True)
+            self.load_hmi()
+
     def listen_events(self):
         """kioskd's live events: a network change retries an unreachable HMI
-        at once."""
+        at once. (The stream is reopened after a minute without events.)"""
         while True:
             try:
                 req = urllib.request.Request(API + "/api/events")
@@ -362,13 +389,12 @@ class KioskShell(Gtk.Application):
                         line = raw.decode(errors="replace").strip()
                         if line.startswith("data:") and "net" in json.loads(line[5:]):
                             GLib.idle_add(self.on_net_change)
-            except (OSError, ValueError) as e:
-                log("events:", e)
+            except (OSError, ValueError):
+                pass
             GLib.usleep(3_000_000)
 
     def on_net_change(self):
         if self.hmi and self.hmi_error and self.retry_source:
-            log("network changed: retrying the HMI now")
             self.load_hmi()
         return GLib.SOURCE_REMOVE
 
@@ -386,7 +412,7 @@ class KioskShell(Gtk.Application):
         if self.pending:
             name, self.pending = self.pending, None
             self.show(name)
-            milestone("kiosk-shell: first page")
+        self.start_hmi()
         return GLib.SOURCE_REMOVE
 
     def splash_over(self):
@@ -493,7 +519,7 @@ class KioskShell(Gtk.Application):
                                               None, None, None, None, None)
 
     # -- config
-    def apply_hmi_config(self, force_load=False):
+    def apply_hmi_config(self):
         cfg = self.cfg
         self.place_corners()
 
@@ -508,7 +534,7 @@ class KioskShell(Gtk.Application):
         # OSK option reloads the HMI, or the open page keeps the old one.
         osk_changed = getattr(self, "osk_loaded", osk) != osk
         self.osk_loaded = osk
-        if force_load or cfg.get("hmi_url") != self.loaded_url or osk_changed:
+        if self.hmi_started and (cfg.get("hmi_url") != self.loaded_url or osk_changed):
             self.load_hmi()
 
     def place_corners(self):
@@ -522,7 +548,6 @@ class KioskShell(Gtk.Application):
         self.hotcorner.set_halign(h)
         self.hotcorner.set_valign(v)
         self.overlay.add_overlay(self.hotcorner)
-        log(f"settings corner: {corner}")
 
     def apply_scale(self):
         """Screen scaling is WebKit zoom; the HMI also gets its own zoom."""
@@ -533,14 +558,13 @@ class KioskShell(Gtk.Application):
             zoom = float(self.cfg.get("zoom", 1.0))
         except (TypeError, ValueError):
             zoom = 1.0
-        self.set_zoom(self.settings, scale, "settings")
+        self.set_zoom(self.settings, scale)
         if self.hmi:
-            self.set_zoom(self.hmi, scale * zoom, "hmi")
+            self.set_zoom(self.hmi, scale * zoom)
 
     @staticmethod
-    def set_zoom(view, level, name):
+    def set_zoom(view, level):
         if abs(view.get_zoom_level() - level) >= 0.001:
-            log(f"zoom {name}: {level:.2f}")
             view.set_zoom_level(level)
 
     def reload_config(self):
@@ -556,16 +580,56 @@ class KioskShell(Gtk.Application):
 
     # -- HMI loading
     def load_hmi(self):
+        """The HMI's page, once probe_hmi has its server answering. Never
+        straight to WebKit: offline it can render a stale copy of the HMI
+        (its cache or the HMI's service worker) whose buttons do nothing."""
         self.cancel_retry()
-        self.hmi_error = False
         url = self.cfg.get("hmi_url")
         self.loaded_url = url
+        self.probe_gen += 1
         if not url:
             self.show_error(self.t("Brak adresu HMI", "No HMI address"),
                             self.t("Ustaw adres wizualizacji w Ustawieniach.", "Set the HMI's address in Settings."),
                             None)
             return
-        self.hmi.load_uri(url)
+        gen = self.probe_gen
+
+        def probe():
+            err = probe_hmi(url)
+            GLib.idle_add(self.after_probe, gen, url, err)
+        threading.Thread(target=probe, daemon=True).start()
+
+    def after_probe(self, gen, url, err):
+        if gen != self.probe_gen:
+            return GLib.SOURCE_REMOVE  # a newer load_hmi took over
+        if err is None:
+            self.hmi_error = False
+            self.hmi.load_uri(url)
+        else:
+            self.show_error(self.t("Brak połączenia z HMI", "Can't reach the HMI"),
+                            self.t("Nie można otworzyć", "Couldn't open") +
+                            f" <code>{esc(url)}</code>.<br>{esc(self.probe_reason(err))}", url)
+        return GLib.SOURCE_REMOVE
+
+    def probe_reason(self, err):
+        """probe_hmi's failure in words (Settings' language)."""
+        if isinstance(err, urllib.error.URLError) and isinstance(err.reason, BaseException):
+            err = err.reason
+        if isinstance(err, int):
+            return self.t(f"Serwer odpowiada błędem {err}: wizualizacja jeszcze nie działa.",
+                          f"The server answers with error {err}: the HMI isn't running yet.")
+        if isinstance(err, socket.gaierror):
+            return self.t("Adres nie jest znany w tej sieci. Czy kiosk jest w sieci HMI?",
+                          "The address isn't known on this network. Is the kiosk on the HMI's network?")
+        if isinstance(err, (socket.timeout, TimeoutError)):
+            return self.t("Serwer nie odpowiada.", "The server doesn't answer.")
+        if isinstance(err, ConnectionRefusedError):
+            return self.t("Serwer odrzuca połączenie (zły port albo HMI nie działa).",
+                          "The server refuses the connection (wrong port, or the HMI isn't running).")
+        if isinstance(err, OSError) and err.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN):
+            return self.t("Brak drogi do serwera: kiosk nie jest w sieci HMI.",
+                          "No route to the server: the kiosk isn't on the HMI's network.")
+        return self.t("Serwer nie odpowiada poprawnie.", "The server doesn't answer properly.")
 
     def cancel_retry(self):
         if self.retry_source:
@@ -602,13 +666,6 @@ class KioskShell(Gtk.Application):
     def on_hmi_load_failed(self, view, event, uri, error):
         if is_benign(error):
             return False
-        log("HMI load failed:", uri, error.message)
-        if self.pending == "hmi":
-            # At start-up: Settings instead of the error page until the HMI loads.
-            log("HMI not reachable at start: Settings until it is")
-            self.waiting_for_hmi = True
-            self.pending = "settings"
-            self.ensure_settings()
         self.show_error(self.t("Brak połączenia z HMI", "Can't reach the HMI"),
                         self.t("Nie można otworzyć", "Couldn't open") +
                         f" <code>{esc(uri)}</code>.<br>{esc(error.message)}", uri)
@@ -619,7 +676,6 @@ class KioskShell(Gtk.Application):
         hmi_host = urlsplit(self.cfg.get("hmi_url", "")).hostname or ""
         if self.cfg.get("accept_self_signed", True) and host and host == hmi_host:
             # The HMI's self-signed certificate, for the HMI host only.
-            log(f"accepting certificate for {host} ({errors})")
             self.hmi_session.allow_tls_certificate_for_host(certificate, host)
             view.load_uri(uri)
             return True
@@ -635,7 +691,7 @@ class KioskShell(Gtk.Application):
         (kioskd tells boot-counter; see automatic rollback)."""
         if event == WebKit.LoadEvent.FINISHED and view is self.settings:
             self.tell_settings_waiting()  # a reloaded page has lost it
-        if event == WebKit.LoadEvent.FINISHED and self.pending == ("hmi" if view is self.hmi else "settings"):
+        if event == WebKit.LoadEvent.FINISHED and view is self.settings and self.pending == "settings":
             self.reveal()
         if event == WebKit.LoadEvent.FINISHED and not self.ok_reported:
             self.ok_reported = True
@@ -644,9 +700,7 @@ class KioskShell(Gtk.Application):
     def report_boot_ok(self):
         for _ in range(10):
             try:
-                r = api_post("/api/boot/ok", {}, timeout=150)
-                if r.get("fallback"):
-                    log("new version never came up, previous one restored:", r)
+                api_post("/api/boot/ok", {}, timeout=150)
                 return
             except (OSError, ValueError) as e:
                 log("boot ok:", e)
@@ -654,16 +708,16 @@ class KioskShell(Gtk.Application):
 
     def on_hmi_load_changed(self, view, event):
         self.on_any_load_changed(view, event)
+        if self.hmi_error:
+            return  # the error page, or its retry would be cancelled
         if event == WebKit.LoadEvent.COMMITTED:
             self.cancel_retry()
-        elif event == WebKit.LoadEvent.FINISHED and not self.hmi_error:
+        elif event == WebKit.LoadEvent.FINISHED:
             if self.waiting_for_hmi:
-                log("HMI reachable: switching to it")
+                # Settings until now: the HMI replaces it by itself.
                 self.set_waiting(False)
                 if self.stack.get_visible_child_name() == "settings":
                     self.show("hmi")
-            # Settings loads now, after a head start for the HMI's scripts.
-            GLib.timeout_add_seconds(3, self.ensure_settings)
             if not self.boot_reported:
                 # For Settings' boot timing.
                 self.boot_reported = True

@@ -3,10 +3,10 @@
 # "ISO mode" truncates FAT32 labels). check-iso.sh enforces both and that
 # rd.live.dir/rd.live.squashimg point at the real squashfs.
 # @KARGS@: the image's own kernel arguments (kargs.d), filled in by
-# render-iso-yaml.py: quiet, splash, panel orientation, i915, TPM, SELinux
-# off. "basic graphics" boots without them, with the full boot log on
-# screen, for troubleshooting.
-# selinux=0 (also in kargs.d): the live root's files carry no SELinux labels.
+# render-iso-yaml.py: quiet, splash, panel orientation, i915, TPM.
+# "basic graphics" boots without them, with the full boot log on screen,
+# for troubleshooting.
+# selinux=0: the live root's files carry no SELinux labels.
 label: "IMMKIOSK"
 grub2:
   # osbuild's default is 60 s; the tablet has no keyboard to skip it.

@@ -1,7 +1,0 @@
-# SELinux off: no policy load at boot (seconds on the Atom, the biggest
-# Fedora-specific cost in the boot timeline: Settings > System > boot
-# timing, "PID 1: SELinux policy"). selinux=0, not enforcing=0: permissive
-# still loads the policy. A kiosk runs one known app; updates are still
-# signature-checked (policy.json), / is still read-only (composefs).
-# Applied to installed systems by `bootc upgrade` (kargs.d changes are).
-kargs = ["selinux=0"]

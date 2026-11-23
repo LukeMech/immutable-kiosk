@@ -216,7 +216,6 @@ early_microcode() {
     work=$(mktemp -d)
     mkdir -p "${work}/kernel/x86/microcode"
     cat "${files[@]}" > "${work}/kernel/x86/microcode/GenuineIntel.bin"
-    echo "early microcode: ${#files[@]} files, $(stat -c %s "${work}/kernel/x86/microcode/GenuineIntel.bin") bytes"
     (cd "${work}" && find kernel | LC_ALL=C sort | cpio -o -H newc --reproducible --quiet) > "${work}/early.cpio"
     cat "${work}/early.cpio" "${IMG}" > "${work}/initramfs.img"
     cp "${work}/initramfs.img" "${IMG}"
@@ -228,11 +227,6 @@ STOCK_MODS=$(dracut_modules "${STOCK}")
 NEW_MODS=$(dracut_modules "${IMG}")
 lsinitrd "${STOCK}" > /tmp/initramfs-stock.list
 lsinitrd "${IMG}" > /tmp/initramfs-new.list
-
-echo "--- dracut modules dropped (expected: the OMIT list and what only it needed):"
-comm -23 <(echo "${STOCK_MODS}") <(echo "${NEW_MODS}")
-echo "--- dracut modules added:"
-comm -13 <(echo "${STOCK_MODS}") <(echo "${NEW_MODS}")
 
 for m in "${EXTRA[@]}"; do
     grep -qx "${m}" <<<"${NEW_MODS}" || { echo "error: requested dracut module '${m}' is not in the initramfs" >&2; exit 1; }
@@ -273,49 +267,13 @@ if grep -q 'usr/lib/firmware/i915/' /tmp/initramfs-new.list; then
     echo "error: i915 firmware ended up in the initramfs (--fwdir ignored?)" >&2
     exit 1
 fi
-# No pipe into grep -q (SIGPIPE + pipefail).
-if grep -aq 'kernel/x86/microcode/GenuineIntel.bin' "${IMG}"; then
-    echo "early microcode: present"
-else
-    echo "early microcode: none"
-fi
-ls -l "${STOCK}" "${IMG}"
-echo "kernel modules: stock $(grep -c '\.ko' /tmp/initramfs-stock.list) -> ours $(grep -c '\.ko' /tmp/initramfs-new.list)"
-# Size report (uncompressed, from lsinitrd): by area, then the biggest files.
-echo "--- uncompressed MiB by area:"
-awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ {
-        p = $NF
-        if (p ~ /^usr\/lib\/firmware\//) a = "firmware"
-        else if (p ~ /^usr\/lib\/modules\//) a = "kernel modules"
-        else if (p ~ /^usr\/lib(64)?\/[^\/]*\.so/ || p ~ /^usr\/lib(64)?\/.*\.so[.0-9]*$/) a = "libraries"
-        else if (p ~ /^usr\/(s?bin|libexec)\//) a = "programs"
-        else a = "other"
-        s[a] += $5
-     } END { for (a in s) printf "%8.1f  %s\n", s[a] / 1048576, a }' /tmp/initramfs-new.list | sort -rn
-echo "--- kernel modules: compressed MiB, count, directory (top 15):"
-awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ && $NF ~ /\/kernel\/.*\.ko/ {
-        n = split($NF, p, "/"); d = ""
-        for (i = 1; i < n; i++) if (p[i] == "kernel") { d = p[i + 1] "/" p[i + 2]; break }
-        s[d] += $5; c[d]++
-     } END { for (d in s) printf "%8.2f  %4d  %s\n", s[d] / 1048576, c[d], d }' /tmp/initramfs-new.list |
-    sort -rn > /tmp/initramfs-moddirs.list
-head -15 /tmp/initramfs-moddirs.list
-rm -f /tmp/initramfs-moddirs.list
-echo "--- 20 biggest files:"
-# Via a file: `sort | head` gets sort SIGPIPE'd, failing the build under pipefail.
-awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ { printf "%8.1f MiB  %s\n", $5 / 1048576, $NF }' /tmp/initramfs-new.list |
-    sort -rn > /tmp/initramfs-biggest.list
-head -20 /tmp/initramfs-biggest.list
-rm -f /tmp/initramfs-biggest.list
 rm -f "${STOCK}" /tmp/initramfs-stock.list /tmp/initramfs-new.list
 
 # Microcode the device never loads: the initramfs carries the target Atoms'
 # (above; the installer's run needs them again), Fedora's kernel has no late
 # loading, and other CPUs keep what their firmware loaded. ~15 MB of the image.
 if [[ -d "${UCODE_DIR}" ]]; then
-    before=$(du -sk "${UCODE_DIR}" | cut -f1)
     keep=()
     for g in "${UCODE_GLOBS[@]}"; do keep+=(! -name "${g}"); done
     find "${UCODE_DIR}" -maxdepth 1 -type f "${keep[@]}" -delete
-    echo "intel-ucode: ${before} KiB -> $(du -sk "${UCODE_DIR}" | cut -f1) KiB (target Atoms only)"
 fi

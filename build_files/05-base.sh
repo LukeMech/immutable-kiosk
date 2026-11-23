@@ -20,6 +20,8 @@ systemctl enable immutable-kiosk-zram.service
 
 # Root grows to fill the disk on first boot (images are built small).
 systemctl enable immutable-kiosk-growroot.service
+# Once: labels for files written by builds that booted with SELinux off.
+systemctl enable immutable-kiosk-relabel.service
 
 # /etc stays writable: `timedatectl set-timezone` still works.
 ln -sf ../usr/share/zoneinfo/Europe/Warsaw /etc/localtime

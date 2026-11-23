@@ -32,6 +32,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit, parse_qs
 
+# Commands' messages in English, whatever the system locale (Settings'
+# language): cmd_error() rewords them, and the page translates that.
+for _v in ("LC_ALL", "LANGUAGE"):
+    os.environ.pop(_v, None)
+os.environ["LC_MESSAGES"] = "C.UTF-8"
+
 LISTEN = ("127.0.0.1", 8088)
 ALLOWED_HOSTS = {"127.0.0.1:8088", "localhost:8088"}
 WEB_ROOT = Path("/usr/share/immutable-kiosk/web")
@@ -94,9 +100,48 @@ def run(cmd, check=True, timeout=60, **kw):
     except FileNotFoundError:
         raise ApiError(f"program not found: {cmd[0]}")
     if check and p.returncode != 0:
-        msg = (p.stderr or p.stdout).strip() or f"{cmd[0]} exited with code {p.returncode}"
-        raise ApiError(msg)
+        raise ApiError(cmd_error(p, cmd[0]))
     return p.stdout
+
+
+# What nmcli says when a connection fails (English: LC_MESSAGES above) ->
+# Settings' wording (translated by the page). First match wins.
+NM_ERRORS = [
+    (r"secrets were required|802\.1x supplicant|no secrets", "Wrong password"),
+    (r"wireless-security\.psk.*invalid|psk: property is invalid",
+     "The password must be 8 to 63 characters (or 64 hex digits)"),
+    (r"no network with ssid ['\"]?(.+?)['\"]? found", "Network “{0}” not found"),
+    (r"wi-?fi network could not be found|ssid not found", "The network is out of range"),
+    (r"ip configuration could not be reserved|dhcp", "No IP address: the network's DHCP server didn't answer"),
+    (r"timeout expired|timed out", "The connection timed out"),
+    (r"carrier", "No cable connected"),
+    (r"networkmanager is not running", "The network service isn't running"),
+    (r"device ['\"]?.+?['\"]? not found|no wi-?fi device", "No network adapter found"),
+    (r"radio.*disabled|rfkill|wi-?fi is disabled", "Wi-Fi is off"),
+]
+
+
+def cmd_error(p, name):
+    """A failed command's message as Settings shows it: never its raw hints
+    (nmcli's "Hint: use 'journalctl -xe ...'", systemctl's "See
+    'systemctl status ...' and 'journalctl -xeu ...'"); nmcli's errors in
+    plain words (NM_ERRORS), others' without "Error: "."""
+    lines = [l.strip() for l in (p.stderr or p.stdout).splitlines()]
+    lines = [l for l in lines if l and "journalctl" not in l and "systemctl status" not in l
+             and not l.lower().startswith(("hint:", "see "))]
+    text = " ".join(lines)
+    if name == "nmcli":
+        for rx, msg in NM_ERRORS:
+            m = re.search(rx, text, re.I)
+            if m:
+                return msg.format(*m.groups())
+        if text:
+            # "Error: Connection activation failed: <reason>." -> "<reason>"
+            text = re.sub(r"^(error:\s*)?(connection activation failed:\s*)?(\(\d+\)\s*)?", "", text, flags=re.I)
+            return "Couldn't connect: " + text.rstrip(".")
+        return "Couldn't connect"
+    text = re.sub(r"^error:\s*", "", "\n".join(lines), flags=re.I)
+    return text or f"{name} exited with code {p.returncode}"
 
 
 class ApiError(Exception):
@@ -553,9 +598,24 @@ def wifi_device(rows=None):
     return None
 
 
+def wifi_radio_on():
+    """Connect with the radio off: on first, then the adapter up and a fresh
+    scan (a saved profile only connects to a network in the scan list)."""
+    if run(["nmcli", "radio", "wifi"], check=False).strip() == "enabled":
+        return
+    run(["nmcli", "radio", "wifi", "on"])
+    for _ in range(30):
+        dev = wifi_device()
+        if dev and not dev["state"].startswith("unavailable"):
+            break
+        time.sleep(0.5)
+    run(["nmcli", "dev", "wifi", "list", "--rescan", "yes"], check=False, timeout=45)
+
+
 def wifi_connect(ssid, password, hidden):
     if not ssid:
         raise ApiError("Enter the network name")
+    wifi_radio_on()
     existing = [s for s in saved_wifi() if s["ssid"] == ssid]
     if existing and not password:
         run(["nmcli", "con", "up", existing[0]["uuid"]], timeout=60)
@@ -1374,10 +1434,8 @@ def boot_journal():
     (systemd-analyze blame misses the initrd and is skewed by .device units)."""
     try:
         out = run(["journalctl", "-b", "-o", "json", "--no-pager",
-                   "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT,"
-                   "_SYSTEMD_UNIT,SYSLOG_IDENTIFIER",
-                   "_PID=1", "+", "_TRANSPORT=kernel", "+", f"_SYSTEMD_UNIT={CAGE_UNIT}",
-                   "+", "SYSLOG_IDENTIFIER=cage"], timeout=30)
+                   "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT",
+                   "_PID=1", "+", "_TRANSPORT=kernel"], timeout=30)
     except ApiError as e:
         return {"journal_error": str(e)}
     switch = None
@@ -1403,16 +1461,6 @@ def boot_journal():
                 if label not in seen and rx.search(msg):
                     seen.add(label)
                     marks.append({"t": t, "label": label})
-            continue
-        # "<prog>: milestone: <label>" lines in cage's unit; first of each.
-        # (Matched by identifier too: the PAM session may move cage's processes
-        # out of the unit's cgroup.)
-        if (e.get("_SYSTEMD_UNIT") == CAGE_UNIT or e.get("SYSLOG_IDENTIFIER") == "cage") \
-                and e.get("UNIT") is None:
-            label = msg.partition("milestone: ")[2].strip()
-            if label and label not in seen:
-                seen.add(label)
-                marks.append({"t": t, "label": label})
             continue
         if msg.startswith("Switching root") and switch is None:
             switch = t
@@ -1903,7 +1951,6 @@ def set_system_locale():
         tmp = LOCALE_CONF.with_name(".locale.conf.tmp")
         tmp.write_text(want)
         tmp.replace(LOCALE_CONF)
-        print(f"kioskd: system locale {lang}", flush=True)
     except OSError as e:
         print(f"kioskd: system locale {lang}: {e}", flush=True)
 
@@ -2147,8 +2194,6 @@ def set_splash_orientation(output, transform):
                                        capture_output=True, timeout=60)
                     if p.returncode != 0:
                         raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
-            print(f"kioskd: boot splash orientation: {want} (was {', '.join(sorted(present)) or 'unset'})",
-                  flush=True)
             splash_state(state="done")
         except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot splash orientation {want}: {e}", flush=True)
@@ -2286,8 +2331,6 @@ def set_splash_look(what=""):
                 if p.returncode != 0:
                     raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
             cleanup_overlays()
-            print(f"kioskd: boot screen look: accent {accent}, language {cfg.get('language')} "
-                  f"({len(etc_new) + len(stale)} in {overrides}, {len(boot)} on /boot)", flush=True)
             splash_state(look={"state": "done", "what": what, "error": None})
         except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot screen look: {e}", flush=True)
@@ -2658,13 +2701,11 @@ def set_grub_splash(output=None, transform=None):
 
 def write_grub_splash(key, w, h, transform, accent, lang):
     """`kioskd --grub-splash`: draw and write the files (set_grub_splash)."""
-    t0 = time.monotonic()
     d = json.loads(SPLASH_DATA.read_text())
     files = grub_splash_files(w, h, transform, d, accent, lang, key)
     if files is None:
         print(f"the frame doesn't fit {w}x{h}")
         return 1
-    written = []
     # The font first: console.cfg only uses it when it's there.
     for path, data in ((GRUB_FONT, files[1]), (GRUB_CONSOLE_CFG, files[0].encode())):
         try:
@@ -2676,9 +2717,6 @@ def write_grub_splash(key, w, h, transform, accent, lang):
         if p.returncode != 0:
             print(p.stderr.decode(errors="replace").strip() or f"write-boot {path}: {p.returncode}")
             return 1
-        written.append(path.name)
-    print(f"{w}x{h} turned {transform}, accent {accent}, language {lang}: "
-          f"{', '.join(written) or 'unchanged'} ({time.monotonic() - t0:.1f} s)")
     return 0
 
 
@@ -2735,7 +2773,7 @@ def power_off(action):
                     os.kill(pid, 9)
             except (OSError, ValueError):
                 pass
-        raise ApiError((p.stderr or p.stdout).strip() or f"systemctl {action}: {p.returncode}")
+        raise ApiError(cmd_error(p, "systemctl"))
 
 
 def touchscreens():
@@ -2789,8 +2827,6 @@ def r_touch_set(body, q):
         for dev in devices:
             run(["udevadm", "trigger", f"--action={action}", dev], check=False, timeout=10)
         run(["udevadm", "settle", "--timeout=5"], check=False, timeout=10)
-    print(f"kioskd: touch matrix for transform {transform}: {matrix}, "
-          f"{len(devices)} touchscreen(s) re-added", flush=True)
     return {"changed": True, "restart": False}
 
 
@@ -2951,7 +2987,6 @@ def reset_everything():
     run(["hostnamectl", "set-hostname", ""], check=False, timeout=20)
     run(["timedatectl", "set-timezone", DEFAULT_TIMEZONE], check=False, timeout=20)
     time.tzset()
-    print("kioskd: everything reset to the defaults, restarting the kiosk", flush=True)
     EVENTS.emit("config")
     EVENTS.emit("device")
     subprocess.run(["systemctl", "restart", CAGE_UNIT])
@@ -3056,7 +3091,6 @@ def main():
     # A language set before this version, or the image's default: in step.
     if mode() != "installer":
         set_system_locale()
-    print(f"kioskd: listening on http://{LISTEN[0]}:{LISTEN[1]} (mode: {mode()})", flush=True)
     srv.serve_forever()
 
 

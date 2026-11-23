@@ -17,9 +17,7 @@ fi
 
 # Only a NOCHANGE failure is benign.
 GROWPART_OUTPUT=$(growpart "${ROOT_DISK}" "${ROOT_PART_NUM}" 2>&1) || {
-    if [[ "${GROWPART_OUTPUT}" == NOCHANGE:* ]]; then
-        echo "note: growpart made no change to ${ROOT_DISK}${ROOT_PART_NUM} -- already at max size" >&2
-    else
+    if [[ "${GROWPART_OUTPUT}" != NOCHANGE:* ]]; then
         echo "${GROWPART_OUTPUT}" >&2
         exit 1
     fi

@@ -6,4 +6,3 @@ mem_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
 dev=$(zramctl --find --size "$((mem_kib / 2))KiB" --algorithm zstd)
 mkswap "$dev" >/dev/null
 swapon --priority 100 --discard "$dev"
-echo "zram swap: $dev, $((mem_kib / 2 / 1024)) MiB"

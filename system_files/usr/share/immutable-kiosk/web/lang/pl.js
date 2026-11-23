@@ -84,6 +84,19 @@ window.I18N_LANGS.pl = function (tr) {
         "Saved — connects with the remembered password.": "Zapisana — połączy się z zapamiętanym hasłem.",
         "Other password": "Inne hasło",
         "This can take up to a minute.": "To może potrwać do minuty.",
+        "Wi-Fi turns on first. This can take up to a minute.": "Najpierw włączy się Wi-Fi. To może potrwać do minuty.",
+        // kioskd: nmcli's errors in plain words (NM_ERRORS)
+        "Wrong password": "Błędne hasło",
+        "The password must be 8 to 63 characters (or 64 hex digits)":
+            "Hasło musi mieć od 8 do 63 znaków (albo 64 cyfry szesnastkowe)",
+        "The network is out of range": "Sieć jest poza zasięgiem",
+        "No IP address: the network's DHCP server didn't answer":
+            "Brak adresu IP: serwer DHCP sieci nie odpowiedział",
+        "The connection timed out": "Przekroczono czas łączenia",
+        "No cable connected": "Kabel nie jest podłączony",
+        "The network service isn't running": "Usługa sieciowa nie działa",
+        "No network adapter found": "Nie znaleziono karty sieciowej",
+        "Couldn't connect": "Nie udało się połączyć",
         "No saved networks.": "Brak zapisanych sieci.",
         "active": "aktywna",
         "Forget": "Zapomnij",
@@ -371,14 +384,6 @@ window.I18N_LANGS.pl = function (tr) {
         "What the boot waited for: file systems mounted (local-fs)":
             "Na co czekał start: do zamontowania systemów plików (local-fs)",
         "What the boot waited for: the kiosk starting (cage)": "Na co czekał start: do startu kiosku (cage)",
-        // kiosk-shell / kiosk-splash milestones
-        "kiosk-shell: GTK ready": "kiosk-shell: GTK gotowy",
-        "kiosk-shell: config and rotation": "kiosk-shell: konfiguracja i obrót",
-        "kiosk-shell: window sent": "kiosk-shell: okno wysłane",
-        "kiosk-shell: splash (window's first frame)": "kiosk-shell: ekran startowy (pierwsza klatka okna)",
-        "kiosk-shell: WebKit loaded": "kiosk-shell: WebKit wczytany",
-        "kiosk-shell: first page": "kiosk-shell: pierwsza strona",
-        "kiosk-splash: end": "kiosk-splash: koniec",
     });
 
     // Values inside sentences that are themselves translated.
@@ -411,6 +416,8 @@ window.I18N_LANGS.pl = function (tr) {
         [/^Disconnecting from (.+)…$/, "Rozłączanie z $1…"],
         [/^Connected to (.+)$/, "Połączono z $1"],
         [/^Couldn't connect to (.+)$/, "Nie udało się połączyć z $1"],
+        [/^Network “(.+)” not found$/, "Nie znaleziono sieci „$1”"],
+        [/^Couldn't connect: (.+)$/, "Nie udało się połączyć: $1"],
         [/^Removed (.+)$/, "Usunięto $1"],
 
         // ---- IP
@@ -460,7 +467,6 @@ window.I18N_LANGS.pl = function (tr) {
         [/^Failed to start: (.+)$/, "Nie uruchomiły się: $1"],
         [/^No boot timeline \(journalctl: (.+)\)$/, "Brak przebiegu startu (journalctl: $1)"],
         [/^Kiosk: cage restarted \(start #(\d+)\)$/, "Kiosk: cage uruchomiony ponownie ($1.)"],
-        [/^kiosk-splash: first frame \((.+)\)$/, "kiosk-splash: pierwsza klatka ($1)"],
         [/^(.+): the HMI isn't answering yet, the kiosk will switch to it by itself$/,
             "$1: HMI jeszcze nie odpowiada, kiosk przełączy się na nie samo"],
 

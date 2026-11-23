@@ -107,9 +107,6 @@ remove_leaves \
 dnf -y autoremove
 dnf -y clean all
 
-# Where the firmware space goes (for future pruning; informational).
-du -sh /usr/lib/firmware/* 2>/dev/null | sort -h | tail -15 || true
-
 # Removals take dependents with them: make sure nothing needed went.
 for pkg in bootc bootupd ostree skopeo podman kernel-core NetworkManager NetworkManager-wifi \
     cage wlr-randr python3 python3-gobject gtk4 webkitgtk6.0 mesa-dri-drivers \

@@ -364,7 +364,8 @@ async function loadWifi(rescan, live = false, scan = false) {
             <button class="btn danger hold" data-hold="1000">Forget</button></div>`;
         const go = li.querySelector(".go");
         go?.addEventListener("click", () => busy(go, async () => {
-            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Connecting to ${s.ssid}…`, sub: "This can take up to a minute." };
+            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Connecting to ${s.ssid}…`,
+                sub: w.enabled ? "This can take up to a minute." : "Wi-Fi turns on first. This can take up to a minute." };
             renderWifiStatus();
             try {
                 await api("/wifi/connect", { ssid: s.ssid, password: "" });
