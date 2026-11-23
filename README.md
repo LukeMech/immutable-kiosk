@@ -46,8 +46,7 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
   while the kernel starts, Plymouth takes over the same frame once i915 is
   up, and `kiosk-splash` in cage finishes the bar. Restart and power off
   the other way round: `kiosk-splash --shutdown` shows Plymouth's restart
-  screen in the kiosk the moment it's asked for, and puts the same frame in
-  the kernel's console framebuffer, which shows between cage and Plymouth.
+  screen in the kiosk the moment it's asked for; Plymouth's follows.
 - **On-screen keyboard** ([`osk.js`](system_files/usr/share/immutable-kiosk/web/osk.js)):
   Polish letters via the `ąę` key, numeric pad for number/IP fields, shadow
   DOM. Used by Settings and injected into the HMI page (switchable), so
