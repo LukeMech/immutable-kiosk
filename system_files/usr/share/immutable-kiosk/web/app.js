@@ -1044,6 +1044,29 @@ async function loadNotes() {
     renderUpdate();
 }
 
+const fmtGB = mb => `${(mb / 1024).toLocaleString(LOCALE(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB`;
+
+// Usage: refreshed every 2 s while System is on screen.
+async function loadUsage() {
+    let u;
+    try { u = await api("/usage"); } catch (_) { return; }
+    const bar = (id, pct) => {
+        $(id).style.width = `${Math.max(0, Math.min(100, pct || 0))}%`;
+        $(id).classList.toggle("high", pct >= 85);
+    };
+    const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
+    $("use-cpu").textContent = u.cpu == null ? "—" : _("{pct}% · {cores} cores", { pct: u.cpu, cores: u.cores });
+    bar("use-cpu-bar", u.cpu);
+    const mp = pct(u.mem.used_mb, u.mem.total_mb);
+    $("use-mem").textContent = `${fmtGB(u.mem.used_mb)} / ${fmtGB(u.mem.total_mb)} (${mp}%)`;
+    bar("use-mem-bar", mp);
+    const s = u.swap, sp = pct(s.used_mb, s.total_mb);
+    $("use-swap").textContent = !s.total_mb ? "none"
+        : s.zram ? _("{used} / {total} MB · {packed} MB in memory", { used: s.used_mb, total: s.total_mb, packed: s.zram.packed_mb })
+            : `${s.used_mb} / ${s.total_mb} MB`;
+    bar("use-swap-bar", sp);
+}
+
 async function loadSystem() {
     try { sys = await api("/system"); }
     catch (e) { sys = { available: false, error: e.message }; }
@@ -1054,6 +1077,7 @@ async function loadSystem() {
     loadTimezones();
     loadBoot();
     loadNotes();
+    loadUsage();
 }
 
 /* Static markup, only values change, so fields keep their input. */
@@ -1065,7 +1089,9 @@ async function refreshDevice() {
     $("dev-model").textContent = i.device.product || "—";
     $("dev-vendor").textContent = i.device.vendor || "—";
     $("dev-cpu").textContent = i.device.cpu || "—";
-    $("dev-mem").textContent = i.device.memory_mb ? `${(i.device.memory_mb / 1024).toLocaleString(LOCALE(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB` : "—";
+    $("dev-mem").textContent = i.device.memory_mb ? fmtGB(i.device.memory_mb) : "—";
+    $("dev-swap").textContent = i.device.zram
+        ? _("{size} (zram: compressed in memory)", { size: fmtGB(i.device.zram.size_mb) }) : "none";
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {
         h.value = i.hostname;
@@ -1258,6 +1284,7 @@ async function loadBoot() {
 }
 
 function initSystem() {
+    setInterval(() => { if (settingsVisible && currentTab === "system") loadUsage(); }, 2000);
     // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));

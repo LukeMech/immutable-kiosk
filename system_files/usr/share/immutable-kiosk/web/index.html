@@ -228,6 +228,14 @@
     <!-- SYSTEM -->
     <section id="tab-system" class="tab" hidden>
       <div class="card">
+        <h2>Usage</h2>
+        <dl class="kv usage">
+          <dt>Processor</dt><dd><span id="use-cpu">—</span><span class="meter"><i id="use-cpu-bar"></i></span></dd>
+          <dt>Memory</dt><dd><span id="use-mem">—</span><span class="meter"><i id="use-mem-bar"></i></span></dd>
+          <dt>Swap (zram)</dt><dd><span id="use-swap">—</span><span class="meter"><i id="use-swap-bar"></i></span></dd>
+        </dl>
+      </div>
+      <div class="card">
         <h2>System</h2>
         <dl class="kv" id="sys-info"></dl>
         <details class="log fold" id="sys-more" hidden>
@@ -253,25 +261,13 @@
             </button>
           </div>
           <div class="notes" id="upd-notes" hidden></div>
-          <div class="chan">
-            <div class="chan-head">Update channel</div>
-            <div class="seg" id="chan">
-              <button class="hold" data-hold="1500" data-v="stable">Stable</button>
-              <button class="hold" data-hold="1500" data-v="dev">Testing (dev)</button>
-            </div>
-            <p class="hint" id="chan-hint"></p>
-          </div>
         </div>
-        <div class="sep">
-          <h3>Custom system image</h3>
-          <p class="hint">Only images signed with the ghcr.io/lukemech key.</p>
-          <label for="sys-image">Image</label>
-          <div class="inline">
-            <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
-            <button class="btn hold" data-hold="1500" id="sys-switch">Switch</button>
-          </div>
-          <label for="sys-repo">Changelog (GitHub: owner/name)</label>
-          <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
+      </div>
+      <div class="card" id="power-card">
+        <h2>Power</h2>
+        <div class="actions col">
+          <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
+          <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
         </div>
       </div>
       <div class="card">
@@ -310,6 +306,7 @@
           <dt>Manufacturer</dt><dd id="dev-vendor">—</dd>
           <dt>Processor</dt><dd id="dev-cpu">—</dd>
           <dt>Memory</dt><dd id="dev-mem">—</dd>
+          <dt>Swap</dt><dd id="dev-swap">—</dd>
         </dl>
         <div class="sep">
           <h3>Boot time</h3>
@@ -350,11 +347,23 @@
         </div>
         <p class="hint" id="rb-hint" style="margin:14px 0 0"></p>
       </div>
-      <div class="card" id="power-card">
-        <h2>Power</h2>
-        <div class="actions col">
-          <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
-          <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
+      <div class="card" id="chan-card">
+        <h2>Update channel and image</h2>
+        <div class="seg" id="chan">
+          <button class="hold" data-hold="1500" data-v="stable">Stable</button>
+          <button class="hold" data-hold="1500" data-v="dev">Testing (dev)</button>
+        </div>
+        <p class="hint" id="chan-hint"></p>
+        <div class="sep">
+          <h3>Custom system image</h3>
+          <p class="hint">Only images signed with the ghcr.io/lukemech key.</p>
+          <label for="sys-image">Image</label>
+          <div class="inline">
+            <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
+            <button class="btn hold" data-hold="1500" id="sys-switch">Switch</button>
+          </div>
+          <label for="sys-repo">Changelog (GitHub: owner/name)</label>
+          <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
         </div>
       </div>
     </section>

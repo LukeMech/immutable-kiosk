@@ -2071,14 +2071,69 @@ def cpu_model():
     return ""
 
 
-def memory_mb():
+def meminfo():
+    """/proc/meminfo in kB ({} if unreadable)."""
+    vals = {}
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemTotal:"):
-                return int(line.split()[1]) // 1024
+            k, _, v = line.partition(":")
+            if v.split():
+                vals[k] = int(v.split()[0])
     except (OSError, ValueError):
         pass
-    return None
+    return vals
+
+
+def memory_mb():
+    kb = meminfo().get("MemTotal")
+    return kb // 1024 if kb else None
+
+
+def zram_swap():
+    """The zram swap (immutable-kiosk-zram.service): {size_mb, packed_mb}, or
+    None. packed: what the swapped-out pages take in RAM, compressed."""
+    try:
+        if "/dev/zram0" not in Path("/proc/swaps").read_text():
+            return None
+        size = int(Path("/sys/block/zram0/disksize").read_text())
+        # mm_stat: orig_data_size compr_data_size mem_used_total ...
+        packed = int(Path("/sys/block/zram0/mm_stat").read_text().split()[2])
+        return {"size_mb": size // 2**20, "packed_mb": packed // 2**20}
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+_cpu = {"sample": None, "busy": None, "at": 0.0}
+
+
+def cpu_busy():
+    """All cores' use (%) since the previous sample (taken at most every
+    second; the first one: since boot)."""
+    now = time.monotonic()
+    if _cpu["busy"] is not None and now - _cpu["at"] < 1:
+        return _cpu["busy"]
+    try:
+        f = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
+    except (OSError, ValueError, IndexError):
+        return None
+    total, idle = sum(f), f[3] + f[4]  # idle + iowait
+    prev = _cpu["sample"] or (0, 0)
+    dt = total - prev[0]
+    _cpu.update(sample=(total, idle), at=now,
+                busy=round(100 * (1 - (idle - prev[1]) / dt)) if dt > 0 else _cpu["busy"])
+    return _cpu["busy"]
+
+
+def r_usage(body, q):
+    """Settings > System > Usage, every few seconds while it's shown."""
+    m = meminfo()
+    mb = lambda k: m.get(k, 0) // 1024  # noqa: E731
+    return {
+        "cpu": cpu_busy(),
+        "cores": os.cpu_count(),
+        "mem": {"total_mb": mb("MemTotal"), "used_mb": mb("MemTotal") - mb("MemAvailable")},
+        "swap": {"total_mb": mb("SwapTotal"), "used_mb": mb("SwapTotal") - mb("SwapFree"), "zram": zram_swap()},
+    }
 
 
 # Component versions for Settings > System; fixed per image, read once.
@@ -2107,7 +2162,7 @@ def r_info(body, q):
         "mode": mode(),
         "hostname": socket.gethostname(),
         "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor"),
-                   "cpu": cpu_model(), "memory_mb": memory_mb()},
+                   "cpu": cpu_model(), "memory_mb": memory_mb(), "zram": zram_swap()},
         "power": power_state(),
         "net": NET_BRIEF(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -3187,6 +3242,7 @@ def r_installer_start(body, q):
 
 ROUTES = {
     ("GET", "/api/info"): r_info,
+    ("GET", "/api/usage"): r_usage,
     ("GET", "/api/config"): r_config_get,
     ("POST", "/api/config"): r_config_set,
     ("POST", "/api/hmi/test"): r_hmi_test,
