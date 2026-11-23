@@ -377,11 +377,14 @@ def write_config(cfg):
     tmp.replace(CONFIG_FILE)
 
 
-# Settings' tabs: what each one's reset puts back to the defaults.
+# Settings' tabs: what each one's reset puts back to the defaults (every
+# DEFAULT_CONFIG key is in one of them: reset_everything is all of them).
 RESET_KEYS = {
     "hmi": ("hmi", "osk_in_hmi", "accept_self_signed", "zoom", "retry_seconds"),
     "screen": ("rotation", "scale", "settings_corner", "accent", "brightness"),
+    "system": ("language", "releases_repo"),
 }
+RESET_PARTS = ("hmi", "network", "screen", "system")
 
 
 # ---------------------------------------------------------------- nmcli
@@ -3066,40 +3069,6 @@ def r_system_rollback(body, q):
 DEFAULT_TIMEZONE = "Europe/Warsaw"  # the image's (build_files/05-base.sh)
 
 
-def reset_everything():
-    """Factory reset, then restart the kiosk: kioskd config, HMI browser data,
-    kiosk-shell cache, all NM connections, hostname and time zone.
-    Runs in a thread after the reply (request comes from inside cage)."""
-    import pwd
-    import shutil
-    time.sleep(1.0)
-    try:
-        CONFIG_FILE.unlink()
-    except FileNotFoundError:
-        pass
-    try:
-        brightness_set(100)  # the default leaves the backlight alone: full
-    except (ApiError, OSError, ValueError):
-        pass
-    try:
-        home = Path(pwd.getpwnam("kiosk").pw_dir)
-    except KeyError:
-        home = None
-    if home:
-        for d in (home / ".local/share/immutable-kiosk/hmi", home / ".cache/immutable-kiosk"):
-            shutil.rmtree(d, ignore_errors=True)
-    try:
-        forget_networks()
-    except ApiError as e:
-        print(f"kioskd: reset: network: {e}", flush=True)
-    run(["hostnamectl", "set-hostname", ""], check=False, timeout=20)
-    run(["timedatectl", "set-timezone", DEFAULT_TIMEZONE], check=False, timeout=20)
-    time.tzset()
-    EVENTS.emit("config")
-    EVENTS.emit("device")
-    subprocess.run(["systemctl", "restart", CAGE_UNIT])
-
-
 def forget_networks():
     """Every saved connection (Wi-Fi networks, IP settings) deleted; Wi-Fi on.
     NetworkManager makes a fresh DHCP one for a plugged-in cable by itself."""
@@ -3111,19 +3080,15 @@ def forget_networks():
     run(["nmcli", "radio", "wifi", "on"], check=False)
 
 
-def r_settings_reset(body, q):
-    """part: "hmi" or "screen" (that tab's settings, RESET_KEYS), "network"
-    (forget_networks), "all" (factory reset, reset_everything)."""
-    part = body.get("part", "all")
-    if part == "all":
-        threading.Thread(target=reset_everything, daemon=True).start()
-        return {"ok": True}
+def reset_part(part):
+    """One Settings tab back to the defaults: "network" forgets every
+    connection; the others reset their RESET_KEYS, and their side effects:
+    screen the backlight (full) and the boot screen's color, system the
+    language (system locale, boot screen), host name and time zone."""
     if part == "network":
         forget_networks()
         nm_changed()
-        return {"ok": True}
-    if part not in RESET_KEYS:
-        raise ApiError("Nothing to reset")
+        return
     cfg = load_config()
     for k in RESET_KEYS[part]:
         cfg[k] = json.loads(json.dumps(DEFAULT_CONFIG[k]))
@@ -3133,8 +3098,49 @@ def r_settings_reset(body, q):
             brightness_set(100)  # the default leaves the backlight alone: full
         except (ApiError, OSError, ValueError):
             pass
-        threading.Thread(target=lambda: (set_splash_look("accent"), set_grub_splash()), daemon=True).start()
+    if part in ("screen", "system"):
+        what = "accent" if part == "screen" else "language"
+        threading.Thread(target=lambda: (set_splash_look(what), set_grub_splash()), daemon=True).start()
+    if part == "system":
+        set_system_locale()
+        run(["hostnamectl", "set-hostname", ""], check=False, timeout=20)
+        run(["timedatectl", "set-timezone", DEFAULT_TIMEZONE], check=False, timeout=20)
+        time.tzset()
+        EVENTS.emit("device")
     EVENTS.emit("config")
+
+
+def reset_everything():
+    """Factory reset: every tab's reset (reset_part), the HMI's browser data
+    (logins, cache) and kiosk-shell's cache, then the kiosk restarts.
+    Runs in a thread after the reply (request comes from inside cage)."""
+    import pwd
+    import shutil
+    time.sleep(1.0)
+    for part in RESET_PARTS:
+        try:
+            reset_part(part)
+        except (ApiError, OSError) as e:
+            print(f"kioskd: reset {part}: {e}", flush=True)
+    try:
+        home = Path(pwd.getpwnam("kiosk").pw_dir)
+    except KeyError:
+        home = None
+    if home:
+        for d in (home / ".local/share/immutable-kiosk/hmi", home / ".cache/immutable-kiosk"):
+            shutil.rmtree(d, ignore_errors=True)
+    subprocess.run(["systemctl", "restart", CAGE_UNIT])
+
+
+def r_settings_reset(body, q):
+    """part: a tab (RESET_PARTS, reset_part) or "all" (reset_everything)."""
+    part = body.get("part", "all")
+    if part == "all":
+        threading.Thread(target=reset_everything, daemon=True).start()
+        return {"ok": True}
+    if part not in RESET_PARTS:
+        raise ApiError("Nothing to reset")
+    reset_part(part)
     return effective_config()
 
 
