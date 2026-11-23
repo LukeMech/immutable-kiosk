@@ -1064,12 +1064,13 @@ async function loadUsage() {
     const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
     const keep = 30, hist = u.history || [];
     const s = u.swap;
-    const num = (v, d) => v.toLocaleString(LOCALE(), { minimumFractionDigits: d, maximumFractionDigits: d });
     const temps = hist.map(h => h.temp_c).filter(v => v != null);
+    const cpus = hist.map(h => h.cpu).filter(v => v != null);
     // Two one-line rows under the number (the columns line up across tiles).
     const tiles = [
         { key: "cpu", label: "Processor", now: u.cpu, unit: "%",
-          rows: [_("{cores} cores", { cores: u.cores }), _("load {load}", { load: num(u.load ?? 0, 2) })] },
+          rows: [_("{cores} cores", { cores: u.cores }), cpus.length
+                 ? _("average {pct}% (last minute)", { pct: Math.round(cpus.reduce((a, b) => a + b, 0) / cpus.length) }) : ""] },
         { key: "temp_c", label: "Temperature", now: u.temp_c, unit: " °C",
           rows: [temps.length ? _("highest {t} °C", { t: Math.max(...temps) }) : "", ""] },
         { key: "mem", label: "Memory", now: pct(u.mem.used_mb, u.mem.total_mb), unit: "%",

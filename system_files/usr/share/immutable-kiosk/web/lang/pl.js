@@ -253,7 +253,7 @@ window.I18N_LANGS.pl = function (tr) {
         "Temperature": "Temperatura",
         "{cores} cores": v => `${v.cores} ${v.cores === 1 ? "rdzeń"
             : [2, 3, 4].includes(v.cores % 10) && ![12, 13, 14].includes(v.cores % 100) ? "rdzenie" : "rdzeni"}`,
-        "load {load}": "obciążenie {load}",
+        "average {pct}% (last minute)": "średnio {pct}% (minuta)",
         "Usage details": "Szczegóły wykorzystania",
         "High usage ({at}% / {at} °C and up)": "Wysokie obciążenie (od {at}% / {at} °C)",
         "None so far.": "Jak dotąd brak.",

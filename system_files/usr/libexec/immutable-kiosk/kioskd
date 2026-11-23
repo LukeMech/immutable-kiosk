@@ -2165,7 +2165,6 @@ def usage_sample():
     return {
         "cpu": cpu_busy(),
         "cores": os.cpu_count(),
-        "load": round(os.getloadavg()[0], 2),
         "temp_c": cpu_temp(),
         "mem": {"total_mb": mb("MemTotal"), "used_mb": mb("MemTotal") - mb("MemAvailable")},
         "swap": {"total_mb": mb("SwapTotal"), "used_mb": mb("SwapTotal") - mb("SwapFree"), "zram": zram_swap()},
