@@ -1332,7 +1332,7 @@ def changelog():
 # ---------------------------------------------------------------- boot timing
 
 # CLOCK_MONOTONIC time of the first HMI page load (POST /api/boot/hmi).
-HMI_SHOWN = {"at": None}
+HMI_SHOWN = {"at": None, "unconfigured": False}
 BOOT_COUNTER = "/usr/libexec/immutable-kiosk/boot-counter"
 BOOT_FALLBACK_NOTE = STATE_DIR / "boot-fallback.json"
 
@@ -1532,6 +1532,7 @@ def boot_timing():
         if out.get("total") and "journal_error" not in out:
             BOOT_CACHE["done"] = dict(out)
     out["hmi_shown"] = HMI_SHOWN["at"]
+    out["hmi_unconfigured"] = HMI_SHOWN["unconfigured"]
     out["uptime"] = time.monotonic()
     return out
 
@@ -2829,10 +2830,14 @@ def r_boot(body, q):
 
 
 def r_boot_hmi(body, q):
-    if HMI_SHOWN["at"] is None:
-        HMI_SHOWN["at"] = time.monotonic()
+    # {"unconfigured": true}: no HMI address at boot, nothing to time.
+    if HMI_SHOWN["at"] is None and not HMI_SHOWN["unconfigured"]:
+        if body.get("unconfigured"):
+            HMI_SHOWN["unconfigured"] = True
+        else:
+            HMI_SHOWN["at"] = time.monotonic()
         EVENTS.emit("boot")  # the boot card's last point
-    return {"hmi_shown": HMI_SHOWN["at"]}
+    return {"hmi_shown": HMI_SHOWN["at"], "hmi_unconfigured": HMI_SHOWN["unconfigured"]}
 
 
 def r_boot_ok(body, q):

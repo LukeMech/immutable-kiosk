@@ -1151,6 +1151,9 @@ async function loadBoot() {
     if (b.hmi_shown != null) {
         setStatus("boot-st", "", ICONS.clock, `HMI after ${secs(before + b.hmi_shown)} from power-on`,
                   `system ready after ${secs(ready)}, ${secs(before)} of it before the kernel started (UEFI + GRUB)`);
+    } else if (b.total && b.hmi_unconfigured) {
+        setStatus("boot-st", "", ICONS.clock, `System ready after ${secs(ready)}`,
+                  "No HMI address at boot: HMI time not measured");
     } else if (b.total) {
         setStatus("boot-st", "", ICONS.clock, `System ready after ${secs(ready)}`,
                   "The HMI hasn't shown yet (no address, or the server isn't answering)");

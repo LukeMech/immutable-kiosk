@@ -341,6 +341,11 @@ class KioskShell(Gtk.Application):
             self.recovery_corner = self.make_recovery_corner()
             self.overlay.add_overlay(self.recovery_corner)
             self.apply_hmi_config(force_load=True)
+            if not self.cfg.get("hmi_url"):
+                # No address at boot: an HMI set up later says nothing about
+                # boot time, so the boot timing stops here.
+                self.boot_reported = True
+                threading.Thread(target=self.report_hmi_shown, args=(False,), daemon=True).start()
         self.apply_scale()
 
         # The splash stays until the first page is rendered, at most 30 s.
@@ -716,9 +721,9 @@ class KioskShell(Gtk.Application):
                 threading.Thread(target=self.report_hmi_shown, daemon=True).start()
 
     @staticmethod
-    def report_hmi_shown():
+    def report_hmi_shown(configured=True):
         try:
-            api_post("/api/boot/hmi", {}, timeout=5)
+            api_post("/api/boot/hmi", {} if configured else {"unconfigured": True}, timeout=5)
         except (OSError, ValueError) as e:
             log("boot timing:", e)
 

@@ -220,6 +220,8 @@ window.I18N_LANGS.pl = function (tr) {
         "Loading boot time…": "Wczytywanie czasu uruchamiania…",
         "Reading this boot's journal": "Czytam dziennik tego startu",
         "No boot data": "Brak danych o starcie",
+        "No HMI address at boot: HMI time not measured":
+            "Brak adresu HMI przy starcie: czas do HMI nie jest mierzony",
         "The HMI hasn't shown yet (no address, or the server isn't answering)":
             "HMI jeszcze się nie wyświetliło (brak adresu albo serwer nie odpowiada)",
         "Still booting": "Start jeszcze trwa",
