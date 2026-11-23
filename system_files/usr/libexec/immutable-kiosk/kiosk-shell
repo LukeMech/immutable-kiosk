@@ -380,18 +380,42 @@ class KioskShell(Gtk.Application):
 
     def listen_events(self):
         """kioskd's live events: a network change retries an unreachable HMI
-        at once. (The stream is reopened after a minute without events.)"""
+        at once; "hmi" is kioskd's check of it (hmi_watch). (The stream is
+        reopened after a minute without events.)"""
         while True:
             try:
                 req = urllib.request.Request(API + "/api/events")
                 with urllib.request.urlopen(req, timeout=60) as r:
                     for raw in r:
                         line = raw.decode(errors="replace").strip()
-                        if line.startswith("data:") and "net" in json.loads(line[5:]):
+                        if not line.startswith("data:"):
+                            continue
+                        topics = json.loads(line[5:])
+                        if "net" in topics:
                             GLib.idle_add(self.on_net_change)
+                        if "hmi" in topics:
+                            try:
+                                st = api_get("/api/hmi/state")
+                            except (OSError, ValueError):
+                                continue
+                            GLib.idle_add(self.on_hmi_state, st)
             except (OSError, ValueError):
                 pass
             GLib.usleep(3_000_000)
+
+    def on_hmi_state(self, st):
+        """The HMI stopped answering while on screen: Settings, waiting for it
+        again (the page would only be dead). Answering again: loaded afresh,
+        and shown by itself once it has (on_hmi_load_changed). Settings
+        opened on purpose stays."""
+        if not self.hmi or not self.hmi_started or st.get("url") != self.cfg.get("hmi_url"):
+            return GLib.SOURCE_REMOVE
+        if st.get("ok") is False and self.stack.get_visible_child_name() == "hmi":
+            self.show("settings")
+            self.set_waiting(True)
+        elif st.get("ok") and (self.waiting_for_hmi or self.hmi_error):
+            self.load_hmi()
+        return GLib.SOURCE_REMOVE
 
     def on_net_change(self):
         if self.hmi and self.hmi_error and self.retry_source:

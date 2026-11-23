@@ -2424,10 +2424,17 @@ def hmi_probe(url):
 
 def hmi_watch():
     """Every HMI_EVERY_S, and at once after a change of address or network
-    (HMI_WAKE)."""
+    (HMI_WAKE). "Not answering" only after two failed checks in a row: a
+    blip doesn't take the kiosk out of the HMI (kiosk-shell on_hmi_state)."""
+    failed = 0
     while True:
         url = hmi_url(load_config()["hmi"])
         ok, message = hmi_probe(url) if url else (None, "")
+        failed = failed + 1 if ok is False and url == HMI_STATE["url"] else 0
+        if failed == 1 and HMI_STATE["ok"]:
+            HMI_WAKE.wait(1)  # once more, soon, before saying so
+            HMI_WAKE.clear()
+            continue
         changed = (url, ok) != (HMI_STATE["url"], HMI_STATE["ok"])
         HMI_STATE.update(url=url, ok=ok, message=message, checked=time.time())
         if changed:
