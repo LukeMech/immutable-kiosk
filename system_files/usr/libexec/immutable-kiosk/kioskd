@@ -2810,7 +2810,7 @@ def job_rollback(job):
     job.result = bootc_status()
     job.step("reboot", "The screen goes dark for a moment, then the previous version starts")
     time.sleep(2)  # the page gets to show this step
-    run(["systemctl", "reboot"], timeout=30)
+    run(["systemctl", "reboot", "--no-wall"], timeout=30)
     # The reboot should have ended this process.
     time.sleep(120)
     raise RuntimeError("The system didn't restart — the previous version will start on the next boot")
@@ -2868,8 +2868,10 @@ def r_power(body, q):
     action = body.get("action")
     if action not in ("reboot", "poweroff"):
         raise ApiError("Unknown action")
-    # Reply first, act a moment later.
-    threading.Timer(1.0, subprocess.run, args=(["systemctl", action],)).start()
+    # Reply first, act a moment later. --no-wall: systemd's "The system will
+    # ... now!" goes to every logged-in terminal -- tty1 is cage's session,
+    # so it showed on the screen before the shutdown screen.
+    threading.Timer(1.0, subprocess.run, args=(["systemctl", action, "--no-wall"],)).start()
     return {"ok": True}
 
 
