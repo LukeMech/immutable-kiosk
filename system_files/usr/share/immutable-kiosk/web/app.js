@@ -146,9 +146,6 @@ window.kioskShown = () => {
     if (cfg && cfg.mode !== "installer") { showTab(currentTab); refreshDevice(); }
 };
 window.kioskHidden = () => { settingsVisible = false; };
-// kiosk-shell: HMI unreachable at start; Settings shows until it answers.
-let hmiWaiting = false;
-window.kioskWaiting = on => { hmiWaiting = !!on; renderNetbar(); };
 
 /* ---------- HMI */
 let hmiDraft = null;
@@ -1222,18 +1219,10 @@ function renderBar(i) {
     renderNetbar();
 }
 
-// Wi-Fi signal + name or Ethernet; while waiting for the HMI, what it waits for.
+// Wi-Fi signal + name, or Ethernet.
 let barNet = null;
 function renderNetbar() {
-    const n = barNet, nb = $("netbar"), hw = $("hmiwait");
-    // Waiting for the HMI: a spinner after the clock, the network where it was.
-    hw.hidden = !hmiWaiting;
-    if (hmiWaiting) {
-        hw.innerHTML = ICONS.busy;
-        hw.title = n ? _("{name}: the HMI isn't answering yet, the kiosk will switch to it by itself", { name: n.name })
-            : "The kiosk switches to the HMI once there's a network and the HMI answers";
-        hw.setAttribute("aria-label", n ? "Connecting to HMI…" : "Waiting for network…");
-    }
+    const n = barNet, nb = $("netbar");
     nb.hidden = !n;
     if (n) {
         const icon = n.type === "wifi" ? wifiIcon(n.signal != null ? sigLevel(n.signal) : 3) : ICONS.ethernet;

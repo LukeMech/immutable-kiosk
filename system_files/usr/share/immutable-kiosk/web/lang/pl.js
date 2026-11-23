@@ -286,10 +286,6 @@ window.I18N_LANGS.pl = function (tr) {
         "Kernel": "Jądro",
         "Services": "Usługi",
         "HMI visible": "HMI widoczne",
-        "Connecting to HMI…": "Łączenie z HMI…",
-        "Waiting for network…": "Czekam na sieć…",
-        "The kiosk switches to the HMI once there's a network and the HMI answers":
-            "Kiosk przełączy się na HMI, gdy będzie sieć i HMI odpowie",
 
         // ---- System tab: recovery, power
         "Recovery": "Odzyskiwanie",
@@ -478,8 +474,6 @@ window.I18N_LANGS.pl = function (tr) {
         "Removed {name}": "Usunięto {name}",
         "Network “{ssid}” not found": "Nie znaleziono sieci „{ssid}”",
         "Couldn't connect: {reason}": "Nie udało się połączyć: {reason}",
-        "{name}: the HMI isn't answering yet, the kiosk will switch to it by itself":
-            "{name}: HMI jeszcze nie odpowiada, kiosk przełączy się na nie samo",
 
         // ---- IP
         "IP address · {kind}": "Adres IP · {kind}",

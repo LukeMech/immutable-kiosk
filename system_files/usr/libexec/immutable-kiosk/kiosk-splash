@@ -5,7 +5,8 @@ cage clears the screen when it takes over from the boot splash, and
 kiosk-shell needs seconds before its first frame. This client (started by
 kiosk-session) continues the boot splash's progress bar where it stopped
 ("Starting the kiosk…"), creeping on until kiosk-shell's first page ends
-it (SIGTERM).
+it (SIGTERM). SIGUSR1 (kiosk-shell waits for the HMI): "Connecting…" and
+the restart screen's loading animation, with no time limit.
 
 `kiosk-splash --shutdown reboot|shutdown|auto`: the restart / power-off
 screen, plymouth's loading animation in the same pixels. kioskd starts it
@@ -146,6 +147,7 @@ class Splash:
         self.t0 = None                # the first frame drawn: the creep starts then
         self.last_fw = None           # the fill (width, or segment) in each buffer
         self.track_rows = None        # loading: the bar's rows, track only
+        self.connect_asked = False    # SIGUSR1: switch to "Connecting…"
 
     # -- wire
     def new(self, handler=None):
@@ -443,7 +445,21 @@ class Splash:
         end = time.monotonic() + give_up
         while time.monotonic() < end:
             self.dispatch(timeout=1.0)
+            if self.connect_asked and self.mode != "connecting":
+                self.to_connecting()
+                end = math.inf
         log(f"still up after {give_up} s, leaving")
+
+    def to_connecting(self):
+        """'Connecting…' and the moving segment, from a black screen."""
+        self.bar = load_bar("connecting")
+        self.mode, self.t0, self.track_rows = "connecting", None, None
+        if self.buffers:
+            size = self.width * self.height * 4
+            for buf in range(2):
+                self.mm[buf * size:(buf + 1) * size] = BG * (self.width * self.height)
+            self.draw(full=True)
+            self.flush()
 
 
 # ---- the shutdown screen
@@ -536,8 +552,10 @@ def main():
         sys.exit(shutdown_main(sys.argv[2] if len(sys.argv) > 2 else "auto"))
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    splash = Splash()
+    signal.signal(signal.SIGUSR1, lambda *_: setattr(splash, "connect_asked", True))
     try:
-        Splash().run()
+        splash.run()
     except (OSError, ValueError, RuntimeError, KeyError, ConnectionError) as e:
         # Never worth more than a log line: kiosk-shell comes up regardless.
         log(e)

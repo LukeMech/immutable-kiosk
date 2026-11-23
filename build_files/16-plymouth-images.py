@@ -77,6 +77,8 @@ STAGES = [
 OTHER = {"shutdown": ("Shutting down…", "Wyłączanie…"),
          "reboot": ("Restarting…", "Ponowne uruchamianie…"),
          "updates": ("Installing the update…", "Instalowanie aktualizacji…")}
+# kiosk-splash only (no plymouth image): waiting for the HMI at start.
+CONNECTING = ("Connecting…", "Łączę…")
 HANDOVER = STAGES[-1][0]
 END, TAU = 0.97, 6.0            # kiosk-splash: creeps towards END, time constant s
 
@@ -161,7 +163,10 @@ for li, lang in enumerate(LANGS):
         labels[lang, f"label-{i}"] = label(texts[li])
     for mode, texts in OTHER.items():
         labels[lang, f"label-{mode}"] = label(texts[li])
+    labels[lang, "label-connecting"] = label(CONNECTING[li])
 for (lang, name), (w, h, cov) in labels.items():
+    if name == "label-connecting":
+        continue  # splash-bar.json only
     prefix = "" if lang == "en" else f"{lang}-"
     png(f"{THEME}/{prefix}{name}.png", w, h, [(*TEXT, round(255 * a)) for a in cov])
 
@@ -370,10 +375,11 @@ with open(DATA, "w") as f:
         # GRUB's frame (kioskd): the first stage's label.
         "boot_labels": {lang: {"w": w, "h": h, "a": alphas(cov)}
                         for (lang, name), (w, h, cov) in labels.items() if name == "label-0"},
-        # kiosk-splash --shutdown: plymouth's restart / power-off labels.
+        # kiosk-splash --shutdown: plymouth's restart / power-off labels;
+        # and "Connecting…" while kiosk-shell waits for the HMI (SIGUSR1).
         "mode_labels": {mode: {lang: {"w": w, "h": h, "a": alphas(cov)}
                                for (lang, name), (w, h, cov) in labels.items() if name == f"label-{mode}"}
-                        for mode in ("reboot", "shutdown")},
+                        for mode in ("reboot", "shutdown", "connecting")},
         "accents": {k: list(v) for k, v in ACCENTS.items()}, "default_accent": "blue",
         "overrides": OVERRIDES,
         "start": HANDOVER, "end": END, "tau": TAU,
