@@ -227,6 +227,13 @@
 
     <!-- SYSTEM -->
     <section id="tab-system" class="tab" hidden>
+      <div class="card" id="power-card">
+        <h2>Power</h2>
+        <div class="actions col">
+          <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
+          <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
+        </div>
+      </div>
       <div class="card">
         <h2>System</h2>
         <dl class="kv" id="sys-info"></dl>
@@ -265,13 +272,6 @@
           <ul class="peaks" id="usage-peaks"></ul>
           <div class="actions"><button class="btn hold" data-hold="1500" id="peaks-clear">Hold: clear the list</button></div>
         </details>
-      </div>
-      <div class="card" id="power-card">
-        <h2>Power</h2>
-        <div class="actions col">
-          <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
-          <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
-        </div>
       </div>
       <div class="card">
         <h2>Language and region</h2>
