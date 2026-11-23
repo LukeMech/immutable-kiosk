@@ -924,6 +924,7 @@ def nm_signal_wanted(line):
 def nm_changed():
     for cache in (WIFI, NET_BRIEF, NETWORK):
         cache.invalidate()
+    HMI_WAKE.set()  # the HMI may have come or gone with the network
 
 
 def start_watchers():
@@ -2362,6 +2363,8 @@ def r_config_get(body, q):
 def r_config_set(body, q):
     cfg = save_config(body)
     EVENTS.emit("config")
+    if "hmi" in body:
+        HMI_WAKE.set()
     def look(what):
         set_splash_look(what)
         set_grub_splash()
@@ -2373,23 +2376,68 @@ def r_config_set(body, q):
     return cfg
 
 
-def r_hmi_test(body, q):
-    """Can the HMI server's port be reached at all? (TCP connect, 3 s.)"""
-    host = str(body.get("host", "")).strip().strip("[]")
-    port = parse_port(body.get("port"))
-    if port is None:
-        port = 80 if body.get("scheme") == "http" else 443
-    if not host:
-        raise ApiError("Enter the HMI address")
-    t0 = time.time()
+# ---- Is the HMI there? Checked in the background (hmi_watch): Settings shows
+# it and greys out "Back to HMI" while it isn't. The same test as
+# kiosk-shell's before it loads the HMI: an HTTP(S) answer from the server
+# (any certificate: only whether it's there), a gateway error (502-504: the
+# proxy is up, the HMI behind it isn't) counting as none.
+HMI_STATE = {"url": "", "ok": None, "message": "", "checked": None}
+HMI_WAKE = threading.Event()
+HMI_EVERY_S = 3
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):
+        return None  # a redirect (e.g. to the login page) is an answer too
+
+
+def hmi_probe(url):
+    """(ok, message) for the HMI at url."""
+    import http.client
+    import ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect,
+                                         urllib.request.HTTPSHandler(context=ctx))
+    t0 = time.monotonic()
     try:
-        with socket.create_connection((host, port), timeout=3):
-            pass
-    except OSError as e:
-        return {"ok": False, "message": Msg("Can't connect to {host}:{port} ({reason})",
-                                            host=host, port=port, reason=e.strerror or str(e))}
-    return {"ok": True, "message": Msg("Port {port} on {host} answers ({ms} ms)",
-                                       port=port, host=host, ms=f"{(time.time() - t0) * 1000:.0f}")}
+        with opener.open(urllib.request.Request(url, headers={"Cache-Control": "no-cache"}), timeout=5) as r:
+            status = r.status
+    except urllib.error.HTTPError as e:
+        status = e.code
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        err = e.reason if isinstance(e, urllib.error.URLError) and isinstance(e.reason, BaseException) else e
+        if isinstance(err, socket.gaierror):
+            return False, "The address isn't known on this network"
+        if isinstance(err, (socket.timeout, TimeoutError)):
+            return False, "The server doesn't answer"
+        if isinstance(err, ConnectionRefusedError):
+            return False, "The server refuses the connection (wrong port, or the HMI isn't running)"
+        if isinstance(err, OSError) and err.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN):
+            return False, "No route to the server: is the kiosk on its network?"
+        return False, "The server doesn't answer properly"
+    if status in (502, 503, 504):
+        return False, Msg("The server answers {status}: the HMI behind it isn't running", status=status)
+    return True, Msg("The HMI answers ({ms} ms)", ms=round((time.monotonic() - t0) * 1000))
+
+
+def hmi_watch():
+    """Every HMI_EVERY_S, and at once after a change of address or network
+    (HMI_WAKE)."""
+    while True:
+        url = hmi_url(load_config()["hmi"])
+        ok, message = hmi_probe(url) if url else (None, "")
+        changed = (url, ok) != (HMI_STATE["url"], HMI_STATE["ok"])
+        HMI_STATE.update(url=url, ok=ok, message=message, checked=time.time())
+        if changed:
+            EVENTS.emit("hmi")
+        HMI_WAKE.wait(HMI_EVERY_S)
+        HMI_WAKE.clear()
+
+
+def r_hmi_state(body, q):
+    return HMI_STATE
 
 
 def r_wifi(body, q):
@@ -3318,6 +3366,7 @@ def reset_part(part):
     for k in RESET_KEYS[part]:
         cfg[k] = json.loads(json.dumps(DEFAULT_CONFIG[k]))
     write_config(cfg)
+    HMI_WAKE.set()
     if part == "screen":
         try:
             brightness_set(100)  # the default leaves the backlight alone: full
@@ -3416,7 +3465,7 @@ ROUTES = {
     ("POST", "/api/usage/peaks/clear"): r_usage_peaks_clear,
     ("GET", "/api/config"): r_config_get,
     ("POST", "/api/config"): r_config_set,
-    ("POST", "/api/hmi/test"): r_hmi_test,
+    ("GET", "/api/hmi/state"): r_hmi_state,
     ("GET", "/api/wifi"): r_wifi,
     ("POST", "/api/wifi/connect"): r_wifi_connect,
     ("POST", "/api/wifi/forget"): r_wifi_forget,
@@ -3466,6 +3515,7 @@ def main():
     if mode() != "installer":
         set_system_locale()
         threading.Thread(target=usage_loop, daemon=True).start()
+        threading.Thread(target=hmi_watch, daemon=True).start()
     srv.serve_forever()
 
 

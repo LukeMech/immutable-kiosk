@@ -153,7 +153,8 @@ window.kioskWaiting = on => { hmiWaiting = !!on; renderNetbar(); };
 /* ---------- HMI */
 let hmiDraft = null;
 
-let hmiTest = null;  // last "Test connection": {url, busy} or {url, ok, message}
+// kioskd's background check of the saved address (hmi_watch).
+let hmiState = null;  // {url, ok, message}
 
 // Same rules as kioskd's hmi_url(), so a saved address compares equal.
 function hmiDraftUrl() {
@@ -176,10 +177,11 @@ function renderHmiUrl() {
         setStatus("hmi-st", "warn", ICONS.warn, "No HMI address", "Enter the HMI server's address to show the HMI.");
         return;
     }
-    const t = hmiTest && hmiTest.url === url ? hmiTest : null;
-    if (t && t.busy) setStatus("hmi-st", "busy", ICONS.busy, url, "Testing connection…");
-    else if (t) setStatus("hmi-st", t.ok ? "ok" : "err", t.ok ? ICONS.ok : ICONS.err, url, t.message);
-    else setStatus("hmi-st", "", ICONS.screen, url, url === (cfg && cfg.hmi_url) ? "Saved HMI address" : "");
+    const st = hmiState && url === (cfg && cfg.hmi_url) && hmiState.url === url ? hmiState : null;
+    if (url !== (cfg && cfg.hmi_url)) setStatus("hmi-st", "", ICONS.screen, url, "");
+    else if (!st || st.ok == null) setStatus("hmi-st", "busy", ICONS.busy, url, "Checking the connection…");
+    else setStatus("hmi-st", st.ok ? "ok" : "err", st.ok ? ICONS.ok : ICONS.err, url, st.message);
+    renderBack();
 }
 
 function readHmiForm() {
@@ -208,7 +210,19 @@ async function loadHmi() {
     $("opt-retry").value = cfg.retry_seconds;
     $("zoom-val").textContent = Math.round(cfg.zoom * 100) + "%";
     renderHmiUrl();
-    $("back").disabled = !cfg.hmi_url;
+    loadHmiState();
+}
+
+// "Back to HMI": only while the HMI answers.
+function renderBack() {
+    const b = $("back");
+    b.disabled = !(cfg && cfg.hmi_url && hmiState && hmiState.ok && hmiState.url === cfg.hmi_url);
+    b.title = b.disabled ? (cfg && cfg.hmi_url ? "The HMI isn't answering" : "No HMI address") : "";
+}
+
+async function loadHmiState() {
+    try { hmiState = await api("/hmi/state"); } catch (_) { return; }
+    if (hmiDraft) renderHmiUrl(); else renderBack();
 }
 
 // No Save button: the address is saved once a field is left or a choice is
@@ -219,7 +233,7 @@ async function saveHmi() {
     try {
         cfg = await api("/config", { hmi: hmiDraft });
         shell("config-changed");
-        $("back").disabled = !cfg.hmi_url;
+        hmiState = null;  // kioskd checks the new address at once ("hmi" event)
     } catch (e) { toast(e.message, true); }
     renderHmiUrl();
 }
@@ -236,17 +250,6 @@ function initHmi() {
         seg($("hmi-scheme"), scheme);
         saveHmi();
     }));
-    $("hmi-test").addEventListener("click", e => {
-        readHmiForm();
-        const url = hmiDraftUrl();
-        hmiTest = { url, busy: true };
-        renderHmiUrl();
-        busy(e.currentTarget, async () => {
-            const r = await api("/hmi/test", { scheme: hmiDraft.scheme, host: hmiDraft.host, port: hmiDraft.port });
-            hmiTest = { url, ok: r.ok, message: r.message };
-        }).catch(err => { hmiTest = { url, ok: false, message: err.message }; })
-            .finally(renderHmiUrl);
-    });
     const saveOpts = () => api("/config", {
         accept_self_signed: $("opt-cert").checked,
         osk_in_hmi: $("opt-osk").checked,
@@ -1482,6 +1485,7 @@ function initEvents() {
         boot: vis(() => { if (currentTab === "system") loadBoot(); }),
         system: vis(system),
         job: () => jobTick?.(),
+        hmi: () => loadHmiState(),
     }, () => { if (settingsVisible) { net(); config(); system(); } jobTick?.(); });
 }
 

@@ -122,6 +122,14 @@ window.I18N_LANGS.pl = function (tr) {
         "Not connected · these settings are used on its next connection":
             "Niepołączone · te ustawienia zadziałają przy następnym połączeniu",
         "Saving…": "Zapisywanie…",
+        "Checking the connection…": "Sprawdzanie połączenia…",
+        "The address isn't known on this network": "Ten adres nie jest znany w tej sieci",
+        "The server doesn't answer": "Serwer nie odpowiada",
+        "The server refuses the connection (wrong port, or the HMI isn't running)":
+            "Serwer odrzuca połączenie (zły port albo HMI nie działa)",
+        "No route to the server: is the kiosk on its network?": "Brak drogi do serwera: czy kiosk jest w jego sieci?",
+        "The server doesn't answer properly": "Serwer nie odpowiada poprawnie",
+        "The HMI isn't answering": "HMI nie odpowiada",
         "Settings saved": "Ustawienia zapisane",
         "Reconnecting with them…": "Ponowne łączenie z nowymi ustawieniami…",
         "Used on the next connection to this network.": "Zadziałają przy następnym połączeniu z tą siecią.",
@@ -453,9 +461,10 @@ window.I18N_LANGS.pl = function (tr) {
         "Temporary failure in name resolution": "Nie można teraz rozwiązać nazwy",
         "timed out": "przekroczono czas",
 
-        // ---- HMI test (kioskd)
-        "Can't connect to {host}:{port} ({reason})": "Brak połączenia z {host}:{port} ({reason})",
-        "Port {port} on {host} answers ({ms} ms)": "Port {port} na {host} odpowiada ({ms} ms)",
+        // ---- HMI check (kioskd hmi_watch)
+        "The HMI answers ({ms} ms)": "HMI odpowiada ({ms} ms)",
+        "The server answers {status}: the HMI behind it isn't running":
+            "Serwer odpowiada błędem {status}: wizualizacja za nim nie działa",
 
         // ---- Wi-Fi
         "secured · {security} · {signal}%": "zabezpieczona · {security} · {signal}%",
