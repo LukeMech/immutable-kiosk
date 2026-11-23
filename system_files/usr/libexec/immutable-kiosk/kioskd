@@ -2103,6 +2103,40 @@ def zram_swap():
         return None
 
 
+def cpu_temp():
+    """The processor's temperature (°C), the hottest reading: coretemp's
+    sensors, else CPU thermal zones (x86_pkg_temp, soc_dts* on Bay Trail),
+    else ACPI's. None if the device has none."""
+    def read(f):
+        try:
+            t = int(Path(f).read_text()) / 1000
+        except (OSError, ValueError):
+            return None
+        return t if 0 < t < 150 else None
+    for hw in Path("/sys/class/hwmon").glob("hwmon*"):
+        try:
+            if (hw / "name").read_text().strip() != "coretemp":
+                continue
+        except OSError:
+            continue
+        temps = [t for t in map(read, hw.glob("temp*_input")) if t is not None]
+        if temps:
+            return round(max(temps))
+    zones = {}
+    for z in Path("/sys/class/thermal").glob("thermal_zone*"):
+        try:
+            kind = (z / "type").read_text().strip()
+        except OSError:
+            continue
+        t = read(z / "temp")
+        if t is not None:
+            zones.setdefault(kind, []).append(t)
+    cpu = [t for k, ts in zones.items() for t in ts
+           if k == "x86_pkg_temp" or k.startswith(("soc_dts", "cpu", "TCPU", "B0D4"))]
+    other = zones.get("acpitz", [])
+    return round(max(cpu or other)) if cpu or other else None
+
+
 _cpu = {"sample": None, "busy": None, "at": 0.0}
 
 
@@ -2131,6 +2165,7 @@ def r_usage(body, q):
     return {
         "cpu": cpu_busy(),
         "cores": os.cpu_count(),
+        "temp_c": cpu_temp(),
         "mem": {"total_mb": mb("MemTotal"), "used_mb": mb("MemTotal") - mb("MemAvailable")},
         "swap": {"total_mb": mb("SwapTotal"), "used_mb": mb("SwapTotal") - mb("SwapFree"), "zram": zram_swap()},
     }

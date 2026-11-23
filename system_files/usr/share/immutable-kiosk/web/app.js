@@ -1057,6 +1057,9 @@ async function loadUsage() {
     const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
     $("use-cpu").textContent = u.cpu == null ? "—" : _("{pct}% · {cores} cores", { pct: u.cpu, cores: u.cores });
     bar("use-cpu-bar", u.cpu);
+    // The bar: 0-100 °C, warning from 85 °C (Atoms throttle at ~90).
+    $("use-temp").textContent = u.temp_c == null ? "—" : `${u.temp_c} °C`;
+    bar("use-temp-bar", u.temp_c);
     const mp = pct(u.mem.used_mb, u.mem.total_mb);
     $("use-mem").textContent = `${fmtGB(u.mem.used_mb)} / ${fmtGB(u.mem.total_mb)} (${mp}%)`;
     bar("use-mem-bar", mp);

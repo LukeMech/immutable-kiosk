@@ -242,6 +242,7 @@ window.I18N_LANGS.pl = function (tr) {
         "Processor": "Procesor",
         "Memory": "Pamięć",
         "Usage": "Wykorzystanie",
+        "Temperature": "Temperatura",
         "Update channel and image": "Kanał aktualizacji i obraz systemu",
         "{pct}% · {cores} cores": "{pct}% · rdzenie: {cores}",
         "{used} / {total} MB · {packed} MB in memory": "{used} / {total} MB · {packed} MB w pamięci",
