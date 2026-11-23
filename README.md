@@ -35,9 +35,18 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
 - **kioskd** ([`kioskd`](system_files/usr/libexec/immutable-kiosk/kioskd),
   Python stdlib only, root): serves the page and a JSON API on
   `127.0.0.1:8088` -- `nmcli` for Wi-Fi/IP, `bootc` for updates (progress
-  from `--progress-fd`, like lm-server's Cockpit page), the installer. Any
+  from `--progress-fd`, like lm-server's Cockpit page; the update check asks
+  the registry for the manifest directly, `bootc` verifies the signature
+  when it downloads), the installer. Any
   other page (the HMI included) is kept out by a required `X-Kiosk` header
   (no CORS) and a `Host` check.
+- **Boot screen**: one progress bar from GRUB to the HMI. GRUB draws its
+  first frame (kioskd turns it into glyphs of a GRUB font for the panel's
+  rotation, accent and language: `/boot/grub2/console.cfg`); it stays up
+  while the kernel starts, Plymouth takes over the same frame once i915 is
+  up, and `kiosk-splash` in cage finishes the bar. Restart and power off
+  the other way round: `kiosk-splash --shutdown` shows Plymouth's restart
+  screen in the kiosk the moment it's asked for; Plymouth's follows.
 - **On-screen keyboard** ([`osk.js`](system_files/usr/share/immutable-kiosk/web/osk.js)):
   Polish letters via the `ąę` key, numeric pad for number/IP fields, shadow
   DOM. Used by Settings and injected into the HMI page (switchable), so

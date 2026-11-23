@@ -10,6 +10,7 @@ be 127.0.0.1:8088 / localhost:8088 (DNS rebinding).
 
 import base64
 import errno
+import fcntl
 import sys
 import ipaddress
 import json
@@ -21,6 +22,7 @@ import subprocess
 import threading
 import time
 import hashlib
+import urllib.error
 import urllib.request
 import math
 import mimetypes
@@ -28,7 +30,7 @@ import zlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit, parse_qs
+from urllib.parse import urlencode, urlsplit, parse_qs
 
 LISTEN = ("127.0.0.1", 8088)
 ALLOWED_HOSTS = {"127.0.0.1:8088", "localhost:8088"}
@@ -330,26 +332,137 @@ def nm_kv(args):
     return d
 
 
-def saved_wifi():
-    """[{name, uuid, ssid, active}] for every saved Wi-Fi profile."""
-    result = []
-    for name, uuid, ctype, dev in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"]):
-        if ctype != "802-11-wireless":
-            continue
-        ssid = run(["nmcli", "-g", "802-11-wireless.ssid", "con", "show", uuid], check=False).strip()
-        result.append({"name": name, "uuid": uuid, "ssid": ssid or name, "active": bool(dev)})
-    return result
+def parallel(*calls):
+    """Run zero-argument callables at once, results in order; the first
+    exception is re-raised. Every nmcli start costs ~0.5 s on the Atom
+    (mostly loading NetworkManager's objects over D-Bus), one after another
+    they added up to many seconds."""
+    results, errors = [None] * len(calls), [None] * len(calls)
+
+    def one(i, fn):
+        try:
+            results[i] = fn()
+        except Exception as e:  # noqa: BLE001 -- re-raised below
+            errors[i] = e
+    threads = [threading.Thread(target=one, args=(i, fn), daemon=True) for i, fn in enumerate(calls)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for e in errors:
+        if e is not None:
+            raise e
+    return results
+
+
+class Coalesce:
+    """A read that callers share: one arriving while it runs gets that run's
+    result instead of starting another (the page, the top bar and a burst
+    of events often ask at once), and a result younger than `ttl` s is
+    reused. invalidate() after a change; NetworkManager's signals do too."""
+
+    def __init__(self, fn, ttl):
+        self.fn, self.ttl = fn, ttl
+        self.lock = threading.Lock()
+        self.pending = None     # threading.Event of the run under way
+        self.last = None        # (monotonic time, value) of the last good run
+
+    def invalidate(self):
+        with self.lock:
+            self.last = None
+
+    def __call__(self):
+        with self.lock:
+            if self.last and time.monotonic() - self.last[0] < self.ttl:
+                return self.last[1]
+            ev, leader = self.pending, self.pending is None
+            if leader:
+                ev = self.pending = threading.Event()
+                ev.result = (None, None)
+                started = time.monotonic()
+        if not leader:
+            ev.wait()
+        else:
+            try:
+                ev.result = (self.fn(), None)
+            except Exception as e:  # noqa: BLE001 -- handed to every waiter
+                ev.result = (None, e)
+            with self.lock:
+                self.pending = None
+                # Not if invalidated meanwhile: the result may predate the change.
+                if ev.result[1] is None and (self.last is None or self.last[0] < started):
+                    self.last = (started, ev.result[0])
+            ev.set()
+        value, error = ev.result
+        if error is not None:
+            raise error
+        return value
+
+
+# Saved profile -> its SSID. A profile's SSID doesn't change (a new password
+# makes a new profile), so each costs one nmcli call, once.
+_ssids = {}
+
+
+def saved_wifi(rows=None):
+    """[{name, uuid, ssid, active}] for every saved Wi-Fi profile; `rows`:
+    `nmcli con show` NAME,UUID,TYPE,DEVICE rows if already read."""
+    if rows is None:
+        rows = nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"])
+    wifi = [(name, uuid, dev) for name, uuid, ctype, dev in rows if ctype == "802-11-wireless"]
+    missing = [uuid for _, uuid, _ in wifi if uuid not in _ssids]
+
+    def ssid_of(uuid):
+        return lambda: run(["nmcli", "-g", "802-11-wireless.ssid", "con", "show", uuid], check=False).strip()
+    for uuid, ssid in zip(missing, parallel(*[ssid_of(u) for u in missing])):
+        if ssid:
+            _ssids[uuid] = ssid
+    return [{"name": name, "uuid": uuid, "ssid": _ssids.get(uuid) or name, "active": bool(dev)}
+            for name, uuid, dev in wifi]
+
+
+_scan = {"time": -1e9}
+
+
+def request_scan():
+    """Ask NetworkManager for a fresh scan without waiting for it (it takes
+    seconds): the list shows the last results at once, and the new ones
+    come as D-Bus signals -> "net" event -> the page reloads. At most every
+    30 s."""
+    now = time.monotonic()
+    if now - _scan["time"] < 30:
+        return
+    _scan["time"] = now
+    threading.Thread(target=run, args=(["nmcli", "dev", "wifi", "rescan"],),
+                     kwargs={"check": False, "timeout": 30}, daemon=True).start()
 
 
 def wifi_state(rescan):
-    radio = run(["nmcli", "radio", "wifi"], check=False).strip() == "enabled"
-    saved = saved_wifi()
+    """rescan: wait for a new scan (the Scan button); otherwise NetworkManager's
+    last results."""
+    def aps():
+        try:
+            return nm_rows(["-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list",
+                            "--rescan", "yes" if rescan else "no"], timeout=45)
+        except ApiError as e:
+            return e  # fine with the radio off
+
+    def devices():
+        try:
+            return nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
+        except ApiError:
+            return None
+    radio, con_rows, dev_rows, ap_rows = parallel(
+        lambda: run(["nmcli", "radio", "wifi"], check=False).strip() == "enabled",
+        lambda: nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"]),
+        devices, aps)
+    saved = saved_wifi(con_rows)
     saved_ssids = {s["ssid"] for s in saved}
     networks = {}
     if radio:
-        rows = nm_rows(["-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list",
-                        "--rescan", "yes" if rescan else "auto"], timeout=45)
-        for in_use, ssid, signal, security in rows:
+        if isinstance(ap_rows, ApiError):
+            raise ap_rows
+        for in_use, ssid, signal, security in ap_rows:
             if not ssid:
                 continue  # hidden network: joined by name instead
             n = networks.get(ssid)
@@ -365,48 +478,70 @@ def wifi_state(rescan):
             elif in_use == "*":
                 n["in_use"] = True
     nets = sorted(networks.values(), key=lambda n: (not n["in_use"], -n["signal"]))
-    return {"enabled": radio, "networks": nets, "saved": saved, "device": wifi_device()}
+    return {"enabled": radio, "networks": nets, "saved": saved, "device": wifi_device(dev_rows)}
+
+
+WIFI = Coalesce(lambda: wifi_state(False), 3.0)
 
 
 def net_brief():
-    """Connected device for the top bar (polled every 5 s, so no rescan);
-    Ethernet wins over Wi-Fi. None = offline."""
-    try:
-        rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"], timeout=5)
-    except ApiError:
+    """Connected device for the top bar (no rescan); Ethernet wins over
+    Wi-Fi. None = offline."""
+    def signal():
+        try:
+            for in_use, sig in nm_rows(["-f", "IN-USE,SIGNAL", "dev", "wifi", "list", "--rescan", "no"], timeout=5):
+                if in_use == "*":
+                    return int(sig or 0)
+        except (ApiError, ValueError):
+            pass
         return None
+
+    def devices():
+        try:
+            return nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"], timeout=5)
+        except ApiError:
+            return None
+    rows, sig = parallel(devices, signal)
     best = None
-    for _dev, typ, state, conn in rows:
+    for _dev, typ, state, conn in rows or []:
         if typ not in ("ethernet", "wifi") or not state.startswith("connected"):
             continue
         item = {"type": typ, "name": conn if conn not in ("", "--") else typ}
         if typ == "ethernet":
             return item
         best = best or item
-    if best:
-        try:
-            for in_use, signal in nm_rows(["-f", "IN-USE,SIGNAL", "dev", "wifi", "list", "--rescan", "no"], timeout=5):
-                if in_use == "*":
-                    best["signal"] = int(signal or 0)
-                    break
-        except (ApiError, ValueError):
-            pass
+    if best and sig is not None:
+        best["signal"] = sig
     return best
 
 
-def wifi_device():
-    """{device, state (nmcli's), connection, address}; None = no Wi-Fi adapter."""
+NET_BRIEF = Coalesce(net_brief, 3.0)
+
+
+def ipv4_address(ifname):
+    """The interface's IPv4 address ("" if none), from the kernel (SIOCGIFADDR)
+    instead of another nmcli."""
     try:
-        rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
-    except ApiError:
-        return None
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            packed = fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", ifname[:15].encode()))
+        return socket.inet_ntoa(packed[20:24])
+    except (OSError, ValueError):
+        return ""
+
+
+def wifi_device(rows=None):
+    """{device, state (nmcli's), connection, address}; None = no Wi-Fi adapter.
+    `rows`: `nmcli dev` DEVICE,TYPE,STATE,CONNECTION rows if already read
+    (None: couldn't be)."""
+    if rows is None:
+        try:
+            rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
+        except ApiError:
+            return None
     for dev, typ, state, conn in rows:
         if typ != "wifi":
             continue
-        addr = ""
-        if state.startswith("connected"):
-            a = nm_kv(["-f", "IP4.ADDRESS", "dev", "show", dev]).get("IP4.ADDRESS", "")
-            addr = (a[0] if isinstance(a, list) else a).split("/")[0]
+        addr = ipv4_address(dev) if state.startswith("connected") else ""
         return {"device": dev, "state": state, "connection": "" if conn in ("", "--") else conn, "address": addr}
     return None
 
@@ -432,11 +567,14 @@ def wifi_connect(ssid, password, hidden):
 
 def network_state():
     conns = []
-    for name, uuid, ctype, dev in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show", "--active"]):
-        if ctype == "loopback" or dev == "lo":
-            continue
-        cfg = nm_kv(["-f", "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "con", "show", uuid])
-        live = nm_kv(["-f", "IP4", "con", "show", uuid])
+    active = [r for r in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show", "--active"])
+              if r[2] != "loopback" and r[3] != "lo"]
+    # Every connection's profile and live IPv4 at once (see parallel()).
+    reads = parallel(*[lambda u=uuid, f=fields: nm_kv(["-f", f, "con", "show", u])
+                       for _, uuid, _, _ in active
+                       for fields in ("ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "IP4")])
+    for i, (name, uuid, ctype, dev) in enumerate(active):
+        cfg, live = reads[2 * i], reads[2 * i + 1]
 
         def as_list(v):
             if not v:
@@ -462,6 +600,9 @@ def network_state():
             },
         })
     return {"hostname": socket.gethostname(), "connections": conns}
+
+
+NETWORK = Coalesce(network_state, 3.0)
 
 
 def network_set(body):
@@ -560,13 +701,16 @@ class Debounce:
         EVENTS.emit(self.topic)
 
 
-def watch_lines(cmd, debounce, name):
-    """Any output line of a monitor command pokes `debounce`; restarted if it exits."""
+def watch_lines(cmd, debounce, name, wanted=None, on_line=None):
+    """Any output line of a monitor command (that `wanted` accepts) pokes
+    `debounce` and calls `on_line`; restarted if it exits."""
     while True:
         try:
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             for line in p.stdout:
-                if line.strip():
+                if line.strip() and (wanted is None or wanted(line)):
+                    if on_line:
+                        on_line()
                     debounce.poke()
             p.wait()
         except OSError as e:
@@ -608,10 +752,24 @@ def watch_clock():
             EVENTS.emit("clock")
 
 
+def nm_signal_wanted(line):
+    """Not the access points' own property changes: their signal strength
+    changes every few seconds, and each reloaded the whole Network tab
+    (many nmcli calls) -- the Atom never caught up. Networks appearing or
+    going, and new scan results, come on the device's path."""
+    return not line.startswith("/org/freedesktop/NetworkManager/AccessPoint/")
+
+
+def nm_changed():
+    for cache in (WIFI, NET_BRIEF, NETWORK):
+        cache.invalidate()
+
+
 def start_watchers():
     net = Debounce("net", 1.0)
     threading.Thread(target=watch_lines, daemon=True, name="nm", args=(
-        ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager")).start()
+        ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager",
+        nm_signal_wanted, nm_changed)).start()
     # Disk hotplug (installer's list).
     threading.Thread(target=watch_lines, daemon=True, name="udev-block", args=(
         ["udevadm", "monitor", "--udev", "--subsystem-match=block"], Debounce("disks", 1.0), "disks")).start()
@@ -920,6 +1078,11 @@ def bootc_status():
     staged = entry(s.get("staged"))
     rollback = entry(s.get("rollback"))
     update = booted.get("update") if booted else None
+    # kioskd's own check (registry_latest) of the image upgrades come from.
+    remote = REMOTE["value"]
+    if remote and remote["image"] == (staged or booted or {}).get("image"):
+        update = {k: remote[k] for k in ("version", "timestamp", "digest")}
+        update["sha"] = sha(update["version"])
     # bootc's cached check result is not an update if it's a version on the
     # disk already: booted, staged, or the rollback one (after going back to
     # the previous version that's the one left -- not offered again). Nor if
@@ -941,11 +1104,101 @@ def bootc_status():
     return st
 
 
+MANIFEST_TYPES = ("application/vnd.oci.image.manifest.v1+json",
+                  "application/vnd.docker.distribution.manifest.v2+json",
+                  "application/vnd.oci.image.index.v1+json",
+                  "application/vnd.docker.distribution.manifest.list.v2+json")
+ARCHES = {"x86_64": "amd64", "aarch64": "arm64"}
+
+
+def registry_latest(image):
+    """{digest, version, timestamp} of `image` ("host/repo:tag") as its
+    registry has it now: the manifest and its config, three or four small
+    HTTPS requests (an anonymous token first, as ghcr.io wants one even for
+    public images). What `bootc upgrade --check` reports, without its image
+    proxy, signature lookup and sysroot lock -- most of a minute on the Atom.
+    The signature is still checked, by bootc, when the update downloads."""
+    repo, tag = split_image(image)
+    host, _, path = repo.partition("/")
+    if not path or ("." not in host and ":" not in host):
+        raise ValueError(f"not a registry reference: {image}")
+    base = f"https://{host}/v2/{path}"
+    token = None
+
+    def get(url, accept):
+        req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "immutable-kiosk"})
+        if token:
+            # Not passed on to the blob storage a blob redirects to.
+            req.add_unredirected_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.read()
+
+    def get_auth(url, accept):
+        nonlocal token
+        try:
+            return get(url, accept)
+        except urllib.error.HTTPError as e:
+            challenge = e.headers.get("WWW-Authenticate", "") if e.code == 401 else ""
+            if token or not challenge.lower().startswith("bearer "):
+                raise
+            params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+            query = urlencode({"service": params.get("service", host),
+                                            "scope": params.get("scope", f"repository:{path}:pull")})
+            with urllib.request.urlopen(urllib.request.Request(
+                    f"{params['realm']}?{query}", headers={"User-Agent": "immutable-kiosk"}), timeout=15) as r:
+                t = json.loads(r.read())
+            token = t.get("token") or t.get("access_token")
+            return get(url, accept)
+
+    body = get_auth(f"{base}/manifests/{tag}", ", ".join(MANIFEST_TYPES))
+    manifest = json.loads(body)
+    if "manifests" in manifest:  # a multi-arch index: this machine's image
+        arch = ARCHES.get(os.uname().machine, os.uname().machine)
+        pick = next(m for m in manifest["manifests"]
+                    if (m.get("platform") or {}).get("architecture") == arch
+                    and (m.get("platform") or {}).get("os", "linux") == "linux")
+        body = get_auth(f"{base}/manifests/{pick['digest']}", ", ".join(MANIFEST_TYPES[:2]))
+        manifest = json.loads(body)
+    config = json.loads(get_auth(f"{base}/blobs/{manifest['config']['digest']}", "*/*"))
+    labels = (config.get("config") or {}).get("Labels") or {}
+    created = config.get("created") or labels.get("org.opencontainers.image.created") or ""
+    return {"image": image, "digest": "sha256:" + hashlib.sha256(body).hexdigest(),
+            "version": labels.get("org.opencontainers.image.version") or "",
+            # bootc's form: whole seconds, UTC "Z".
+            "timestamp": re.sub(r"\.\d+", "", created).replace("+00:00", "Z")}
+
+
+# Last registry_latest() result (with its image); bootc_status() prefers it
+# to bootc's cached check for that image.
+REMOTE = {"value": None}
+
+
 def check_for_update(job):
-    """bootc upgrade --check (fetches only the manifest), remembered in LAST_CHECK."""
+    """Ask the registry (registry_latest); `bootc upgrade --check` only if that
+    can't be done (an image not from a registry, an unexpected answer).
+    Remembered in LAST_CHECK."""
     job.stage = "Checking for updates"
     job.step("check")
+    st = LAST_STATUS["value"] or bootc_status()
+    target = (st.get("staged") or st.get("booted") or {}) if st.get("available") else {}
+    image = target.get("image") if target.get("transport") == "registry" else None
+    t0 = time.monotonic()
     try:
+        if image:
+            try:
+                REMOTE["value"] = registry_latest(image)
+                job.add_log(f"{image}: {REMOTE['value']['version'] or REMOTE['value']['digest']} "
+                            f"({time.monotonic() - t0:.1f} s)")
+                LAST_CHECK.update(time=time.time(), error=None)
+                return bootc_status()
+            except urllib.error.HTTPError as e:
+                job.add_log(f"registry: HTTP {e.code}, asking bootc")
+            except urllib.error.URLError as e:
+                # Offline or no DNS: bootc would fail the same way, only slower.
+                raise ApiError(f"Can't reach {split_image(image)[0].split('/')[0]}: {e.reason}")
+            except (OSError, ValueError, KeyError, StopIteration, TypeError) as e:
+                job.add_log(f"registry: {e!r}, asking bootc")
+        REMOTE["value"] = None
         out = run(["bootc", "upgrade", "--check"], timeout=180)
     except ApiError as e:
         LAST_CHECK.update(time=time.time(), error=str(e))
@@ -1673,7 +1926,7 @@ def r_info(body, q):
         "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor"),
                    "cpu": cpu_model(), "memory_mb": memory_mb()},
         "power": power_state(),
-        "net": net_brief(),
+        "net": NET_BRIEF(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "timezone": current_timezone(),
     }
@@ -1701,9 +1954,12 @@ def r_config_get(body, q):
 def r_config_set(body, q):
     cfg = save_config(body)
     EVENTS.emit("config")
+    def look(what):
+        set_splash_look(what)
+        set_grub_splash()
     for what in ("accent", "language"):
         if what in body:
-            threading.Thread(target=set_splash_look, args=(what,), daemon=True).start()
+            threading.Thread(target=look, args=(what,), daemon=True).start()
     return cfg
 
 
@@ -1726,12 +1982,25 @@ def r_hmi_test(body, q):
 
 
 def r_wifi(body, q):
-    return wifi_state(rescan=q.get("rescan", ["0"])[0] == "1")
+    """?rescan=1: wait for a new scan; ?scan=1 (the tab opened): last results
+    now, a scan in the background."""
+    if q.get("rescan", ["0"])[0] == "1":
+        WIFI.invalidate()
+        return wifi_state(rescan=True)
+    if q.get("scan", ["0"])[0] == "1":
+        request_scan()
+    return WIFI()
+
+
+def wifi_changed():
+    """After a change made here: fresh state, not a read that predates it."""
+    nm_changed()
+    return wifi_state(rescan=False)
 
 
 def r_wifi_connect(body, q):
     wifi_connect(str(body.get("ssid", "")), str(body.get("password", "")), bool(body.get("hidden")))
-    return wifi_state(rescan=False)
+    return wifi_changed()
 
 
 def r_wifi_forget(body, q):
@@ -1739,7 +2008,8 @@ def r_wifi_forget(body, q):
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
         raise ApiError("Invalid profile")
     run(["nmcli", "con", "delete", uuid])
-    return wifi_state(rescan=False)
+    _ssids.pop(uuid, None)
+    return wifi_changed()
 
 
 def r_wifi_disconnect(body, q):
@@ -1747,20 +2017,21 @@ def r_wifi_disconnect(body, q):
     dev = wifi_device()
     if dev and dev["state"].startswith(("connected", "connecting")):
         run(["nmcli", "dev", "disconnect", dev["device"]], timeout=30)
-    return wifi_state(rescan=False)
+    return wifi_changed()
 
 
 def r_wifi_radio(body, q):
     run(["nmcli", "radio", "wifi", "on" if body.get("enabled") else "off"])
-    return wifi_state(rescan=False)
+    return wifi_changed()
 
 
 def r_network(body, q):
-    return network_state()
+    return NETWORK()
 
 
 def r_network_set(body, q):
     network_set(body)
+    nm_changed()
     return {"ok": True}
 
 
@@ -1992,6 +2263,394 @@ def set_splash_look(what=""):
             splash_state(look={"state": "failed", "what": what, "error": str(e)})
 
 
+# ---------------------------------------------------------------- GRUB's boot screen
+#
+# Until i915 is up (~8 s) Plymouth can't draw, and GRUB reading the kernel
+# and the initramfs through the firmware is most of that. So GRUB shows the
+# boot screen's first frame -- the empty bar, "Starting…" -- from its start,
+# and that frame stays while the kernel boots (fbcon waits for text, quiet
+# prints none, i915.fastboot keeps the firmware's framebuffer) until
+# Plymouth draws the same frame there (immutable-kiosk.script: no fade-in).
+#
+# Fedora's signed GRUB has no PNG background without a module it doesn't
+# contain (gfxterm_background), and can't load one under Secure Boot. What
+# it has built in: gfxterm and fonts. So the frame becomes a font: its 8x16
+# tiles, already turned for the panel, as glyphs (kiosk-splash.pf2), printed
+# in GRUB's 16 colours, dithered where the colour lies between one and black.
+#
+# console.cfg (bootupd's grub.cfg sources it before the boot entries; ours
+# alone, nothing else writes it) loads the fonts, switches to gfxterm, draws
+# the frame, and sets blsuki_save_default / save_default: every boot entry
+# then starts with "savedefault" -- defined there to draw the frame again,
+# after GRUB clears the screen to boot. Entries' commands must not fail (an
+# error holds the boot 10 s for "Press any key"), so the entries only call
+# it when everything worked; no console.cfg, no "savedefault" either.
+
+GRUB_DIR = Path("/boot/grub2")
+GRUB_CONSOLE_CFG = GRUB_DIR / "console.cfg"
+GRUB_FONT = GRUB_DIR / "kiosk-splash.pf2"
+GRUB_FONT_NAME = "kiosk-splash"
+CELL_W, CELL_H = 8, 16          # glyph cell (Unifont's, the menu's fallback font)
+FONT_DESCENT = 2                # below the baseline, of CELL_H (as Unifont)
+GFXTERM_BORDER = 10             # gfxterm's text starts this far in (DEFAULT_BORDER_WIDTH)
+# GRUB's palette (grub_video_fbstd_colors), black left out: it's the background.
+GRUB_COLORS = {"blue": (0, 0, 168), "green": (0, 168, 0), "cyan": (0, 168, 168),
+               "red": (168, 0, 0), "magenta": (168, 0, 168), "brown": (168, 84, 0),
+               "light-gray": (168, 168, 168), "dark-gray": (84, 84, 84),
+               "light-blue": (84, 84, 254), "light-green": (84, 254, 84),
+               "light-cyan": (84, 254, 254), "light-red": (254, 84, 84),
+               "light-magenta": (254, 84, 254), "yellow": (254, 254, 84), "white": (254, 254, 254)}
+BAYER = (0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5)
+# The panel the kiosk last reported (r_touch_set): output, wlr-randr transform.
+_panel = {"output": None, "transform": None}
+
+
+def native_mode(output):
+    """(w, h) of a connector's preferred mode -- the size of the firmware's
+    framebuffer GRUB draws into. No output named: the first connected one."""
+    drm = Path("/sys/class/drm")
+    dirs = sorted(drm.glob(f"card*-{output}")) if output else []
+    if not dirs:
+        dirs = [d for d in sorted(drm.glob("card*-*"))
+                if (d / "status").is_file() and (d / "status").read_text().strip() == "connected"]
+    for d in dirs:
+        try:
+            first = (d / "modes").read_text().split()
+        except OSError:
+            continue
+        m = re.fullmatch(r"(\d+)x(\d+)\D*", first[0]) if first else None
+        if m:
+            return int(m[1]), int(m[2])
+    return None
+
+
+def boot_frame(nw, nh, transform, d, accent, lang):
+    """Plymouth's first boot frame (immutable-kiosk.script at stage 0: the
+    track, set_fill(0, 2 * CAP), label-0) on black, RGB, in the panel's
+    native nw x nh, turned the way Plymouth turns it (wlr-randr transform:
+    content rotated that many degrees counter-clockwise). Also returns the
+    native bounding box of what was drawn."""
+    lw, lh = (nh, nw) if transform in ("90", "270") else (nw, nh)
+    buf = bytearray(nw * nh * 3)
+    box = [nw, nh, -1, -1]
+
+    def blend(u, v, rgb, a):
+        if a <= 0 or not (0 <= u < lw and 0 <= v < lh):
+            return
+        if transform == "90":
+            x, y = v, lw - 1 - u
+        elif transform == "180":
+            x, y = nw - 1 - u, nh - 1 - v
+        elif transform == "270":
+            x, y = nw - 1 - v, u
+        else:
+            x, y = u, v
+        i = (y * nw + x) * 3
+        for c in range(3):
+            buf[i + c] = (rgb[c] * a + buf[i + c] * (255 - a) + 127) // 255
+        box[:] = [min(box[0], x), min(box[1], y), max(box[2], x), max(box[3], y)]
+
+    bar = d["bar"]
+    bh, cap = bar["h"], bar["cap"]
+    # The script's sums: BW, BX, BY, LY; the label centred (Math.Int).
+    bw = int(min(lw * bar["frac"], bar["max"]) / 2) * 2
+    bx, by = (lw - bw) // 2, lh // 2 - bh // 2
+    ly = by + bh + bar["gap"]
+    cap_l, cap_r = base64.b64decode(d["cap_l"]), base64.b64decode(d["cap_r"])
+
+    def piece(x0, w, alphas, rgb):
+        for j in range(bh):
+            for i in range(w):
+                blend(x0 + i, by + j, rgb, alphas[j * w + i] if alphas else 255)
+    track, fill = tuple(d["track"]), tuple(d["accents"][accent])
+    piece(bx, cap, cap_l, track)
+    piece(bx + cap, bw - 2 * cap, None, track)
+    piece(bx + bw - cap, cap, cap_r, track)
+    piece(bx + cap, 1, None, fill)          # the fill's middle, 1 px under its ends
+    piece(bx, cap, cap_l, fill)
+    piece(bx + cap, cap, cap_r, fill)
+    lab = d["boot_labels"][lang]
+    a = base64.b64decode(lab["a"])
+    lx = (lw - lab["w"]) // 2
+    text = tuple(d["text"])
+    for j in range(lab["h"]):
+        for i in range(lab["w"]):
+            blend(lx + i, ly + j, text, a[j * lab["w"] + i])
+    return buf, box
+
+
+def nearest_grub_colour(rgb):
+    return min(GRUB_COLORS, key=lambda n: sum((a - b) ** 2 for a, b in zip(GRUB_COLORS[n], rgb)))
+
+
+def accent_grub_colour(rgb):
+    """The GRUB colour that best gives rgb as a share of it on black, as
+    frame_tiles draws: the hue counts, not the plain distance (that made
+    green dark-gray -- a white dot on the 408)."""
+    def err(n):
+        f = GRUB_COLORS[n]
+        sh = min(max(sum(a * b for a, b in zip(rgb, f)) / sum(b * b for b in f), 0.0), 1.0)
+        return sum((a - sh * b) ** 2 for a, b in zip(rgb, f))
+    return min(GRUB_COLORS, key=err)
+
+
+def frame_tiles(buf, nw, nh, box, palette):
+    """The frame in gfxterm's grid: {(col, row): (colour name, bits)}, bits
+    CELL_W x CELL_H 0/1 row-major. Per cell the colour of `palette` (GRUB
+    colour names) that best gives its pixels as a share of that colour on
+    black; a dim share is Bayer-dithered (continuous across cells)."""
+    c0, r0 = (box[0] - GFXTERM_BORDER) // CELL_W, (box[1] - GFXTERM_BORDER) // CELL_H
+    c1, r1 = (box[2] - GFXTERM_BORDER) // CELL_W, (box[3] - GFXTERM_BORDER) // CELL_H
+    tiles = {}
+    for row in range(max(r0, 0), r1 + 1):
+        for col in range(max(c0, 0), c1 + 1):
+            px = []
+            for j in range(CELL_H):
+                y = GFXTERM_BORDER + row * CELL_H + j
+                for i in range(CELL_W):
+                    x = GFXTERM_BORDER + col * CELL_W + i
+                    k = (y * nw + x) * 3 if x < nw and y < nh else -1
+                    px.append((x, y, tuple(buf[k:k + 3]) if k >= 0 else (0, 0, 0)))
+            if all(max(t) < 6 for _, _, t in px):
+                continue
+            # Per distinct colour, not per pixel: a cell has only a few
+            # (the track one or two), and this runs on the Atom.
+            counts = {}
+            for _, _, t in px:
+                counts[t] = counts.get(t, 0) + 1
+            best = None
+            for name in palette:
+                f = GRUB_COLORS[name]
+                ff = f[0] * f[0] + f[1] * f[1] + f[2] * f[2]
+                err, share = 0, {}
+                for t, n in counts.items():
+                    sh = min(max((t[0] * f[0] + t[1] * f[1] + t[2] * f[2]) / ff, 0.0), 1.0)
+                    err += n * ((t[0] - sh * f[0]) ** 2 + (t[1] - sh * f[1]) ** 2 + (t[2] - sh * f[2]) ** 2)
+                    share[t] = sh
+                if best is None or err < best[0]:
+                    best = (err, name, share)
+            _, name, share = best
+            shares = [share[t] for _, _, t in px]
+            # Something solid in it (text, the accent's dot): crisp edges.
+            # Only a dim colour (the track) is dithered -- as a share of
+            # light, not of sRGB values: the eye averages light, and an sRGB
+            # share lit the track up far brighter than Plymouth's.
+            if max(shares) > 0.85:
+                bits = tuple(1 if s >= 0.5 else 0 for s in shares)
+            else:
+                lf = [(c / 255) ** 2.2 for c in GRUB_COLORS[name]]
+                lff = sum(c * c for c in lf)
+                lin = {t: min(max(sum((c / 255) ** 2.2 * f for c, f in zip(t, lf)) / lff, 0.0), 1.0)
+                       for t in counts}
+                bits = tuple(1 if lin[t] * 16 > BAYER[(y % 4) * 4 + x % 4] + 0.5 else 0
+                             for x, y, t in px)
+            if any(bits):
+                tiles[col, row] = (name, bits)
+    return tiles
+
+
+def pf2_font(glyphs):
+    """A GRUB PFF2 font: glyphs {code: bits}, CELL_W x CELL_H each, filling
+    the cell, plus an empty space. Ascent 14 + descent 2 as Unifont's (the
+    fallback font is drawn on our baseline); GRUB refuses a font whose
+    descent is 0 ("missing some required data")."""
+    def sec(tag, data):
+        return tag + struct.pack(">I", len(data)) + data
+    u16 = lambda v: struct.pack(">H", v)
+    head = (sec(b"FILE", b"PFF2") + sec(b"NAME", GRUB_FONT_NAME.encode() + b"\0")
+            + sec(b"FAMI", GRUB_FONT_NAME.encode() + b"\0") + sec(b"WEIG", b"normal\0")
+            + sec(b"SLAN", b"normal\0") + sec(b"PTSZ", u16(CELL_H)) + sec(b"MAXW", u16(CELL_W))
+            + sec(b"MAXH", u16(CELL_H)) + sec(b"ASCE", u16(CELL_H - FONT_DESCENT))
+            + sec(b"DESC", u16(FONT_DESCENT)))
+    glyphs = {**glyphs, 32: (0,) * (CELL_W * CELL_H)}
+    codes = sorted(glyphs)
+    data_at = len(head) + 8 + 9 * len(codes) + 8
+    index, data = bytearray(), bytearray()
+    for code in codes:
+        bits = glyphs[code]
+        index += struct.pack(">IBI", code, 0, data_at + len(data))
+        packed = bytearray((len(bits) + 7) // 8)
+        for i, b in enumerate(bits):
+            if b:
+                packed[i // 8] |= 0x80 >> (i % 8)
+        # Top at the cell's top: baseline (ascent) - y offset - height.
+        data += struct.pack(">HHhhh", CELL_W, CELL_H, 0, -FONT_DESCENT, CELL_W) + packed
+    return head + sec(b"CHIX", bytes(index)) + b"DATA" + struct.pack(">I", 0xFFFFFFFF) + bytes(data)
+
+
+def grub_splash_files(nw, nh, transform, d, accent, lang, key=""):
+    """(console.cfg text, kiosk-splash.pf2 bytes), or None if the frame
+    doesn't fit gfxterm's grid. `key`: console.cfg's first line, what it
+    was made from (set_grub_splash)."""
+    buf, box = boot_frame(nw, nh, transform, d, accent, lang)
+    if box[2] < 0:
+        return None
+    # Two colours: the text's (the track too, dithered) and the accent's.
+    # GRUB puts the whole screen through the firmware at every echo -- a
+    # second or more on the 408 for one echo per row; this way the frame
+    # takes as many echos as colour changes: two or three.
+    palette = {nearest_grub_colour(d["text"]), accent_grub_colour(d["accents"][accent])}
+    tiles = frame_tiles(buf, nw, nh, box, palette)
+    columns = (nw - 2 * GFXTERM_BORDER) // CELL_W
+    rows = (nh - 2 * GFXTERM_BORDER) // CELL_H
+    # Lines shorter than the screen (a full one wraps), none scrolled away.
+    if not tiles or max(c for c, _ in tiles) >= columns - 1 or max(r for _, r in tiles) >= rows - 2:
+        return None
+    codes, glyphs = {}, {}
+    for _, bits in tiles.values():
+        if bits not in codes:
+            codes[bits] = 0xE000 + len(codes)    # Private Use Area
+            glyphs[codes[bits]] = bits
+    # The grid row by row as one text (line breaks as echo -e's backslash-n),
+    # a new part only where the colour changes (spaces and breaks take any).
+    parts = []                                  # [colour or None, text]
+    last = max(r for _, r in tiles)
+    for row in range(last + 1):
+        col = 0
+        for c in sorted(c for c, r in tiles if r == row):
+            name, bits = tiles[c, row]
+            if not parts or parts[-1][0] not in (name, None):
+                parts.append([name, ""])
+            parts[-1][0] = name
+            parts[-1][1] += " " * (c - col) + chr(codes[bits])
+            col = c + 1
+        if row < last:
+            if not parts:
+                parts.append([None, ""])
+            parts[-1][1] += "\\n"
+    lines = []
+    for name, text in parts:
+        if name:
+            lines.append(f"  set color_normal={name}/black")
+        lines.append(f"  echo -e -n '{text}'")
+    cfg = f"""\
+# key: {key}
+# immutable-kiosk boot screen -- written by kioskd (set_grub_splash) with
+# kiosk-splash.pf2 for this panel, its rotation, the accent and the
+# language; edits here are overwritten. Sourced by grub.cfg before the boot
+# entries. Plymouth's first frame, drawn in gfxterm with the tiles of that
+# frame as glyphs; it stays up through the kernel's start.
+set kiosk_splash_ok=0
+if [ -f "$prefix/{GRUB_FONT.name}" ]; then
+  if [ -f "(memdisk)/fonts/unicode.pf2" ]; then
+    set kiosk_text_font="(memdisk)/fonts/unicode.pf2"
+  elif [ -f "$prefix/fonts/unicode.pf2" ]; then
+    set kiosk_text_font="$prefix/fonts/unicode.pf2"
+  fi
+  # Unifont for the menu (Esc) and messages, the tiles in ours on top.
+  if [ -n "$kiosk_text_font" ]; then
+    if loadfont "$kiosk_text_font"; then
+      if loadfont "$prefix/{GRUB_FONT.name}"; then
+        set gfxterm_font={GRUB_FONT_NAME}
+        set gfxmode=auto
+        set gfxpayload=keep
+        if terminal_output gfxterm; then
+          set kiosk_splash_ok=1
+        fi
+      fi
+    fi
+  fi
+fi
+
+# Nothing in here can fail (see kioskd). Ends in black: the cursor and any
+# text after it don't show.
+function kiosk_splash {{
+  clear
+{chr(10).join(lines)}
+  set color_normal=black/black
+  echo " "
+}}
+
+# Boot entries start with "savedefault" when these are set (blsuki; older
+# blscfg: save_default): GRUB has just cleared the screen, the kernel and
+# the initramfs are about to be read. Drawn only then, once: drawn before
+# the menu's wait too, it blinked as GRUB cleared the screen to boot.
+function savedefault {{
+  if [ "$kiosk_splash_ok" = 1 ]; then
+    kiosk_splash
+  fi
+}}
+
+if [ "$kiosk_splash_ok" = 1 ]; then
+  set blsuki_save_default=true
+  set save_default=true
+fi
+"""
+    return cfg, pf2_font(glyphs)
+
+
+def set_grub_splash(output=None, transform=None):
+    """Bring GRUB's boot screen (console.cfg, kiosk-splash.pf2) in line with
+    the panel the kiosk reports (output, transform; None: the last one) and
+    Settings' accent and language. Nothing until the kiosk has reported its
+    panel. Cheap when nothing changed (console.cfg's key line); otherwise
+    drawn by `kioskd --grub-splash` at the lowest priority -- seconds of CPU
+    on the Atom, which in here held up the API (a restart from Settings
+    waited for it)."""
+    if output is not None:
+        _panel.update(output=output, transform=transform)
+    output, transform = _panel["output"], _panel["transform"]
+    if transform is None or mode() == "installer" or not GRUB_DIR.is_dir():
+        return
+    try:
+        raw = SPLASH_DATA.read_bytes()
+        d = json.loads(raw)
+        if "boot_labels" not in d:
+            return
+        size = native_mode(output)
+        if not size:
+            print("kioskd: GRUB boot screen: no display mode found", flush=True)
+            return
+        cfg = load_config()
+        accent = cfg.get("accent") if cfg.get("accent") in d["accents"] else d["default_accent"]
+        lang = cfg.get("language") if cfg.get("language") in d["boot_labels"] else "en"
+        # What the files come from: the panel, the look, the bar's data and
+        # this program (a new version may draw differently) -- redrawn once
+        # after an update, otherwise left alone.
+        code = hashlib.sha256(Path(os.path.abspath(__file__)).read_bytes()).hexdigest()[:12]
+        key = (f"{size[0]}x{size[1]} {transform} {accent} {lang} "
+               f"{hashlib.sha256(raw).hexdigest()[:12]} {code}")
+        try:
+            if GRUB_FONT.is_file() and GRUB_CONSOLE_CFG.read_text().startswith(f"# key: {key}\n"):
+                return
+        except OSError:
+            pass
+        with _splash_lock:
+            p = subprocess.run(["nice", "-n", "19", sys.executable, os.path.abspath(__file__), "--grub-splash",
+                                key, str(size[0]), str(size[1]), transform, accent, lang],
+                               capture_output=True, text=True, timeout=600)
+        for line in (p.stdout + p.stderr).strip().splitlines():
+            print(f"kioskd: GRUB boot screen: {line}", flush=True)
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
+        print(f"kioskd: GRUB boot screen: {e}", flush=True)
+
+
+def write_grub_splash(key, w, h, transform, accent, lang):
+    """`kioskd --grub-splash`: draw and write the files (set_grub_splash)."""
+    t0 = time.monotonic()
+    d = json.loads(SPLASH_DATA.read_text())
+    files = grub_splash_files(w, h, transform, d, accent, lang, key)
+    if files is None:
+        print(f"the frame doesn't fit {w}x{h}")
+        return 1
+    written = []
+    # The font first: console.cfg only uses it when it's there.
+    for path, data in ((GRUB_FONT, files[1]), (GRUB_CONSOLE_CFG, files[0].encode())):
+        try:
+            if path.read_bytes() == data:
+                continue
+        except OSError:
+            pass
+        p = subprocess.run([BOOT_COUNTER, "write-boot", str(path)], input=data, capture_output=True, timeout=60)
+        if p.returncode != 0:
+            print(p.stderr.decode(errors="replace").strip() or f"write-boot {path}: {p.returncode}")
+            return 1
+        written.append(path.name)
+    print(f"{w}x{h} turned {transform}, accent {accent}, language {lang}: "
+          f"{', '.join(written) or 'unchanged'} ({time.monotonic() - t0:.1f} s)")
+    return 0
+
+
 def r_splash(body, q):
     return SPLASH_STATE
 
@@ -2011,6 +2670,41 @@ def plymouth_quit():
 def r_display_set(body, q):
     plymouth_quit()
     return {"ok": True}
+
+
+KIOSK_SPLASH = "/usr/libexec/immutable-kiosk/kiosk-splash"
+
+
+def power_off(action):
+    """systemctl reboot / poweroff, with the kiosk's restart / power-off
+    screen up first: it shows at once, not when systemd gets to cage, and it
+    is what stays on screen until Plymouth's identical one (kiosk-splash
+    --shutdown). kiosk-splash returns once it's on screen (at most ~3 s)."""
+    import pwd
+    try:
+        pw = pwd.getpwnam("kiosk")
+    except KeyError:
+        pw = None
+    runtime = f"/run/user/{pw.pw_uid}" if pw else None
+    if pw:
+        try:
+            subprocess.run([KIOSK_SPLASH, "--shutdown", "reboot" if action == "reboot" else "shutdown"],
+                           user=pw.pw_uid, group=pw.pw_gid, extra_groups=[], cwd="/",
+                           env={"PATH": "/usr/bin", "HOME": pw.pw_dir, "XDG_RUNTIME_DIR": runtime},
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=10)
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"kioskd: shutdown screen: {e}", flush=True)
+    p = subprocess.run(["systemctl", action], capture_output=True, text=True, timeout=30)
+    if p.returncode != 0:
+        # No shutdown after all: the kiosk again (the screen's pid: its marker).
+        if runtime:
+            try:
+                pid = int(Path(runtime, "kiosk-shutdown-screen").read_text().strip())
+                if b"kiosk-splash" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                    os.kill(pid, 9)
+            except (OSError, ValueError):
+                pass
+        raise ApiError((p.stderr or p.stdout).strip() or f"systemctl {action}: {p.returncode}")
 
 
 def touchscreens():
@@ -2040,6 +2734,7 @@ def r_touch_set(body, q):
     def splash():
         set_splash_orientation(str(body.get("output") or ""), transform)
         set_splash_look()
+        set_grub_splash(str(body.get("output") or ""), transform)
     threading.Thread(target=splash, daemon=True).start()
     rule = (
         "# Written by kioskd: touch follows the screen rotation "
@@ -2177,9 +2872,9 @@ def job_rollback(job):
         for line in run(["bootc", "rollback"], timeout=180).splitlines():
             job.add_log(line)
     job.result = bootc_status()
-    job.step("reboot", "The screen goes dark for a moment, then the previous version starts")
+    job.step("reboot", "The system restarts into the previous version")
     time.sleep(2)  # the page gets to show this step
-    run(["systemctl", "reboot"], timeout=30)
+    power_off("reboot")
     # The reboot should have ended this process.
     time.sleep(120)
     raise RuntimeError("The system didn't restart — the previous version will start on the next boot")
@@ -2237,8 +2932,14 @@ def r_power(body, q):
     action = body.get("action")
     if action not in ("reboot", "poweroff"):
         raise ApiError("Unknown action")
-    # Reply first, act a moment later.
-    threading.Timer(1.0, subprocess.run, args=(["systemctl", action],)).start()
+    # Reply first: the screen comes up meanwhile (no delay -- it covers the
+    # page anyway).
+    def act():
+        try:
+            power_off(action)
+        except (ApiError, OSError, subprocess.SubprocessError) as e:
+            print(f"kioskd: {action}: {e}", flush=True)
+    threading.Thread(target=act, daemon=True).start()
     return {"ok": True}
 
 
@@ -2327,4 +3028,8 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--splash-look"]:
         set_splash_look()
         sys.exit(0)
+    # set_grub_splash: the drawing, in its own low-priority process.
+    if sys.argv[1:2] == ["--grub-splash"] and len(sys.argv) == 8:
+        k, gw, gh, gt, ga, gl = sys.argv[2:]
+        sys.exit(write_grub_splash(k, int(gw), int(gh), gt, ga, gl))
     main()

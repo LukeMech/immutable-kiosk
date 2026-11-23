@@ -130,7 +130,7 @@ function showTab(name) {
     currentTab = name;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
     document.querySelectorAll(".tab").forEach(s => { s.hidden = s.id !== "tab-" + name; });
-    const net = () => { loadWifi(false); loadNet(); };
+    const net = () => { loadWifi(false, false, true); loadNet(); };
     ({ hmi: loadHmi, net, screen: loadScreen, system: loadSystem })[name]();
 }
 
@@ -272,12 +272,14 @@ function renderWifiStatus() {
 }
 
 // live: from a kioskd event; skipped while this page's own action runs.
-async function loadWifi(rescan, live = false) {
+// scan: the tab opened -- the last results now, kioskd starts a scan whose
+// results come as a live update.
+async function loadWifi(rescan, live = false, scan = false) {
     if (live && wifiOverride && wifiOverride.state === "busy") return;
     if (rescan) wifiOverride = { state: "busy", icon: ICONS.busy, title: "Scanning for networks…" };
     renderWifiStatus();
     let w;
-    try { w = await api("/wifi" + (rescan ? "?rescan=1" : "")); }
+    try { w = await api("/wifi" + (rescan ? "?rescan=1" : scan ? "?scan=1" : "")); }
     catch (e) {
         wifiOverride = { state: "err", icon: ICONS.err, title: "Couldn't read Wi-Fi", sub: e.message };
         renderWifiStatus();
@@ -1286,13 +1288,28 @@ function listen(handlers, onReconnect) {
     });
 }
 
+// One run at a time: calls while it runs queue a single rerun (a burst of
+// events reloads once more, not once per event -- kioskd is slow on the Atom).
+function oneAtATime(fn) {
+    let running = null, again = false;
+    return () => {
+        if (running) { again = true; return running; }
+        running = (async () => {
+            try { do { again = false; await fn(); } while (again); }
+            finally { running = null; }
+        })();
+        return running;
+    };
+}
+
 // Under the HMI only job progress updates; kioskShown reloads on return.
 function initEvents() {
     const vis = fn => () => { if (settingsVisible) fn(); };
-    const net = () => {
-        refreshDevice();
-        if (currentTab === "net") { loadWifi(false, true); loadNet(true); }
-    };
+    const netLive = oneAtATime(() => Promise.all([
+        refreshDevice(),
+        currentTab === "net" ? Promise.all([loadWifi(false, true), loadNet(true)]) : null,
+    ]).catch(() => {}));
+    const net = () => { netLive(); };
     const config = () => api("/config").then(c => { cfg = c; if (currentTab === "screen") loadScreen(); }).catch(() => {});
     const system = () => { if (currentTab === "system") loadSystem(); };
     listen({

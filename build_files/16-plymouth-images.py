@@ -7,7 +7,14 @@
       animation; installing an update (plymouth's "updates" mode, set by
       immutable-kiosk-update-splash.service) it fills slowly.
   kiosk-splash (in cage)  splash-bar.json: the same bar, colours and label,
-      continuing from the hand-over ("Starting the kiosk…", 80 %).
+      continuing from the hand-over ("Starting the kiosk…", 80 %); and at
+      restart / power off, the same loading animation as plymouth's
+      (splash-bar.json "mode_labels"), up the moment it's asked for and
+      left on screen when cage exits, until plymouth draws the same frame.
+  GRUB  kioskd draws the script's first boot frame (empty bar, label-0;
+      splash-bar.json "boot_labels") for GRUB, which shows it from its start
+      until Plymouth draws the same frame -- so the boot screen doesn't fade
+      in, it is already there.
 
 The labels are rendered here with Pango in English and Polish, so plymouth
 and kiosk-splash show the same pixels. Plymouth can't read the settings:
@@ -183,6 +190,8 @@ SCRIPT = f"""# immutable-kiosk boot screen: a progress bar with a label under it
 #     quits plymouth) it settles at {num(HANDOVER)} -- where kiosk-splash continues;
 #   shutdown / reboot: a loading animation;
 #   updates (immutable-kiosk-update-splash.service): fills slowly.
+# No fade-in in any mode: the same frame is on screen already -- GRUB's
+# (kioskd's set_grub_splash) at boot, kiosk-splash's at shutdown.
 # kioskd's overrides (accent, language) come from {OVERRIDES}.
 Window.SetBackgroundTopColor(0, 0, 0);
 Window.SetBackgroundBottomColor(0, 0, 0);
@@ -221,7 +230,6 @@ kind = -1;
 prog = 0;
 
 label_s = Sprite();
-label_s.SetOpacity(0);
 fun show_label (img)
 {{
     label_s.SetImage(img);
@@ -238,8 +246,6 @@ fr = Sprite(load("fill-r.png"));
 tl.SetPosition(BX, BY, 1);
 tm.SetPosition(BX + CAP, BY, 1);
 tr.SetPosition(BX + BW - CAP, BY, 1);
-tl.SetOpacity(0); tm.SetOpacity(0); tr.SetOpacity(0);
-fl.SetOpacity(0); fm.SetOpacity(0); fr.SetOpacity(0);
 
 # The fill from x0 to x1, px into the bar (x1 - x0 at least two caps).
 fun set_fill (x0, x1)
@@ -249,6 +255,7 @@ fun set_fill (x0, x1)
     fm.SetPosition(BX + x0 + CAP, BY, 2);
     fr.SetPosition(BX + x1 - CAP, BY, 3);
 }}
+
 
 fun stage_of (s)
 {{
@@ -272,10 +279,9 @@ fun status_callback (status)
 }}
 Plymouth.SetUpdateStatusFunction(status_callback);
 
-fun refresh_callback ()
+# What the screen is for; the mode can change (to "updates") meanwhile.
+fun check_mode ()
 {{
-    t = t + 1;
-    # What the screen is for; the mode can change (to "updates") meanwhile.
     m = Plymouth.GetMode();
     k = 0;
     if (m == "shutdown" || m == "reboot")
@@ -294,17 +300,14 @@ fun refresh_callback ()
         else
             show_label(Image(pre + "label-updates.png"));
     }}
-    # Fades in over the first half second.
-    if (t <= 25)
-    {{
-        level = t / 25;
-        label_s.SetOpacity(level);
-        tl.SetOpacity(level); tm.SetOpacity(level); tr.SetOpacity(level);
-        fl.SetOpacity(level); fm.SetOpacity(level); fr.SetOpacity(level);
-    }}
+}}
+
+fun draw_frame ()
+{{
     if (kind == 1)
     {{
-        # Loading: a segment sliding through the bar.
+        # Loading: a segment sliding through the bar, 6 px a refresh (50 Hz;
+        # kiosk-splash draws the same).
         seg = Math.Int(BW * 0.3);
         q = t * 6;
         p = q - Math.Int(q / (BW + seg)) * (BW + seg) - seg;
@@ -337,6 +340,17 @@ fun refresh_callback ()
         set_fill(0, 2 * CAP + Math.Int((BW - 2 * CAP) * shown));
     }}
 }}
+
+# The first frame complete before the first refresh.
+check_mode();
+draw_frame();
+
+fun refresh_callback ()
+{{
+    t = t + 1;
+    check_mode();
+    draw_frame();
+}}
 Plymouth.SetRefreshFunction(refresh_callback);
 """
 with open(f"{THEME}/immutable-kiosk.script", "w") as f:
@@ -353,6 +367,13 @@ with open(DATA, "w") as f:
         "cap_l": alphas(left), "cap_r": alphas(right),
         "labels": {lang: {"w": w, "h": h, "a": alphas(cov)}
                    for (lang, name), (w, h, cov) in labels.items() if name == f"label-{len(STAGES) - 1}"},
+        # GRUB's frame (kioskd): the first stage's label.
+        "boot_labels": {lang: {"w": w, "h": h, "a": alphas(cov)}
+                        for (lang, name), (w, h, cov) in labels.items() if name == "label-0"},
+        # kiosk-splash --shutdown: plymouth's restart / power-off labels.
+        "mode_labels": {mode: {lang: {"w": w, "h": h, "a": alphas(cov)}
+                               for (lang, name), (w, h, cov) in labels.items() if name == f"label-{mode}"}
+                        for mode in ("reboot", "shutdown")},
         "accents": {k: list(v) for k, v in ACCENTS.items()}, "default_accent": "blue",
         "overrides": OVERRIDES,
         "start": HANDOVER, "end": END, "tau": TAU,
