@@ -308,3 +308,14 @@ awk '$1 !~ /^l/ && $5 ~ /^[0-9]+$/ { printf "%8.1f MiB  %s\n", $5 / 1048576, $NF
 head -20 /tmp/initramfs-biggest.list
 rm -f /tmp/initramfs-biggest.list
 rm -f "${STOCK}" /tmp/initramfs-stock.list /tmp/initramfs-new.list
+
+# Microcode the device never loads: the initramfs carries the target Atoms'
+# (above; the installer's run needs them again), Fedora's kernel has no late
+# loading, and other CPUs keep what their firmware loaded. ~15 MB of the image.
+if [[ -d "${UCODE_DIR}" ]]; then
+    before=$(du -sk "${UCODE_DIR}" | cut -f1)
+    keep=()
+    for g in "${UCODE_GLOBS[@]}"; do keep+=(! -name "${g}"); done
+    find "${UCODE_DIR}" -maxdepth 1 -type f "${keep[@]}" -delete
+    echo "intel-ucode: ${before} KiB -> $(du -sk "${UCODE_DIR}" | cut -f1) KiB (target Atoms only)"
+fi

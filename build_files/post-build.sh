@@ -72,8 +72,43 @@ remove_if_installed \
     python3-urllib3+socks python3-file-magic python3-html2text \
     rpm-ostree-libs polkit-pkla-compat
 
+# Leaves only: removed if nothing installed requires them, so a removal can't
+# take wanted packages with it (a skipped one is logged, not an error).
+remove_leaves() {
+    local pkg req
+    for pkg in "$@"; do
+        rpm -q "${pkg}" >/dev/null 2>&1 || continue
+        req=$(dnf -q repoquery --installed --whatrequires "${pkg}" --qf '%{name}\n' 2>/dev/null |
+            grep -vx "${pkg}" | sort -u | tr '\n' ' ' || true)
+        if [[ -n "${req}" ]]; then
+            echo "keeping ${pkg}: required by ${req}"
+            continue
+        fi
+        dnf -y remove "${pkg}"
+    done
+}
+
+# Tools for things this image never does: chunkah (CI's rechunker, not the
+# device's), LUKS/TPM unlocking (clevis, tpm2-tools, luksmeta), software RAID,
+# kexec/kdump, NFS's rpcbind/gssproxy, MOK management (no Secure Boot keys
+# are enrolled), logrotate (nothing logs to files: the journal rotates
+# itself), irqbalance (no gain on a 4-core Atom). Dependents first.
+remove_leaves \
+    chunkah \
+    clevis-luks clevis-systemd clevis-pin-tpm2 clevis-dracut clevis luksmeta tpm2-tools \
+    mdadm kexec-tools makedumpfile rpcbind gssproxy mokutil logrotate irqbalance \
+    console-login-helper-messages
+# Firmware for server NICs, TV tuners and old Wi-Fi this hardware doesn't
+# have (split out of linux-firmware; only some may be installed).
+remove_leaves \
+    netronome-firmware liquidio-firmware mlxsw_spectrum-firmware mrvlprestera-firmware \
+    qed-firmware dvb-firmware libertas-firmware iwlegacy-firmware
+
 dnf -y autoremove
 dnf -y clean all
+
+# Where the firmware space goes (for future pruning; informational).
+du -sh /usr/lib/firmware/* 2>/dev/null | sort -h | tail -15 || true
 
 # Removals take dependents with them: make sure nothing needed went.
 for pkg in bootc bootupd ostree skopeo podman kernel-core NetworkManager NetworkManager-wifi \
@@ -96,3 +131,8 @@ find /usr/share/doc /usr/share/man /usr/share/info -mindepth 1 \
 # Same rules for future installs (usroverlay, derived images).
 mkdir -p /etc/rpm
 printf '%%_install_langs pl:pl_PL:en:en_US\n%%_excludedocs 1\n' > /etc/rpm/macros.image-language-conf
+
+# ldconfig.service is masked (05-base.sh): the image's /etc/ld.so.cache must
+# be current for what's installed now.
+ldconfig
+test -s /etc/ld.so.cache

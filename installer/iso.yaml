@@ -2,16 +2,19 @@
 # The label must match root=live:CDLABEL and be at most 11 characters (Rufus
 # "ISO mode" truncates FAT32 labels). check-iso.sh enforces both and that
 # rd.live.dir/rd.live.squashimg point at the real squashfs.
-# systemd.tpm2_wait=0: see kargs.d/20-no-tpm-wait.toml.
-# selinux=0: the live root's files carry no SELinux labels.
+# @KARGS@: the image's own kernel arguments (kargs.d), filled in by
+# render-iso-yaml.py: quiet, splash, panel orientation, i915, TPM, SELinux
+# off. "basic graphics" boots without them, with the full boot log on
+# screen, for troubleshooting.
+# selinux=0 (also in kargs.d): the live root's files carry no SELinux labels.
 label: "IMMKIOSK"
 grub2:
   # osbuild's default is 60 s; the tablet has no keyboard to skip it.
   timeout: 3
   entries:
-    - name: "Instalator immutable-kiosk"
-      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=IMMKIOSK rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 systemd.tpm2_wait=0"
+    - name: "immutable-kiosk installer"
+      linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=IMMKIOSK rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 systemd.tpm2_wait=0 @KARGS@"
       initrd: "/images/pxeboot/initrd.img"
-    - name: "Instalator immutable-kiosk (podstawowa grafika)"
+    - name: "immutable-kiosk installer (basic graphics)"
       linux: "/images/pxeboot/vmlinuz root=live:CDLABEL=IMMKIOSK rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img selinux=0 systemd.tpm2_wait=0 nomodeset"
       initrd: "/images/pxeboot/initrd.img"

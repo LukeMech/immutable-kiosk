@@ -45,6 +45,24 @@ systemctl enable immutable-kiosk-ca-trust.service
 systemd-hwdb update --usr
 rm -f /etc/udev/hwdb.bin
 test -s /usr/lib/udev/hwdb.bin
+# - ldconfig.service (13-20 s on the 408): rebuilds /etc/ld.so.cache, which
+#   the image already ships current (post-build.sh runs ldconfig last, and
+#   bootc's /etc merge brings each update's).
+systemctl mask ldconfig.service
+
+# Fedora units that run at every boot for nothing here:
+# - bootloader-update (bootupd, F45): updates GRUB on the ESP unattended --
+#   failed on the 408, and a kiosk's bootloader shouldn't change under it;
+# - authselect-apply-changes: re-applies the PAM/nsswitch profile;
+# - dnf makecache timers: package metadata a bootc system never installs from;
+# - podman's auto-update/restart: no containers run here.
+for unit in bootloader-update.service authselect-apply-changes.service \
+    dnf-makecache.timer dnf5-makecache.timer \
+    podman-auto-update.timer podman-restart.service podman-clean-transient.service; do
+    if systemctl list-unit-files "${unit}" >/dev/null 2>&1; then
+        systemctl mask "${unit}"
+    fi
+done
 
 # fedora-bootc services a kiosk never uses (each costs boot time on the Atom):
 # no directory users (sssd), no LVM/RAID, no mDNS, no homed, udisks2 on demand
