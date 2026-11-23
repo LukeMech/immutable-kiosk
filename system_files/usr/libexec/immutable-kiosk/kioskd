@@ -2383,6 +2383,17 @@ def nearest_grub_colour(rgb):
     return min(GRUB_COLORS, key=lambda n: sum((a - b) ** 2 for a, b in zip(GRUB_COLORS[n], rgb)))
 
 
+def accent_grub_colour(rgb):
+    """The GRUB colour that best gives rgb as a share of it on black, as
+    frame_tiles draws: the hue counts, not the plain distance (that made
+    green dark-gray -- a white dot on the 408)."""
+    def err(n):
+        f = GRUB_COLORS[n]
+        sh = min(max(sum(a * b for a, b in zip(rgb, f)) / sum(b * b for b in f), 0.0), 1.0)
+        return sum((a - sh * b) ** 2 for a, b in zip(rgb, f))
+    return min(GRUB_COLORS, key=err)
+
+
 def frame_tiles(buf, nw, nh, box, palette):
     """The frame in gfxterm's grid: {(col, row): (colour name, bits)}, bits
     CELL_W x CELL_H 0/1 row-major. Per cell the colour of `palette` (GRUB
@@ -2478,7 +2489,7 @@ def grub_splash_files(nw, nh, transform, d, accent, lang, key=""):
     # GRUB puts the whole screen through the firmware at every echo -- a
     # second or more on the 408 for one echo per row; this way the frame
     # takes as many echos as colour changes: two or three.
-    palette = {nearest_grub_colour(d["text"]), nearest_grub_colour(d["accents"][accent])}
+    palette = {nearest_grub_colour(d["text"]), accent_grub_colour(d["accents"][accent])}
     tiles = frame_tiles(buf, nw, nh, box, palette)
     columns = (nw - 2 * GFXTERM_BORDER) // CELL_W
     rows = (nh - 2 * GFXTERM_BORDER) // CELL_H
