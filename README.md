@@ -70,8 +70,9 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
    onto the eMMC with a real progress bar (MB/s, time left), reads it back
    to verify, then asks you to pull the stick and reboot.
 5. First boot grows the root partition to the whole eMMC and opens Settings
-   (no HMI configured yet): Wi-Fi → HMI address (saved as you go); the
-   kiosk switches to the HMI by itself on the next start once it answers.
+   (no HMI configured yet): Wi-Fi → HMI address (saved as you go) →
+   *← Back to HMI*. Every later start shows Settings until the HMI's server
+   answers, then switches to the HMI by itself.
 
 ## Updates
 
