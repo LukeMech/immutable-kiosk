@@ -1090,8 +1090,6 @@ async function refreshDevice() {
     $("dev-vendor").textContent = i.device.vendor || "—";
     $("dev-cpu").textContent = i.device.cpu || "—";
     $("dev-mem").textContent = i.device.memory_mb ? fmtGB(i.device.memory_mb) : "—";
-    $("dev-swap").textContent = i.device.zram
-        ? _("{size} (zram: compressed in memory)", { size: fmtGB(i.device.zram.size_mb) }) : "none";
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {
         h.value = i.hostname;

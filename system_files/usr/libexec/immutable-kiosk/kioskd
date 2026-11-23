@@ -2162,7 +2162,7 @@ def r_info(body, q):
         "mode": mode(),
         "hostname": socket.gethostname(),
         "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor"),
-                   "cpu": cpu_model(), "memory_mb": memory_mb(), "zram": zram_swap()},
+                   "cpu": cpu_model(), "memory_mb": memory_mb()},
         "power": power_state(),
         "net": NET_BRIEF(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
