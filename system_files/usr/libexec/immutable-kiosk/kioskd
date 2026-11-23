@@ -2291,6 +2291,7 @@ GRUB_CONSOLE_CFG = GRUB_DIR / "console.cfg"
 GRUB_FONT = GRUB_DIR / "kiosk-splash.pf2"
 GRUB_FONT_NAME = "kiosk-splash"
 CELL_W, CELL_H = 8, 16          # glyph cell (Unifont's, the menu's fallback font)
+FONT_DESCENT = 2                # below the baseline, of CELL_H (as Unifont)
 GFXTERM_BORDER = 10             # gfxterm's text starts this far in (DEFAULT_BORDER_WIDTH)
 # GRUB's palette (grub_video_fbstd_colors), black left out: it's the background.
 GRUB_COLORS = {"blue": (0, 0, 168), "green": (0, 168, 0), "cyan": (0, 168, 168),
@@ -2421,15 +2422,18 @@ def frame_tiles(buf, nw, nh, box):
 
 
 def pf2_font(glyphs):
-    """A GRUB PFF2 font: glyphs {code: bits}, CELL_W x CELL_H each, top of the
-    cell at its top (ascent = cell height), plus an empty space."""
+    """A GRUB PFF2 font: glyphs {code: bits}, CELL_W x CELL_H each, filling
+    the cell, plus an empty space. Ascent 14 + descent 2 as Unifont's (the
+    fallback font is drawn on our baseline); GRUB refuses a font whose
+    descent is 0 ("missing some required data")."""
     def sec(tag, data):
         return tag + struct.pack(">I", len(data)) + data
     u16 = lambda v: struct.pack(">H", v)
     head = (sec(b"FILE", b"PFF2") + sec(b"NAME", GRUB_FONT_NAME.encode() + b"\0")
             + sec(b"FAMI", GRUB_FONT_NAME.encode() + b"\0") + sec(b"WEIG", b"normal\0")
             + sec(b"SLAN", b"normal\0") + sec(b"PTSZ", u16(CELL_H)) + sec(b"MAXW", u16(CELL_W))
-            + sec(b"MAXH", u16(CELL_H)) + sec(b"ASCE", u16(CELL_H)) + sec(b"DESC", u16(0)))
+            + sec(b"MAXH", u16(CELL_H)) + sec(b"ASCE", u16(CELL_H - FONT_DESCENT))
+            + sec(b"DESC", u16(FONT_DESCENT)))
     glyphs = {**glyphs, 32: (0,) * (CELL_W * CELL_H)}
     codes = sorted(glyphs)
     data_at = len(head) + 8 + 9 * len(codes) + 8
@@ -2441,7 +2445,8 @@ def pf2_font(glyphs):
         for i, b in enumerate(bits):
             if b:
                 packed[i // 8] |= 0x80 >> (i % 8)
-        data += struct.pack(">HHhhh", CELL_W, CELL_H, 0, 0, CELL_W) + packed
+        # Top at the cell's top: baseline (ascent) - y offset - height.
+        data += struct.pack(">HHhhh", CELL_W, CELL_H, 0, -FONT_DESCENT, CELL_W) + packed
     return head + sec(b"CHIX", bytes(index)) + b"DATA" + struct.pack(">I", 0xFFFFFFFF) + bytes(data)
 
 
