@@ -66,7 +66,6 @@
         </div>
         <div class="actions">
           <button class="btn" id="hmi-test">Test connection</button>
-          <button class="btn primary" id="hmi-save">Save and open HMI</button>
         </div>
       </div>
       <div class="card">
@@ -76,7 +75,6 @@
         <label>Retry connecting every (s)
           <input id="opt-retry" type="text" inputmode="numeric">
         </label>
-        <div class="actions"><button class="btn" id="opt-save">Save</button></div>
       </div>
       <div class="card">
         <h2>HMI zoom</h2>
@@ -219,11 +217,10 @@
           <div class="chan">
             <div class="chan-head">Update channel</div>
             <div class="seg" id="chan">
-              <button data-v="stable">Stable</button>
-              <button data-v="dev">Testing (dev)</button>
+              <button class="hold" data-hold="1500" data-v="stable">Stable</button>
+              <button class="hold" data-hold="1500" data-v="dev">Testing (dev)</button>
             </div>
             <p class="hint" id="chan-hint"></p>
-            <button class="btn primary hold" data-hold="1500" id="chan-switch" hidden></button>
           </div>
         </div>
         <div class="sep">
@@ -235,10 +232,7 @@
             <button class="btn hold" data-hold="1500" id="sys-switch">Switch</button>
           </div>
           <label for="sys-repo">Changelog (GitHub: owner/name)</label>
-          <div class="inline">
-            <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
-            <button class="btn hold" data-hold="1500" id="sys-repo-save">Save</button>
-          </div>
+          <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
         </div>
       </div>
       <div class="card">
@@ -258,10 +252,7 @@
           </dd>
           <dt>Host name</dt>
           <dd>
-            <span class="inline">
-              <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
-              <button class="btn" id="host-save" disabled>Save</button>
-            </span>
+            <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
           </dd>
         </dl>
         <!-- Boot screen language status (kioskd writes its files). -->

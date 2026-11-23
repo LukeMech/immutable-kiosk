@@ -95,7 +95,7 @@ function holdButton(btn, fn) {
     let timer = null;
     const cancel = () => { clearTimeout(timer); timer = null; btn.classList.remove("holding"); };
     btn.addEventListener("pointerdown", e => {
-        if (btn.disabled) return;
+        if (btn.disabled || btn.classList.contains("on")) return;
         e.preventDefault();
         btn.classList.add("holding");
         timer = setTimeout(() => { cancel(); fn(); }, ms);
@@ -176,12 +176,10 @@ function renderHmiUrl() {
         setStatus("hmi-st", "warn", ICONS.warn, "No HMI address", "Enter the HMI server's address to show the HMI.");
         return;
     }
-    const unsaved = url !== (cfg && cfg.hmi_url);
     const t = hmiTest && hmiTest.url === url ? hmiTest : null;
-    const note = unsaved ? _("Not saved — “Save and open HMI”") : "";
     if (t && t.busy) setStatus("hmi-st", "busy", ICONS.busy, url, "Testing connection…");
-    else if (t) setStatus("hmi-st", t.ok ? "ok" : "err", t.ok ? ICONS.ok : ICONS.err, url, [i18n.tr(t.message), note].filter(Boolean).join(" · "));
-    else setStatus("hmi-st", unsaved ? "new" : "", ICONS.screen, url, note || "Saved HMI address");
+    else if (t) setStatus("hmi-st", t.ok ? "ok" : "err", t.ok ? ICONS.ok : ICONS.err, url, t.message);
+    else setStatus("hmi-st", "", ICONS.screen, url, url === (cfg && cfg.hmi_url) ? "Saved HMI address" : "");
 }
 
 function readHmiForm() {
@@ -203,7 +201,7 @@ async function loadHmi() {
         if (v === "http" && String(hmiDraft.port) === "1020") $("hmi-port").value = "1010";
         if (v === "https" && String(hmiDraft.port) === "1010") $("hmi-port").value = "1020";
         seg($("hmi-scheme"), v);
-        readHmiForm();
+        saveHmi();
     });
     $("opt-cert").checked = cfg.accept_self_signed;
     $("opt-osk").checked = cfg.osk_in_hmi;
@@ -213,14 +211,30 @@ async function loadHmi() {
     $("back").disabled = !cfg.hmi_url;
 }
 
+// No Save button: the address is saved once a field is left or a choice is
+// tapped; kiosk-shell then loads the HMI from it (once its server answers).
+async function saveHmi() {
+    readHmiForm();
+    if (hmiDraftUrl() === (cfg && cfg.hmi_url)) return;
+    try {
+        cfg = await api("/config", { hmi: hmiDraft });
+        shell("config-changed");
+        $("back").disabled = !cfg.hmi_url;
+    } catch (e) { toast(e.message, true); }
+    renderHmiUrl();
+}
+
 function initHmi() {
-    ["hmi-host", "hmi-port", "hmi-path"].forEach(id => $(id).addEventListener("input", readHmiForm));
+    ["hmi-host", "hmi-port", "hmi-path"].forEach(id => {
+        $(id).addEventListener("input", readHmiForm);
+        $(id).addEventListener("change", saveHmi);
+    });
     document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
         const [scheme, port] = b.dataset.preset.split(":");
         hmiDraft.scheme = scheme;
         $("hmi-port").value = port;
         seg($("hmi-scheme"), scheme);
-        readHmiForm();
+        saveHmi();
     }));
     $("hmi-test").addEventListener("click", e => {
         readHmiForm();
@@ -233,23 +247,16 @@ function initHmi() {
         }).catch(err => { hmiTest = { url, ok: false, message: err.message }; })
             .finally(renderHmiUrl);
     });
-    $("hmi-save").addEventListener("click", e => busy(e.currentTarget, async () => {
-        readHmiForm();
-        cfg = await api("/config", { hmi: hmiDraft });
+    const saveOpts = () => api("/config", {
+        accept_self_signed: $("opt-cert").checked,
+        osk_in_hmi: $("opt-osk").checked,
+        retry_seconds: Number($("opt-retry").value) || 10,
+    }).then(c => {
+        cfg = c;
+        $("opt-retry").value = cfg.retry_seconds;
         shell("config-changed");
-        if (cfg.hmi_url) shell("reload-hmi");
-        $("back").disabled = !cfg.hmi_url;
-        renderHmiUrl();
-    }).catch(() => {}));
-    $("opt-save").addEventListener("click", e => busy(e.currentTarget, async () => {
-        cfg = await api("/config", {
-            accept_self_signed: $("opt-cert").checked,
-            osk_in_hmi: $("opt-osk").checked,
-            retry_seconds: Number($("opt-retry").value) || 10,
-        });
-        shell("config-changed");
-        toast("Saved");
-    }));
+    }).catch(e => toast(e.message, true));
+    ["opt-cert", "opt-osk", "opt-retry"].forEach(id => $(id).addEventListener("change", saveOpts));
 }
 
 /* ---------- Wi-Fi */
@@ -480,8 +487,7 @@ async function loadNet(live = false) {
               <label>DNS 2<input name="dns2" type="text" inputmode="decimal"></label>
             </div>
           </div>
-          <p class="msg"></p>
-          <div class="actions"><button class="btn primary save">Apply</button></div></div>`;
+          <p class="msg"></p></div>`;
         let method = c.method === "manual" ? "manual" : "auto";
         const segEl = el.querySelector(".seg"), manual = el.querySelector(".manual");
         const f = name => el.querySelector(`[name=${name}]`);
@@ -490,20 +496,32 @@ async function loadNet(live = false) {
         f("gateway").value = c.gateway || cur.gateway;
         f("dns1").value = (c.dns.length ? c.dns : cur.dns)[0] || "";
         f("dns2").value = (c.dns.length ? c.dns : cur.dns)[1] || "";
+        const m = el.querySelector(".msg");
+        const body = () => ({
+            uuid: c.uuid, method, address: f("address").value.trim(), prefix: Number(f("prefix").value),
+            gateway: f("gateway").value.trim(), dns: [f("dns1").value.trim(), f("dns2").value.trim()],
+        });
+        // No Apply button: applied once a field is left or the method tapped,
+        // and only what changed (a static address needs its address and mask).
+        let applied = JSON.stringify({ ...body(), method: c.method === "manual" ? "manual" : "auto" });
+        const apply = async () => {
+            const b = body(), key = JSON.stringify(b);
+            if (key === applied || (method === "manual" && !(b.address && b.prefix))) return;
+            applied = key;
+            try {
+                await api("/network", b);
+                msg(m, "Applied. Reconnecting…", "ok");
+                el.classList.remove("dirty");  // NetworkManager's events bring the new state
+            } catch (e) {
+                applied = null;
+                msg(m, e.message, "err");
+            }
+        };
         const pick = v => { method = v; seg(segEl, v); manual.hidden = v !== "manual"; };
-        seg(segEl, method, pick);
+        seg(segEl, method, v => { el.classList.add("dirty"); pick(v); apply(); });
         pick(method);
-        const save = el.querySelector(".save"), m = el.querySelector(".msg");
         el.addEventListener("input", () => el.classList.add("dirty"));
-        segEl.addEventListener("click", () => el.classList.add("dirty"));
-        save.addEventListener("click", () => busy(save, async () => {
-            await api("/network", {
-                uuid: c.uuid, method, address: f("address").value, prefix: Number(f("prefix").value),
-                gateway: f("gateway").value, dns: [f("dns1").value, f("dns2").value],
-            });
-            msg(m, "Applied. Reconnecting…", "ok");
-            el.classList.remove("dirty");  // NetworkManager's events bring the new state
-        }).catch(e => msg(m, e.message, "err")));
+        el.querySelectorAll("input").forEach(i => i.addEventListener("change", apply));
         box.appendChild(el);
     }
 }
@@ -692,31 +710,24 @@ function renderSteps(job, el) {
 }
 
 const CHANNEL_NAMES = { stable: "stable", dev: "testing" };
-let chanPick = null;  // a channel tapped but not switched to yet
 
+// The other channel is held to switch to it (holdButton, initSystem).
 function renderChannel(running) {
     const s = sys, avail = !!(s && s.available);
     const cur = avail ? s.next_channel : null;
-    if (chanPick === cur) chanPick = null;
-    const sel = chanPick || cur;
     $("chan").querySelectorAll("button").forEach(b => {
-        b.classList.toggle("on", b.dataset.v === sel);
+        b.classList.toggle("on", b.dataset.v === cur);
         b.disabled = running || !avail;
     });
-    let hint = "Stable: tested releases. Testing: every change right away.";
-    if (chanPick) {
-        hint = _(chanPick === "stable" && cur === "dev"
-            ? "Downloads the {channel} channel and switches to it after a restart. It may be older."
-            : "Downloads the {channel} channel and switches to it after a restart.", { channel: CHANNEL_NAMES[chanPick] });
-    } else if (avail && cur === "custom") {
-        hint = "Custom image: pick a channel to get updates again.";
+    let hint = "Stable: tested releases. Testing: every change right away. Hold a channel to switch to it.";
+    if (avail && cur === "custom") {
+        hint = "Custom image: hold a channel to get updates again.";
     } else if (avail && s.channel !== s.next_channel) {
         hint = _("After a restart: {channel} channel.", { channel: CHANNEL_NAMES[s.next_channel] || "custom" });
+    } else if (avail && cur === "dev") {
+        hint = "Stable: tested releases, may be older than this one. Hold it to switch.";
     }
     $("chan-hint").textContent = hint;
-    $("chan-switch").hidden = !chanPick;
-    $("chan-switch").disabled = running;
-    if (chanPick) $("chan-switch").textContent = _("Hold: switch to the {channel} channel", { channel: CHANNEL_NAMES[chanPick] });
 }
 
 let sys = null;          // GET /system (bootc status + last check)
@@ -993,7 +1004,6 @@ async function refreshDevice() {
     const h = $("host-name");
     if (hostSaved !== i.hostname && (document.activeElement !== h && (hostSaved === null || h.value === hostSaved))) {
         h.value = i.hostname;
-        $("host-save").disabled = true;
     }
     hostSaved = i.hostname;
     if (tzZones && i.timezone !== tzCurrent && document.activeElement !== $("tz-city")) {
@@ -1186,15 +1196,10 @@ function initSystem() {
     // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
-    $("chan").addEventListener("click", e => {
-        const b = e.target.closest("button");
-        if (!b || b.disabled) return;
-        chanPick = b.dataset.v;
-        renderChannel(!!(sysJob && sysJob.state === "running"));
-    });
-    holdButton($("chan-switch"), () => api("/system/channel", { channel: chanPick })
-        .then(j => { chanPick = null; sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
-        .catch(e => toast(e.message, true)));
+    $("chan").querySelectorAll("button").forEach(b => holdButton(b, () =>
+        api("/system/channel", { channel: b.dataset.v })
+            .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
+            .catch(e => toast(e.message, true))));
     holdButton($("sys-switch"), () => api("/system/switch", { image: $("sys-image").value.trim() })
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
@@ -1212,11 +1217,10 @@ function initSystem() {
         .catch(e => toast(e.message, true)));
     holdButton($("pw-off"), power("poweroff"));
 
-    holdButton($("sys-repo-save"), () => api("/config", { releases_repo: $("sys-repo").value })
+    $("sys-repo").addEventListener("change", () => api("/config", { releases_repo: $("sys-repo").value })
         .then(c => {
             cfg = c;
             $("sys-repo").value = cfg.releases_repo;
-            $("sys-repo").blur();
             toast(_("Changelog from {repo}", { repo: cfg.releases_repo }));
             $("upd-notes").dataset.key = "";
             return loadNotes();
@@ -1232,14 +1236,14 @@ function initSystem() {
             if (i18n.use(c.language)) { showTab(currentTab); refreshDevice(); }
         }).catch(e => toast(e.message, true));
     });
-    $("host-name").addEventListener("input", e => { $("host-save").disabled = e.target.value === hostSaved; });
-    $("host-save").addEventListener("click", e => busy(e.currentTarget, async () => {
-        const r = await api("/hostname", { hostname: $("host-name").value });
-        hostSaved = r.hostname;
-        $("host-name").value = r.hostname;
-        $("host-name").blur();
-        toast(_("Host name: {name}. The router will see it on its next connection.", { name: r.hostname }));
-    }).then(() => { $("host-save").disabled = true; }).catch(() => {}));
+    $("host-name").addEventListener("change", e => {
+        if (e.target.value.trim() === hostSaved) return;
+        api("/hostname", { hostname: e.target.value }).then(r => {
+            hostSaved = r.hostname;
+            $("host-name").value = r.hostname;
+            toast(_("Host name: {name}. The router will see it on its next connection.", { name: r.hostname }));
+        }).catch(err => { toast(err.message, true); $("host-name").value = hostSaved || ""; });
+    });
 
     $("tz-region").addEventListener("change", e => renderTz(e.target.value));
     $("tz-city").addEventListener("change", e => {

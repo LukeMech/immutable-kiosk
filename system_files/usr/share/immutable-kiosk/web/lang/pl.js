@@ -41,7 +41,6 @@ window.I18N_LANGS.pl = function (tr) {
         "e.g. 192.168.1.50": "np. 192.168.1.50",
         "Path": "Ścieżka",
         "Test connection": "Sprawdź połączenie",
-        "Save and open HMI": "Zapisz i otwórz HMI",
         "Behavior": "Zachowanie",
         "Accept the HMI server's certificate (self-signed)": "Akceptuj certyfikat serwera HMI (self-signed)",
         "On-screen keyboard in the HMI too": "Klawiatura ekranowa także w HMI",
@@ -52,7 +51,6 @@ window.I18N_LANGS.pl = function (tr) {
             "Tylko strona wizualizacji. Wszystko naraz: Ekran → Skalowanie ekranu.",
         "No HMI address": "Brak adresu HMI",
         "Enter the HMI server's address to show the HMI.": "Podaj adres serwera HMI, żeby wyświetlić wizualizację.",
-        "Not saved — “Save and open HMI”": "Niezapisane — „Zapisz i otwórz HMI”",
         "Testing connection…": "Sprawdzanie połączenia…",
         "Saved HMI address": "Zapisany adres wizualizacji",
         "Saved": "Zapisano",
@@ -121,7 +119,6 @@ window.I18N_LANGS.pl = function (tr) {
         "Automatic (DHCP)": "Automatycznie (DHCP)",
         "Static address": "Statyczny adres",
         "Mask (prefix)": "Maska (prefiks)",
-        "Apply": "Zastosuj",
         "Applied. Reconnecting…": "Zastosowano. Połączenie jest odnawiane…",
 
         // ---- Display tab
@@ -170,8 +167,11 @@ window.I18N_LANGS.pl = function (tr) {
         "Update channel": "Kanał aktualizacji",
         "Stable": "Stabilny",
         "Testing (dev)": "Testowy (dev)",
-        "Stable: tested releases. Testing: every change right away.": "Stabilny: sprawdzone wydania. Testowy: każda zmiana od razu.",
-        "Custom image: pick a channel to get updates again.": "Własny obraz: wybierz kanał, by wrócić do aktualizacji.",
+        "Stable: tested releases. Testing: every change right away. Hold a channel to switch to it.":
+            "Stabilny: sprawdzone wydania. Testowy: każda zmiana od razu. Przytrzymaj kanał, by na niego przejść.",
+        "Custom image: hold a channel to get updates again.": "Własny obraz: przytrzymaj kanał, by wrócić do aktualizacji.",
+        "Stable: tested releases, may be older than this one. Hold it to switch.":
+            "Stabilny: sprawdzone wydania, może być starszy od tej wersji. Przytrzymaj, by przejść.",
         "Custom system image": "Własny obraz systemu",
         "Only images signed with the ghcr.io/lukemech key.": "Tylko obrazy podpisane kluczem ghcr.io/lukemech.",
         "Image": "Obraz",
@@ -448,12 +448,7 @@ window.I18N_LANGS.pl = function (tr) {
         "Brightness: {min}-100%": "Jasność: {min}-100%",
 
         // ---- System: update, channel
-        "Downloads the {channel} channel and switches to it after a restart.":
-            v => `Pobierze kanał ${ch(v.channel)}, włączy go po restarcie.`,
-        "Downloads the {channel} channel and switches to it after a restart. It may be older.":
-            v => `Pobierze kanał ${ch(v.channel)}, włączy go po restarcie. Może być starszy.`,
         "After a restart: {channel} channel.": v => `Po restarcie: kanał ${ch(v.channel)}.`,
-        "Hold: switch to the {channel} channel": v => `Przytrzymaj: przejdź na kanał ${ch(v.channel)}`,
         "Switching to the {channel} channel": v => `Przejście na kanał ${ch(v.channel)}`,
         "The system is already on the {channel} channel": v => `System już jest na kanale ${ch(v.channel)}`,
         "Switching image to {image}": "Zmiana obrazu na {image}",

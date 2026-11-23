@@ -93,10 +93,11 @@ div.inline { margin-top: 6px; }
 .btn:active { filter: brightness(1.25); }
 .btn[disabled] { opacity: .45; pointer-events: none; }
 /* Hold-to-confirm fill. */
-.btn.hold::before {
+.btn.hold::before, .seg button.hold::before {
     content: ""; position: absolute; inset: 0; width: 0; background: rgba(255,255,255,.22);
 }
-.btn.hold.holding::before { width: 100%; transition: width var(--hold, 1500ms) linear; }
+.btn.hold.holding::before, .seg button.hold.holding::before { width: 100%; transition: width var(--hold, 1500ms) linear; }
+.seg button.hold { position: relative; overflow: hidden; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 .actions .btn { flex: 1 1 200px; }
