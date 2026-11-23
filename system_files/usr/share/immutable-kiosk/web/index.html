@@ -18,6 +18,7 @@
         <span class="netbar" id="netbar" hidden></span>
         <span class="batt" id="batt" hidden></span>
         <span class="clock" id="clock"></span>
+        <span class="hmiwait" id="hmiwait" hidden></span>
       </div>
       <button id="back" class="btn primary">← Back to HMI</button>
     </div>
@@ -85,6 +86,18 @@
           <button class="btn" id="zoom-plus">+</button>
         </div>
       </div>
+      <div class="card">
+        <h2>Reset</h2>
+        <p class="hint">The HMI's address, behavior and zoom go back to the defaults.</p>
+        <div class="status" id="rst-hmi-st" hidden>
+          <div class="status-icon" id="rst-hmi-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="rst-hmi-st-title"></div>
+            <div class="status-sub" id="rst-hmi-st-sub"></div>
+          </div>
+        </div>
+        <div class="actions"><button class="btn danger hold" data-hold="3000" id="rst-hmi">Hold: reset HMI settings</button></div>
+      </div>
     </section>
 
     <!-- NETWORK: IP cards first, then Wi-Fi -->
@@ -119,6 +132,20 @@
         <label>Network name (SSID)<input id="hid-ssid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
         <label>Password<input id="hid-pass" type="password" autocomplete="off"></label>
         <div class="actions"><button class="btn primary" id="hid-connect">Connect</button></div>
+      </div>
+      <!-- Saved connections that aren't up: their IP settings (loadNet). -->
+      <div id="net-other"></div>
+      <div class="card">
+        <h2>Reset</h2>
+        <p class="hint">Forgets every saved Wi-Fi network and IP setting. A cable gets its address by DHCP again.</p>
+        <div class="status" id="rst-net-st" hidden>
+          <div class="status-icon" id="rst-net-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="rst-net-st-title"></div>
+            <div class="status-sub" id="rst-net-st-sub"></div>
+          </div>
+        </div>
+        <div class="actions"><button class="btn danger hold" data-hold="3000" id="rst-net">Hold: reset network settings</button></div>
       </div>
     </section>
 
@@ -183,6 +210,18 @@
           <button data-v="bottom-left">↙ Bottom left</button>
           <button data-v="bottom-right">↘ Bottom right</button>
         </div>
+      </div>
+      <div class="card">
+        <h2>Reset</h2>
+        <p class="hint">Brightness, accent color, orientation, scaling and the Settings corner go back to the defaults.</p>
+        <div class="status" id="rst-screen-st" hidden>
+          <div class="status-icon" id="rst-screen-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="rst-screen-st-title"></div>
+            <div class="status-sub" id="rst-screen-st-sub"></div>
+          </div>
+        </div>
+        <div class="actions"><button class="btn danger hold" data-hold="3000" id="rst-screen">Hold: reset display settings</button></div>
       </div>
     </section>
 

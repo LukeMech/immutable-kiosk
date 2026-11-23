@@ -305,8 +305,10 @@ async function loadWifi(rescan, live = false, scan = false) {
     $("wifi-radio-box").hidden = !w.device;
     renderWifiStatus();
     const list = $("wifi-list");
-    // Don't rebuild under a password being typed.
-    if (live && [...list.querySelectorAll("input")].some(i => i.value || i === document.activeElement)) return;
+    // Don't rebuild under a password or a static address being typed.
+    const open = list.querySelector(".expand:not([hidden])");
+    if (live && open && (open.querySelector("input:focus") || open.querySelector('input[type="password"]')?.value
+        || open.querySelector('.ipv4-method button.on[data-v="manual"]'))) return;
     const others = w.networks.filter(n => !n.in_use);
     list.innerHTML = others.length ? "" : `<li class="empty">${w.enabled ? "No other networks found." : "Wi-Fi is off."}</li>`;
     for (const n of others) {
@@ -326,11 +328,15 @@ async function loadWifi(rescan, live = false, scan = false) {
         item.classList.toggle("open", !ex.hidden);
         // Saved: NetworkManager's stored password, unless "Other password".
         const remembered = n.saved && n.security;
+        // A new network: DHCP or a static address from the start (a saved
+        // one's are in its IP address card).
         ex.innerHTML = (remembered ? '<p class="hint">Saved — connects with the remembered password.</p>' : "") +
             (n.security ? `<label class="pw"${remembered ? " hidden" : ""}>Password
                 <input type="password" autocomplete="off"></label>` : "") +
+            (n.saved ? "" : `<h3>IP address</h3>${IPV4_HTML}`) +
             `<div class="actions"><button class="btn primary go">Connect</button>` +
             (remembered ? '<button class="btn other">Other password</button>' : "") + `</div>`;
+        const ipv4 = n.saved ? null : ipv4Form(ex, { method: "auto" });
         const btn = ex.querySelector(".go");
         ex.querySelector(".other")?.addEventListener("click", e => {
             ex.querySelector(".pw").hidden = false;
@@ -341,10 +347,11 @@ async function loadWifi(rescan, live = false, scan = false) {
         btn.addEventListener("click", () => busy(btn, async () => {
             const pw = ex.querySelector(".pw");
             const pass = pw && !pw.hidden ? pw.querySelector("input").value : "";
+            const ip = ipv4 && ipv4.method === "manual" ? ipv4.read() : undefined;
             wifiOverride = { state: "busy", icon: ICONS.busy, title: _("Connecting to {name}…", { name: n.ssid }), sub: "This can take up to a minute." };
             renderWifiStatus();
             try {
-                await api("/wifi/connect", { ssid: n.ssid, password: pass });
+                await api("/wifi/connect", { ssid: n.ssid, password: pass, security: n.security, ipv4: ip });
                 wifiOverride = null;
                 openSsid = null;
             } catch (e) {
@@ -400,6 +407,28 @@ async function loadWifi(rescan, live = false, scan = false) {
     }
 }
 
+// A tab's reset (kioskd r_settings_reset): its status line, then a reload.
+function resetButton(part, api_part, done) {
+    const st = `rst-${part}-st`;
+    holdButton($(`rst-${part}`), async () => {
+        $(st).hidden = false;
+        setStatus(st, "busy", ICONS.busy, "Resetting…");
+        try {
+            const r = await api("/settings/reset", { part: api_part });
+            setStatus(st, "ok", ICONS.ok, "Back to the defaults");
+            await done(r);
+        } catch (e) {
+            setStatus(st, "err", ICONS.err, "Couldn't reset", e.message);
+        }
+    });
+}
+
+function initResets() {
+    resetButton("hmi", "hmi", async r => { cfg = r; shell("config-changed"); await loadHmi(); });
+    resetButton("net", "network", async () => { await loadWifi(false); await loadNet(); });
+    resetButton("screen", "screen", async r => { cfg = r; shell("config-changed"); applyAccent(cfg.accent); loadScreen(); });
+}
+
 function initWifi() {
     $("wifi-scan").addEventListener("click", e => {
         const b = e.currentTarget;
@@ -445,37 +474,9 @@ function initWifi() {
 const statusHtml = (state, icon, title, sub) => `<div class="status ${state}"><div class="status-icon">${icon}</div>
     <div class="status-text"><div class="status-title">${esc(title)}</div><div class="status-sub">${esc(sub)}</div></div></div>`;
 
-async function loadNet(live = false) {
-    const box = $("net-list");
-    // Don't rebuild a card being edited.
-    if (live && box.querySelector(".card.dirty")) return;
-    let n;
-    const lone = (state, icon, title, sub) => `<div class="card"><h2>Connection</h2>${statusHtml(state, icon, title, sub)}</div>`;
-    try { n = await api("/network"); }
-    catch (e) { box.innerHTML = lone("err", ICONS.err, "Couldn't read the network", e.message); return; }
-    if (!n.connections.length) {
-        box.innerHTML = `<div class="card"><h2>IP address</h2>` + statusHtml("off", ICONS.ethernet, "No connection",
-            "Join a Wi-Fi network below or plug in a cable (USB-Ethernet adapter).") + `</div>`;
-        return;
-    }
-    box.innerHTML = "";
-    for (const c of n.connections) {
-        const el = document.createElement("div");
-        el.className = "card";
-        const cur = c.current;
-        const kind = c.type === "wifi" ? "Wi-Fi" : c.type === "ethernet" ? "Ethernet" : c.type;
-        const has = cur.addresses.length > 0;
-        const how = c.method === "manual" ? "{addresses} · static address" : "{addresses} · DHCP address";
-        el.innerHTML = `<h2>${_("IP address · {kind}", { kind: esc(kind) })}</h2>` +
-          statusHtml(has ? "ok" : "busy", has ? (c.type === "wifi" ? wifiIcon(3) : ICONS.ethernet) : ICONS.busy,
-                     c.name, has ? _(how, { addresses: cur.addresses.join(", ") }) : "Waiting for an IP address…") + `
-          <dl class="kv">
-            <dt>Gateway</dt><dd>${esc(cur.gateway || "—")}</dd>
-            <dt>DNS</dt><dd>${esc(cur.dns.join(", ") || "—")}</dd>
-            <dt>Interface</dt><dd>${esc(c.device || "—")}</dd>
-          </dl>
-          <div class="sep"><h3>IPv4 addressing</h3>
-          <div class="seg"><button data-v="auto">Automatic (DHCP)</button><button data-v="manual">Static address</button></div>
+// IPv4 settings (a Network card, a new Wi-Fi network): DHCP or a static
+// address. ipv4Form(root, start) fills it in; .read() gives kioskd's body.
+const IPV4_HTML = `<div class="seg ipv4-method"><button data-v="auto">Automatic (DHCP)</button><button data-v="manual">Static address</button></div>
           <div class="manual">
             <div class="grid2">
               <label>IP address<input name="address" type="text" inputmode="decimal" placeholder="192.168.1.20"></label>
@@ -486,43 +487,107 @@ async function loadNet(live = false) {
               <label>DNS 1<input name="dns1" type="text" inputmode="decimal"></label>
               <label>DNS 2<input name="dns2" type="text" inputmode="decimal"></label>
             </div>
-          </div>
-          <p class="msg"></p></div>`;
-        let method = c.method === "manual" ? "manual" : "auto";
-        const segEl = el.querySelector(".seg"), manual = el.querySelector(".manual");
-        const f = name => el.querySelector(`[name=${name}]`);
-        f("address").value = c.address || (cur.addresses[0] || "").split("/")[0];
-        f("prefix").value = c.prefix || (cur.addresses[0] || "/24").split("/")[1];
-        f("gateway").value = c.gateway || cur.gateway;
-        f("dns1").value = (c.dns.length ? c.dns : cur.dns)[0] || "";
-        f("dns2").value = (c.dns.length ? c.dns : cur.dns)[1] || "";
-        const m = el.querySelector(".msg");
-        const body = () => ({
-            uuid: c.uuid, method, address: f("address").value.trim(), prefix: Number(f("prefix").value),
+          </div>`;
+
+function ipv4Form(root, start, onPick) {
+    const segEl = root.querySelector(".ipv4-method"), manual = root.querySelector(".manual");
+    const f = name => root.querySelector(`[name=${name}]`);
+    f("address").value = start.address || "";
+    f("prefix").value = start.prefix || 24;
+    f("gateway").value = start.gateway || "";
+    f("dns1").value = (start.dns || [])[0] || "";
+    f("dns2").value = (start.dns || [])[1] || "";
+    const form = {
+        method: start.method === "manual" ? "manual" : "auto",
+        read: () => ({
+            method: form.method, address: f("address").value.trim(), prefix: Number(f("prefix").value),
             gateway: f("gateway").value.trim(), dns: [f("dns1").value.trim(), f("dns2").value.trim()],
-        });
+        }),
+        // A static address needs its address and mask before it's any use.
+        complete: () => form.method === "auto" || !!(f("address").value.trim() && Number(f("prefix").value)),
+    };
+    const pick = v => { form.method = v; seg(segEl, v); manual.hidden = v !== "manual"; };
+    seg(segEl, form.method, v => { pick(v); if (onPick) onPick(v); });
+    pick(form.method);
+    return form;
+}
+
+// A card's last save, shown again when NetworkManager's events rebuild it.
+const netNotes = {};
+
+async function loadNet(live = false) {
+    const box = $("net-list"), other = $("net-other");
+    // Don't rebuild a card being edited.
+    if (live && (box.querySelector(".card.dirty") || other.querySelector(".card.dirty"))) return;
+    let n;
+    const lone = (state, icon, title, sub) => `<div class="card"><h2>Connection</h2>${statusHtml(state, icon, title, sub)}</div>`;
+    try { n = await api("/network"); }
+    catch (e) { box.innerHTML = lone("err", ICONS.err, "Couldn't read the network", e.message); return; }
+    box.innerHTML = other.innerHTML = "";
+    if (!n.connections.some(c => c.active)) {
+        box.innerHTML = `<div class="card"><h2>IP address</h2>` + statusHtml("off", ICONS.ethernet, "No connection",
+            "Join a Wi-Fi network below or plug in a cable (USB-Ethernet adapter).") + `</div>`;
+    }
+    for (const c of n.connections) {
+        const el = document.createElement("div");
+        el.className = "card";
+        const cur = c.current;
+        const kind = c.type === "wifi" ? "Wi-Fi" : c.type === "ethernet" ? "Ethernet" : c.type;
+        const icon = c.type === "wifi" ? wifiIcon(3) : ICONS.ethernet;
+        const has = cur.addresses.length > 0;
+        const how = c.method === "manual" ? "{addresses} · static address" : "{addresses} · DHCP address";
+        // Saved but not connected: its settings can still be set (a network
+        // whose DHCP server doesn't answer).
+        const head = !c.active
+            ? statusHtml("off", c.type === "wifi" ? wifiIcon(0) : ICONS.ethernet, c.name,
+                         "Not connected · these settings are used on its next connection")
+            : statusHtml(has ? "ok" : "busy", has ? icon : ICONS.busy, c.name,
+                         has ? _(how, { addresses: cur.addresses.join(", ") }) : "Waiting for an IP address…") + `
+          <dl class="kv">
+            <dt>Gateway</dt><dd>${esc(cur.gateway || "—")}</dd>
+            <dt>DNS</dt><dd>${esc(cur.dns.join(", ") || "—")}</dd>
+            <dt>Interface</dt><dd>${esc(c.device || "—")}</dd>
+          </dl>`;
+        el.innerHTML = `<h2>${_("IP address · {kind}", { kind: esc(kind) })}</h2>` + head + `
+          <div class="sep"><h3>IPv4 addressing</h3>
+          ${IPV4_HTML}
+          <div class="applied" hidden></div></div>`;
+        const note = el.querySelector(".applied");
+        const show = (state, ic, title, sub) => {
+            netNotes[c.uuid] = { state, ic, title, sub, at: Date.now() };
+            note.innerHTML = statusHtml(state, ic, title, sub);
+            note.hidden = false;
+        };
+        const last = netNotes[c.uuid];
+        if (last && Date.now() - last.at < 15000) show(last.state, last.ic, last.title, last.sub);
+        const form = ipv4Form(el, {
+            method: c.method,
+            address: c.address || (cur.addresses[0] || "").split("/")[0],
+            prefix: c.prefix || (cur.addresses[0] || "/24").split("/")[1],
+            gateway: c.gateway || cur.gateway,
+            dns: c.dns.length ? c.dns : cur.dns,
+        }, () => { el.classList.add("dirty"); apply(); });
         // No Apply button: applied once a field is left or the method tapped,
-        // and only what changed (a static address needs its address and mask).
-        let applied = JSON.stringify({ ...body(), method: c.method === "manual" ? "manual" : "auto" });
+        // and only what changed.
+        let applied = JSON.stringify({ ...form.read(), method: c.method === "manual" ? "manual" : "auto" });
         const apply = async () => {
-            const b = body(), key = JSON.stringify(b);
-            if (key === applied || (method === "manual" && !(b.address && b.prefix))) return;
+            const b = form.read(), key = JSON.stringify(b);
+            if (key === applied || !form.complete()) return;
             applied = key;
+            show("busy", ICONS.busy, "Saving…", "");
             try {
-                await api("/network", b);
-                msg(m, "Applied. Reconnecting…", "ok");
+                await api("/network", { uuid: c.uuid, ...b });
+                show("ok", ICONS.ok, "Settings saved", c.active ? "Reconnecting with them…"
+                    : "Used on the next connection to this network.");
                 el.classList.remove("dirty");  // NetworkManager's events bring the new state
             } catch (e) {
                 applied = null;
-                msg(m, e.message, "err");
+                show("err", ICONS.err, "Couldn't save the settings", e.message);
             }
         };
-        const pick = v => { method = v; seg(segEl, v); manual.hidden = v !== "manual"; };
-        seg(segEl, method, v => { el.classList.add("dirty"); pick(v); apply(); });
-        pick(method);
         el.addEventListener("input", () => el.classList.add("dirty"));
         el.querySelectorAll("input").forEach(i => i.addEventListener("change", apply));
-        box.appendChild(el);
+        (c.active ? box : other).appendChild(el);
     }
 }
 
@@ -1062,14 +1127,14 @@ function renderBar(i) {
 // Wi-Fi signal + name or Ethernet; while waiting for the HMI, what it waits for.
 let barNet = null;
 function renderNetbar() {
-    const n = barNet, nb = $("netbar");
-    nb.classList.toggle("waiting", hmiWaiting);
+    const n = barNet, nb = $("netbar"), hw = $("hmiwait");
+    // Waiting for the HMI: a spinner after the clock, the network where it was.
+    hw.hidden = !hmiWaiting;
     if (hmiWaiting) {
-        nb.hidden = false;
-        nb.innerHTML = `${ICONS.busy}<span>${n ? "Connecting to HMI…" : "Waiting for network…"}</span>`;
-        nb.title = n ? _("{name}: the HMI isn't answering yet, the kiosk will switch to it by itself", { name: n.name })
+        hw.innerHTML = ICONS.busy;
+        hw.title = n ? _("{name}: the HMI isn't answering yet, the kiosk will switch to it by itself", { name: n.name })
             : "The kiosk switches to the HMI once there's a network and the HMI answers";
-        return;
+        hw.setAttribute("aria-label", n ? "Connecting to HMI…" : "Waiting for network…");
     }
     nb.hidden = !n;
     if (n) {
@@ -1328,6 +1393,7 @@ async function initSettings() {
     initWifi();
     initScreen();
     initSystem();
+    initResets();
     refreshDevice();
     initEvents();
     showTab("hmi");

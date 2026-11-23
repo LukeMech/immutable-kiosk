@@ -365,12 +365,23 @@ def save_config(update):
             raise ApiError(Msg("Brightness: {min}-100%", min=BRIGHTNESS_MIN))
         brightness_set(b)
         cfg["brightness"] = b
+    write_config(cfg)
+    return effective_config()
+
+
+def write_config(cfg):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2))
     os.chmod(tmp, 0o644)
     tmp.replace(CONFIG_FILE)
-    return effective_config()
+
+
+# Settings' tabs: what each one's reset puts back to the defaults.
+RESET_KEYS = {
+    "hmi": ("hmi", "osk_in_hmi", "accept_self_signed", "zoom", "retry_seconds"),
+    "screen": ("rotation", "scale", "settings_corner", "accent", "brightness"),
+}
 
 
 # ---------------------------------------------------------------- nmcli
@@ -645,33 +656,68 @@ def wifi_radio_on():
     run(["nmcli", "dev", "wifi", "list", "--rescan", "yes"], check=False, timeout=45)
 
 
-def wifi_connect(ssid, password, hidden):
+def wifi_connect(ssid, password, hidden, ipv4=None, security=""):
+    """ipv4: {method, address, ...} (ipv4_args) for the profile, e.g. a
+    static address for a network whose DHCP server doesn't answer; None =
+    the saved profile's, or DHCP for a new one. security: the scan's
+    (WPA2, WPA3...)."""
     if not ssid:
         raise ApiError("Enter the network name")
+    ip = ipv4_args(ipv4) if ipv4 else None
     wifi_radio_on()
     existing = [s for s in saved_wifi() if s["ssid"] == ssid]
     if existing and not password:
+        if ip:
+            run(["nmcli", "con", "mod", existing[0]["uuid"]] + ip)
         run(["nmcli", "con", "up", existing[0]["uuid"]], timeout=60)
         return
     # New password = new profile, or the stale one would be tried first.
     for s in existing:
         run(["nmcli", "con", "delete", s["uuid"]], check=False)
     # Password is briefly on nmcli's argv; only root and kiosk users exist.
-    cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+    if not ip:
+        cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+        if password:
+            cmd += ["password", password]
+        if hidden:
+            cmd += ["hidden", "yes"]
+        run(cmd, timeout=90)
+        return
+    # `nmcli dev wifi connect` only does DHCP: the profile made by hand, then up.
+    cmd = ["nmcli", "con", "add", "type", "wifi", "con-name", ssid, "ssid", ssid]
     if password:
-        cmd += ["password", password]
+        sae = "WPA3" in security and "WPA2" not in security
+        cmd += ["wifi-sec.key-mgmt", "sae" if sae else "wpa-psk", "wifi-sec.psk", password]
     if hidden:
-        cmd += ["hidden", "yes"]
-    run(cmd, timeout=90)
+        cmd += ["802-11-wireless.hidden", "yes"]
+    m = re.search(r"\(([0-9a-fA-F-]{36})\)", run(cmd + ip))
+    if not m:
+        raise ApiError("Couldn't connect")
+    try:
+        run(["nmcli", "con", "up", m.group(1)], timeout=90)
+    except ApiError:
+        # Not kept: a wrong password would be tried again next time.
+        run(["nmcli", "con", "delete", m.group(1)], check=False)
+        raise
+
+
+NET_TYPES = ("802-11-wireless", "802-3-ethernet")
 
 
 def network_state():
+    """Connections that are up (or coming up), then saved Wi-Fi/Ethernet ones
+    that aren't: their IP settings can be set before they connect (a
+    network without DHCP)."""
     conns = []
-    active = [r for r in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show", "--active"])
-              if r[2] != "loopback" and r[3] != "lo"]
+    rows = [r for r in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"])
+            if r[2] != "loopback" and r[3] != "lo"]
+    up = [r for r in rows if r[3] not in ("", "--")]
+    active = up + [r for r in rows if r[3] in ("", "--") and r[2] in NET_TYPES]
     # Every connection's profile and live IPv4 at once (see parallel()).
-    reads = parallel(*[lambda u=uuid, f=fields: nm_kv(["-f", f, "con", "show", u])
-                       for _, uuid, _, _ in active
+    # (A connection that isn't up has no live IP4.)
+    reads = parallel(*[(lambda u=uuid, f=fields: nm_kv(["-f", f, "con", "show", u]))
+                       if fields != "IP4" or dev not in ("", "--") else dict
+                       for _, uuid, _, dev in active
                        for fields in ("ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "IP4")])
     for i, (name, uuid, ctype, dev) in enumerate(active):
         cfg, live = reads[2 * i], reads[2 * i + 1]
@@ -687,7 +733,8 @@ def network_state():
             "name": name,
             "uuid": uuid,
             "type": "wifi" if ctype == "802-11-wireless" else ("ethernet" if ctype == "802-3-ethernet" else ctype),
-            "device": dev,
+            "device": dev if dev not in ("", "--") else "",
+            "active": dev not in ("", "--"),
             "method": cfg.get("ipv4.method", "auto"),
             "address": first.split("/")[0] if first else "",
             "prefix": int(first.split("/")[1]) if "/" in first else 24,
@@ -705,10 +752,9 @@ def network_state():
 NETWORK = Coalesce(network_state, 3.0)
 
 
-def network_set(body):
-    uuid = body.get("uuid") or ""
-    if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
-        raise ApiError("No connection to change")
+def ipv4_args(body):
+    """nmcli ipv4.* arguments for {method: auto|manual, address, prefix,
+    gateway, dns: [...]}."""
     method = body.get("method")
     if method == "auto":
         args = ["ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", ""]
@@ -741,7 +787,19 @@ def network_set(body):
                 "ipv4.gateway", gw, "ipv4.dns", " ".join(dns)]
     else:
         raise ApiError("Mode must be auto or manual")
-    run(["nmcli", "con", "mod", uuid] + args)
+    return args
+
+
+def network_set(body):
+    """The connection's IPv4 settings. One that is up (or coming up, e.g.
+    waiting for DHCP) is brought up again with them; a saved one that isn't
+    uses them on its next connection."""
+    uuid = body.get("uuid") or ""
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
+        raise ApiError("No connection to change")
+    run(["nmcli", "con", "mod", uuid] + ipv4_args(body))
+    if not run(["nmcli", "-g", "GENERAL.STATE", "con", "show", uuid], check=False).strip():
+        return
     # Re-activation drops the link briefly: run in background, the page polls.
     threading.Thread(target=run, args=(["nmcli", "con", "up", uuid],),
                      kwargs={"check": False, "timeout": 60}, daemon=True).start()
@@ -2124,7 +2182,9 @@ def wifi_changed():
 
 
 def r_wifi_connect(body, q):
-    wifi_connect(str(body.get("ssid", "")), str(body.get("password", "")), bool(body.get("hidden")))
+    ipv4 = body.get("ipv4")
+    wifi_connect(str(body.get("ssid", "")), str(body.get("password", "")), bool(body.get("hidden")),
+                 ipv4 if isinstance(ipv4, dict) else None, str(body.get("security", "")))
     return wifi_changed()
 
 
@@ -3025,11 +3085,7 @@ def reset_everything():
         for d in (home / ".local/share/immutable-kiosk/hmi", home / ".cache/immutable-kiosk"):
             shutil.rmtree(d, ignore_errors=True)
     try:
-        out = run(["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=20)
-        for line in out.splitlines():
-            uuid, _, kind = line.partition(":")
-            if uuid and kind != "loopback":
-                run(["nmcli", "connection", "delete", uuid], check=False, timeout=30)
+        forget_networks()
     except ApiError as e:
         print(f"kioskd: reset: network: {e}", flush=True)
     run(["hostnamectl", "set-hostname", ""], check=False, timeout=20)
@@ -3040,10 +3096,42 @@ def reset_everything():
     subprocess.run(["systemctl", "restart", CAGE_UNIT])
 
 
+def forget_networks():
+    """Every saved connection (Wi-Fi networks, IP settings) deleted; Wi-Fi on.
+    NetworkManager makes a fresh DHCP one for a plugged-in cable by itself."""
+    out = run(["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=20)
+    for line in out.splitlines():
+        uuid, _, kind = line.partition(":")
+        if uuid and kind != "loopback":
+            run(["nmcli", "connection", "delete", uuid], check=False, timeout=30)
+    run(["nmcli", "radio", "wifi", "on"], check=False)
+
+
 def r_settings_reset(body, q):
-    """Factory reset (see reset_everything)."""
-    threading.Thread(target=reset_everything, daemon=True).start()
-    return {"ok": True}
+    """part: "hmi" or "screen" (that tab's settings, RESET_KEYS), "network"
+    (forget_networks), "all" (factory reset, reset_everything)."""
+    part = body.get("part", "all")
+    if part == "all":
+        threading.Thread(target=reset_everything, daemon=True).start()
+        return {"ok": True}
+    if part == "network":
+        forget_networks()
+        nm_changed()
+        return {"ok": True}
+    if part not in RESET_KEYS:
+        raise ApiError("Nothing to reset")
+    cfg = load_config()
+    for k in RESET_KEYS[part]:
+        cfg[k] = json.loads(json.dumps(DEFAULT_CONFIG[k]))
+    write_config(cfg)
+    if part == "screen":
+        try:
+            brightness_set(100)  # the default leaves the backlight alone: full
+        except (ApiError, OSError, ValueError):
+            pass
+        threading.Thread(target=lambda: (set_splash_look("accent"), set_grub_splash()), daemon=True).start()
+    EVENTS.emit("config")
+    return effective_config()
 
 
 def r_power(body, q):

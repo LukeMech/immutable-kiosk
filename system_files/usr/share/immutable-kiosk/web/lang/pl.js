@@ -119,7 +119,27 @@ window.I18N_LANGS.pl = function (tr) {
         "Automatic (DHCP)": "Automatycznie (DHCP)",
         "Static address": "Statyczny adres",
         "Mask (prefix)": "Maska (prefiks)",
-        "Applied. Reconnecting…": "Zastosowano. Połączenie jest odnawiane…",
+        "Not connected · these settings are used on its next connection":
+            "Niepołączone · te ustawienia zadziałają przy następnym połączeniu",
+        "Saving…": "Zapisywanie…",
+        "Settings saved": "Ustawienia zapisane",
+        "Reconnecting with them…": "Ponowne łączenie z nowymi ustawieniami…",
+        "Used on the next connection to this network.": "Zadziałają przy następnym połączeniu z tą siecią.",
+        "Couldn't save the settings": "Nie udało się zapisać ustawień",
+        // ---- Resets (each tab)
+        "Reset": "Ustawienia domyślne",
+        "The HMI's address, behavior and zoom go back to the defaults.":
+            "Adres HMI, zachowanie i powiększenie wracają do ustawień domyślnych.",
+        "Hold: reset HMI settings": "Przytrzymaj: zresetuj ustawienia HMI",
+        "Forgets every saved Wi-Fi network and IP setting. A cable gets its address by DHCP again.":
+            "Zapomina wszystkie zapisane sieci Wi-Fi i ustawienia IP. Kabel znów dostanie adres z DHCP.",
+        "Hold: reset network settings": "Przytrzymaj: zresetuj ustawienia sieci",
+        "Brightness, accent color, orientation, scaling and the Settings corner go back to the defaults.":
+            "Jasność, kolor akcentu, orientacja, skalowanie i róg Ustawień wracają do ustawień domyślnych.",
+        "Hold: reset display settings": "Przytrzymaj: zresetuj ustawienia ekranu",
+        "Resetting…": "Resetowanie…",
+        "Back to the defaults": "Przywrócono ustawienia domyślne",
+        "Couldn't reset": "Nie udało się zresetować",
 
         // ---- Display tab
         "Brightness": "Jasność",
