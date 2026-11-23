@@ -2158,8 +2158,7 @@ def cpu_busy():
     return _cpu["busy"]
 
 
-def r_usage(body, q):
-    """Settings > System > Usage, every few seconds while it's shown."""
+def usage_sample():
     m = meminfo()
     mb = lambda k: m.get(k, 0) // 1024  # noqa: E731
     return {
@@ -2169,6 +2168,30 @@ def r_usage(body, q):
         "mem": {"total_mb": mb("MemTotal"), "used_mb": mb("MemTotal") - mb("MemAvailable")},
         "swap": {"total_mb": mb("SwapTotal"), "used_mb": mb("SwapTotal") - mb("SwapFree"), "zram": zram_swap()},
     }
+
+
+# The last minute, every 2 s (usage_loop): the Usage tiles' columns are there
+# the moment System opens. A few /proc and /sys reads: nothing on the Atom.
+USAGE_EVERY_S, USAGE_KEEP = 2, 30
+USAGE = {"now": None, "history": []}
+
+
+def usage_loop():
+    pct = lambda a, b: round(100 * a / b) if b else 0  # noqa: E731
+    while True:
+        s = usage_sample()
+        USAGE["now"] = s
+        USAGE["history"] = (USAGE["history"] + [{
+            "cpu": s["cpu"], "temp_c": s["temp_c"],
+            "mem": pct(s["mem"]["used_mb"], s["mem"]["total_mb"]),
+            "swap": pct(s["swap"]["used_mb"], s["swap"]["total_mb"]),
+        }])[-USAGE_KEEP:]
+        time.sleep(USAGE_EVERY_S)
+
+
+def r_usage(body, q):
+    """Settings > System > Usage: now and the last minute (oldest first)."""
+    return {**(USAGE["now"] or usage_sample()), "history": USAGE["history"], "every_s": USAGE_EVERY_S}
 
 
 # Component versions for Settings > System; fixed per image, read once.
@@ -3329,6 +3352,7 @@ def main():
     # A language set before this version, or the image's default: in step.
     if mode() != "installer":
         set_system_locale()
+        threading.Thread(target=usage_loop, daemon=True).start()
     srv.serve_forever()
 
 

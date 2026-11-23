@@ -1046,28 +1046,49 @@ async function loadNotes() {
 
 const fmtGB = mb => `${(mb / 1024).toLocaleString(LOCALE(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB`;
 
-// Usage: refreshed every 2 s while System is on screen.
+// Usage: a tile per measure, refreshed every 2 s while System is on screen.
+// Columns: kioskd's last minute (oldest left), 0-100 (% or °C), warning
+// from 85 (the Atoms throttle at ~90 °C). A tapped column's value shows
+// under the number for a few seconds.
+let usageTip = null;  // {key, i, until}
+
 async function loadUsage() {
     let u;
     try { u = await api("/usage"); } catch (_) { return; }
-    const bar = (id, pct) => {
-        $(id).style.width = `${Math.max(0, Math.min(100, pct || 0))}%`;
-        $(id).classList.toggle("high", pct >= 85);
-    };
     const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
-    $("use-cpu").textContent = u.cpu == null ? "—" : _("{pct}% · {cores} cores", { pct: u.cpu, cores: u.cores });
-    bar("use-cpu-bar", u.cpu);
-    // The bar: 0-100 °C, warning from 85 °C (Atoms throttle at ~90).
-    $("use-temp").textContent = u.temp_c == null ? "—" : `${u.temp_c} °C`;
-    bar("use-temp-bar", u.temp_c);
-    const mp = pct(u.mem.used_mb, u.mem.total_mb);
-    $("use-mem").textContent = `${fmtGB(u.mem.used_mb)} / ${fmtGB(u.mem.total_mb)} (${mp}%)`;
-    bar("use-mem-bar", mp);
-    const s = u.swap, sp = pct(s.used_mb, s.total_mb);
-    $("use-swap").textContent = !s.total_mb ? "none"
-        : s.zram ? _("{used} / {total} MB · {packed} MB in memory", { used: s.used_mb, total: s.total_mb, packed: s.zram.packed_mb })
-            : `${s.used_mb} / ${s.total_mb} MB`;
-    bar("use-swap-bar", sp);
+    const keep = 30, hist = u.history || [];
+    const s = u.swap;
+    const tiles = [
+        { key: "cpu", label: "Processor", now: u.cpu, unit: "%",
+          sub: _("{cores} cores", { cores: u.cores }) },
+        { key: "temp_c", label: "Temperature", now: u.temp_c, unit: " °C", sub: "" },
+        { key: "mem", label: "Memory", now: pct(u.mem.used_mb, u.mem.total_mb), unit: "%",
+          sub: `${fmtGB(u.mem.used_mb)} / ${fmtGB(u.mem.total_mb)}` },
+        { key: "swap", label: "Swap (zram)", now: s.total_mb ? pct(s.used_mb, s.total_mb) : null, unit: "%",
+          sub: !s.total_mb ? "none" : s.zram
+              ? _("{used} / {total} MB · {packed} MB in memory", { used: s.used_mb, total: s.total_mb, packed: s.zram.packed_mb })
+              : `${s.used_mb} / ${s.total_mb} MB` },
+    ];
+    const tip = usageTip && usageTip.until > Date.now() ? usageTip : null;
+    $("usage").innerHTML = tiles.map(t => {
+        const vals = hist.map(h => h[t.key]);
+        const pad = Array(Math.max(0, keep - vals.length)).fill(undefined);
+        const cols = [...pad, ...vals.slice(-keep)].map((v, i) => v == null
+            ? `<i class="none"></i>`
+            : `<i data-key="${t.key}" data-i="${i}" class="${v >= 85 ? "high" : ""}${tip && tip.key === t.key && tip.i === i ? " on" : ""}"
+                 style="height:${Math.max(2, Math.min(100, v))}%"></i>`).join("");
+        let sub = t.sub;
+        if (tip && tip.key === t.key) {
+            const v = [...pad, ...vals.slice(-keep)][tip.i];
+            const ago = (keep - 1 - tip.i) * (u.every_s || 2);
+            sub = v == null ? sub : `${v}${t.unit} · ${ago ? _("{n} s ago", { n: ago }) : _("now")}`;
+        }
+        return `<div class="tile">
+            <div class="t-label">${esc(_(t.label))}</div>
+            <div class="t-now">${t.now == null ? "—" : esc(t.now + t.unit)}</div>
+            <div class="t-sub${tip && tip.key === t.key ? " tip" : ""}">${esc(sub)}</div>
+            <div class="cols">${cols}</div></div>`;
+    }).join("");
 }
 
 async function loadSystem() {
@@ -1286,6 +1307,12 @@ async function loadBoot() {
 
 function initSystem() {
     setInterval(() => { if (settingsVisible && currentTab === "system") loadUsage(); }, 2000);
+    $("usage").addEventListener("pointerdown", e => {
+        const c = e.target.closest("i[data-key]");
+        if (!c) return;
+        usageTip = { key: c.dataset.key, i: Number(c.dataset.i), until: Date.now() + 4000 };
+        loadUsage();
+    });
     // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));

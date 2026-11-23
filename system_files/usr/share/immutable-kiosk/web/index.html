@@ -257,12 +257,9 @@
       </div>
       <div class="card">
         <h2>Usage</h2>
-        <dl class="kv usage">
-          <dt>Processor</dt><dd><span id="use-cpu">—</span><span class="meter"><i id="use-cpu-bar"></i></span></dd>
-          <dt>Temperature</dt><dd><span id="use-temp">—</span><span class="meter"><i id="use-temp-bar"></i></span></dd>
-          <dt>Memory</dt><dd><span id="use-mem">—</span><span class="meter"><i id="use-mem-bar"></i></span></dd>
-          <dt>Swap (zram)</dt><dd><span id="use-swap">—</span><span class="meter"><i id="use-swap-bar"></i></span></dd>
-        </dl>
+        <p class="hint">The last minute. Tap a column for its value.</p>
+        <!-- Tiles drawn by app.js (loadUsage). -->
+        <div class="tiles" id="usage"></div>
       </div>
       <div class="card" id="power-card">
         <h2>Power</h2>
