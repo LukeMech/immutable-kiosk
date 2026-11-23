@@ -1056,9 +1056,7 @@ const fmtGB = mb => `${(mb / 1024).toLocaleString(LOCALE(), { minimumFractionDig
 
 // Usage: a tile per measure, refreshed every 2 s while System is on screen.
 // Columns: kioskd's last minute (oldest left), 0-100 (% or °C), warning
-// from 85 (the Atoms throttle at ~90 °C). A tapped column's value shows
-// under the number for a few seconds.
-let usageTip = null;  // {key, i, until}
+// from 85 (the Atoms throttle at ~90 °C).
 
 async function loadUsage() {
     let u;
@@ -1068,43 +1066,29 @@ async function loadUsage() {
     const s = u.swap;
     const num = (v, d) => v.toLocaleString(LOCALE(), { minimumFractionDigits: d, maximumFractionDigits: d });
     const temps = hist.map(h => h.temp_c).filter(v => v != null);
-    // Two one-line rows under the number (the columns line up across tiles);
-    // `at`: a tapped column's value, in % and in GB/MB where there's both.
+    // Two one-line rows under the number (the columns line up across tiles).
     const tiles = [
         { key: "cpu", label: "Processor", now: u.cpu, unit: "%",
-          rows: [_("{cores} cores", { cores: u.cores }), _("load {load}", { load: num(u.load ?? 0, 2) })],
-          at: h => `${h.cpu}%` },
+          rows: [_("{cores} cores", { cores: u.cores }), _("load {load}", { load: num(u.load ?? 0, 2) })] },
         { key: "temp_c", label: "Temperature", now: u.temp_c, unit: " °C",
-          rows: [temps.length ? _("highest {t} °C", { t: Math.max(...temps) }) : "", ""],
-          at: h => `${h.temp_c} °C` },
+          rows: [temps.length ? _("highest {t} °C", { t: Math.max(...temps) }) : "", ""] },
         { key: "mem", label: "Memory", now: pct(u.mem.used_mb, u.mem.total_mb), unit: "%",
           rows: [`${fmtGB(u.mem.used_mb)} / ${fmtGB(u.mem.total_mb)}`,
-                 _("{free} free", { free: fmtGB(u.mem.total_mb - u.mem.used_mb) })],
-          at: h => `${h.mem}% · ${fmtGB(h.mem_mb ?? 0)}` },
+                 _("{free} free", { free: fmtGB(u.mem.total_mb - u.mem.used_mb) })] },
         { key: "swap", label: "Swap (zram)", now: s.total_mb ? pct(s.used_mb, s.total_mb) : null, unit: "%",
           rows: !s.total_mb ? ["none", ""] : [`${s.used_mb} / ${s.total_mb} MB`,
-                 s.zram ? _("{packed} MB in memory", { packed: s.zram.packed_mb }) : ""],
-          at: h => `${h.swap}% · ${h.swap_mb ?? 0} MB` },
+                 s.zram ? _("{packed} MB in memory", { packed: s.zram.packed_mb }) : ""] },
     ];
-    const tip = usageTip && usageTip.until > Date.now() ? usageTip : null;
     $("usage").innerHTML = tiles.map(t => {
         const pts = [...Array(Math.max(0, keep - hist.length)).fill(null), ...hist.slice(-keep)];
-        const cols = pts.map((h, i) => h == null || h[t.key] == null
+        const cols = pts.map(h => h == null || h[t.key] == null
             ? `<i class="none"></i>`
-            : `<i data-key="${t.key}" data-i="${i}" class="${h[t.key] >= 85 ? "high" : ""}${tip && tip.key === t.key && tip.i === i ? " on" : ""}"
-                 style="height:${Math.max(2, Math.min(100, h[t.key]))}%"></i>`).join("");
-        let rows = t.rows, tipped = false;
-        const h = tip && tip.key === t.key ? pts[tip.i] : null;
-        if (h && h[t.key] != null) {
-            const ago = (keep - 1 - tip.i) * (u.every_s || 2);
-            rows = [t.at(h), ago ? _("{n} s ago", { n: ago }) : _("now")];
-            tipped = true;
-        }
-        return `<div class="tile${tipped ? " tipped" : ""}">
+            : `<i class="${h[t.key] >= 85 ? "high" : ""}" style="height:${Math.max(2, Math.min(100, h[t.key]))}%"></i>`).join("");
+        return `<div class="tile">
             <div class="t-label">${esc(_(t.label))}</div>
             <div class="t-now">${t.now == null ? "—" : esc(t.now + t.unit)}</div>
-            <div class="t-sub">${esc(_(rows[0]))}</div>
-            <div class="t-sub">${esc(_(rows[1]))}</div>
+            <div class="t-sub">${esc(_(t.rows[0]))}</div>
+            <div class="t-sub">${esc(_(t.rows[1]))}</div>
             <div class="cols">${cols}</div></div>`;
     }).join("");
     renderPeaks(u);
@@ -1347,12 +1331,6 @@ async function loadBoot() {
 function initSystem() {
     setInterval(() => { if (settingsVisible && currentTab === "system") loadUsage(); }, 2000);
     holdButton($("peaks-clear"), () => api("/usage/peaks/clear", {}).then(loadUsage).catch(e => toast(e.message, true)));
-    $("usage").addEventListener("pointerdown", e => {
-        const c = e.target.closest("i[data-key]");
-        if (!c) return;
-        usageTip = { key: c.dataset.key, i: Number(c.dataset.i), until: Date.now() + 4000 };
-        loadUsage();
-    });
     // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));

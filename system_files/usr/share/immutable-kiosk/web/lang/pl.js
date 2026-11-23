@@ -267,8 +267,6 @@ window.I18N_LANGS.pl = function (tr) {
         "highest {t} °C": "najwyżej {t} °C",
         "{free} free": "{free} wolne",
         "{packed} MB in memory": "{packed} MB w pamięci",
-        "{n} s ago": "{n} s temu",
-        "now": "teraz",
         "Update channel and image": "Kanał aktualizacji i obraz systemu",
         "Boot time": "Czas uruchamiania",
         "Boot details": "Szczegóły startu",
