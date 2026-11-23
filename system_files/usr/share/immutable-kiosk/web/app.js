@@ -4,6 +4,9 @@
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Text with values, in the page's language: _("Connected to {ssid}", { ssid }).
+// Values that go into innerHTML are escaped first. (i18n.js)
+const _ = (text, values) => i18n.t(text, values);
 
 async function api(path, body) {
     const opts = { headers: { "X-Kiosk": "1" } };
@@ -15,6 +18,7 @@ async function api(path, body) {
     const r = await fetch("/api" + path, opts);
     let data = null;
     try { data = await r.json(); } catch (_) { /* empty */ }
+    if (data && data._i18n) i18n.learn(data._i18n);  // kioskd's texts with values
     if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
     return data;
 }
@@ -113,13 +117,13 @@ let cfg = null;
 // "charger connected · battery 72% (charging)"; unknown parts are omitted.
 function powerText(p) {
     const parts = [];
-    if (p.ac_online === true) parts.push("charger connected");
-    else if (p.ac_online === false) parts.push("on battery");
+    if (p.ac_online === true) parts.push(_("charger connected"));
+    else if (p.ac_online === false) parts.push(_("on battery"));
     if (p.battery != null) {
         const st = { Charging: "charging", Full: "full", "Not charging": "not charging" }[p.battery_status];
-        parts.push(`battery ${p.battery}%${st ? ` (${st})` : ""}`);
+        parts.push(_(st ? `battery {pct}% (${st})` : "battery {pct}%", { pct: p.battery }));
     }
-    return parts.length ? parts.join(" · ") : "no data";
+    return parts.length ? parts.join(" · ") : _("no data");
 }
 
 // Extra bottom scroll room while the on-screen keyboard is up.
@@ -174,9 +178,9 @@ function renderHmiUrl() {
     }
     const unsaved = url !== (cfg && cfg.hmi_url);
     const t = hmiTest && hmiTest.url === url ? hmiTest : null;
-    const note = unsaved ? "Not saved — “Save and open HMI”" : "";
+    const note = unsaved ? _("Not saved — “Save and open HMI”") : "";
     if (t && t.busy) setStatus("hmi-st", "busy", ICONS.busy, url, "Testing connection…");
-    else if (t) setStatus("hmi-st", t.ok ? "ok" : "err", t.ok ? ICONS.ok : ICONS.err, url, [t.message, note].filter(Boolean).join(" · "));
+    else if (t) setStatus("hmi-st", t.ok ? "ok" : "err", t.ok ? ICONS.ok : ICONS.err, url, [i18n.tr(t.message), note].filter(Boolean).join(" · "));
     else setStatus("hmi-st", unsaved ? "new" : "", ICONS.screen, url, note || "Saved HMI address");
 }
 
@@ -264,11 +268,12 @@ function renderWifiStatus() {
     const d = w.device;
     if (!d) return setStatus("wifi-st", "err", ICONS.wifiOff, "No Wi-Fi adapter", "The tablet reports no Wi-Fi adapter.");
     if (!w.enabled) return setStatus("wifi-st", "off", ICONS.wifiOff, "Wi-Fi is off", "Turn it on with the switch next to the title.");
-    if (d.state.startsWith("connecting")) return setStatus("wifi-st", "busy", ICONS.busy, d.connection ? `Connecting to ${d.connection}…` : "Connecting…", "");
+    if (d.state.startsWith("connecting")) return setStatus("wifi-st", "busy", ICONS.busy, d.connection ? _("Connecting to {name}…", { name: d.connection }) : "Connecting…", "");
     if (d.state.startsWith("connected")) {
         const n = w.networks.find(x => x.in_use);
-        const sub = [d.address, n ? `signal ${n.signal}%` : ""].filter(Boolean).join(" · ");
-        return setStatus("wifi-st", "ok", wifiIcon(n ? sigLevel(n.signal) : 3), `Connected to ${n ? n.ssid : d.connection}`, sub);
+        const sub = [d.address, n ? _("signal {signal}%", { signal: n.signal }) : ""].filter(Boolean).join(" · ");
+        return setStatus("wifi-st", "ok", wifiIcon(n ? sigLevel(n.signal) : 3),
+                         _("Connected to {name}", { name: n ? n.ssid : d.connection }), sub);
     }
     setStatus("wifi-st", "warn", wifiIcon(0), "Not connected", w.networks.length ? "Pick a network from the list below." : "No networks in range.");
 }
@@ -299,10 +304,11 @@ async function loadWifi(rescan, live = false, scan = false) {
     list.innerHTML = others.length ? "" : `<li class="empty">${w.enabled ? "No other networks found." : "Wi-Fi is off."}</li>`;
     for (const n of others) {
         const li = document.createElement("li");
-        const sec = n.security ? `secured · ${esc(n.security)}` : "open";
+        const sec = n.security ? _("secured · {security} · {signal}%", { security: esc(n.security), signal: n.signal })
+            : _("open · {signal}%", { signal: n.signal });
         li.innerHTML = `<div class="item">
             <span class="ico">${wifiIcon(sigLevel(n.signal))}</span>
-            <div class="name">${esc(n.ssid)}<div class="sub">${sec} · ${n.signal}%</div></div>
+            <div class="name">${esc(n.ssid)}<div class="sub">${sec}</div></div>
             ${n.saved ? '<span class="badge">saved</span>' : ""}
           </div>`;
         const item = li.querySelector(".item");
@@ -328,14 +334,14 @@ async function loadWifi(rescan, live = false, scan = false) {
         btn.addEventListener("click", () => busy(btn, async () => {
             const pw = ex.querySelector(".pw");
             const pass = pw && !pw.hidden ? pw.querySelector("input").value : "";
-            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Connecting to ${n.ssid}…`, sub: "This can take up to a minute." };
+            wifiOverride = { state: "busy", icon: ICONS.busy, title: _("Connecting to {name}…", { name: n.ssid }), sub: "This can take up to a minute." };
             renderWifiStatus();
             try {
                 await api("/wifi/connect", { ssid: n.ssid, password: pass });
                 wifiOverride = null;
                 openSsid = null;
             } catch (e) {
-                wifiOverride = { state: "err", icon: ICONS.err, title: `Couldn't connect to ${n.ssid}`, sub: e.message };
+                wifiOverride = { state: "err", icon: ICONS.err, title: _("Couldn't connect to {name}", { name: n.ssid }), sub: e.message };
                 renderWifiStatus();
                 throw e;
             }
@@ -364,14 +370,14 @@ async function loadWifi(rescan, live = false, scan = false) {
             <button class="btn danger hold" data-hold="1000">Forget</button></div>`;
         const go = li.querySelector(".go");
         go?.addEventListener("click", () => busy(go, async () => {
-            wifiOverride = { state: "busy", icon: ICONS.busy, title: `Connecting to ${s.ssid}…`,
+            wifiOverride = { state: "busy", icon: ICONS.busy, title: _("Connecting to {name}…", { name: s.ssid }),
                 sub: w.enabled ? "This can take up to a minute." : "Wi-Fi turns on first. This can take up to a minute." };
             renderWifiStatus();
             try {
                 await api("/wifi/connect", { ssid: s.ssid, password: "" });
                 wifiOverride = null;
             } catch (e) {
-                wifiOverride = { state: "err", icon: ICONS.err, title: `Couldn't connect to ${s.ssid}`, sub: e.message };
+                wifiOverride = { state: "err", icon: ICONS.err, title: _("Couldn't connect to {name}", { name: s.ssid }), sub: e.message };
                 renderWifiStatus();
                 throw e;
             }
@@ -380,7 +386,7 @@ async function loadWifi(rescan, live = false, scan = false) {
         const b = li.querySelector(".hold");
         holdButton(b, () => busy(b, async () => {
             await api("/wifi/forget", { uuid: s.uuid });
-            toast(`Removed ${s.ssid}`);
+            toast(_("Removed {name}", { name: s.ssid }));
             await loadWifi(false);
         }).catch(() => {}));
         saved.appendChild(li);
@@ -395,7 +401,7 @@ function initWifi() {
     });
     holdButton($("wifi-off"), () => {
         const name = wifiLast && wifiLast.device && wifiLast.device.connection;
-        wifiOverride = { state: "busy", icon: ICONS.busy, title: name ? `Disconnecting from ${name}…` : "Disconnecting…" };
+        wifiOverride = { state: "busy", icon: ICONS.busy, title: name ? _("Disconnecting from {name}…", { name }) : "Disconnecting…" };
         renderWifiStatus();
         api("/wifi/disconnect", {})
             .then(() => { wifiOverride = null; return loadWifi(false); })
@@ -423,7 +429,7 @@ function initWifi() {
         const ssid = $("hid-ssid").value.trim();
         await api("/wifi/connect", { ssid, password: $("hid-pass").value, hidden: true });
         $("hid-pass").value = "";
-        toast(`Connected to ${ssid}`);
+        toast(_("Connected to {name}", { name: ssid }));
         await loadWifi(false);
     }).catch(() => {}));
 }
@@ -452,10 +458,10 @@ async function loadNet(live = false) {
         const cur = c.current;
         const kind = c.type === "wifi" ? "Wi-Fi" : c.type === "ethernet" ? "Ethernet" : c.type;
         const has = cur.addresses.length > 0;
-        const how = c.method === "manual" ? "static address" : "DHCP address";
-        el.innerHTML = `<h2>IP address · ${esc(kind)}</h2>` +
+        const how = c.method === "manual" ? "{addresses} · static address" : "{addresses} · DHCP address";
+        el.innerHTML = `<h2>${_("IP address · {kind}", { kind: esc(kind) })}</h2>` +
           statusHtml(has ? "ok" : "busy", has ? (c.type === "wifi" ? wifiIcon(3) : ICONS.ethernet) : ICONS.busy,
-                     c.name, has ? `${cur.addresses.join(", ")} · ${how}` : "Waiting for an IP address…") + `
+                     c.name, has ? _(how, { addresses: cur.addresses.join(", ") }) : "Waiting for an IP address…") + `
           <dl class="kv">
             <dt>Gateway</dt><dd>${esc(cur.gateway || "—")}</dd>
             <dt>DNS</dt><dd>${esc(cur.dns.join(", ") || "—")}</dd>
@@ -534,9 +540,9 @@ async function loadSplash() {
     $("splash-st").hidden = !st.state;
     const o = SPLASH_ORIENT[st.orientation] || st.orientation || "";
     if (st.state === "working") setStatus("splash-st", "busy", ICONS.busy, "Rotating the boot screen…",
-        `Saving orientation ${o} to the boot settings. Don't restart the tablet until it's done.`);
+        _("Saving orientation {o} to the boot settings. Don't restart the tablet until it's done.", { o }));
     else if (st.state === "done") setStatus("splash-st", "ok", ICONS.ok, "Boot screen rotated",
-        `From the next start, the boot animation uses this orientation (${o}).`);
+        _("From the next start, the boot animation uses this orientation ({o}).", { o }));
     else if (st.state === "failed") setStatus("splash-st", "err", ICONS.err, "Couldn't rotate the boot screen",
         st.error || "");
     // The accent's and the language's boot screen files, each in its card.
@@ -559,8 +565,8 @@ function loadScreen() {
     loadSplash();
     const names = { portrait: "portrait", landscape: "landscape", normal: "0°", 90: "90°", 180: "180°", 270: "270°" };
     seg($("rot"), cfg.rotation || "", v => saveCfg({ rotation: v || null }).then(loadScreen).catch(e => toast(e.message, true)));
-    $("rot-hint").textContent = `Now: ${names[cfg.rotation_effective] || cfg.rotation_effective}` +
-        (cfg.rotation ? "" : " (this device's default)");
+    $("rot-hint").textContent = _(cfg.rotation ? "Now: {rotation}" : "Now: {rotation} (this device's default)",
+                                  { rotation: names[cfg.rotation_effective] || cfg.rotation_effective });
     $("scale-val").textContent = Math.round((cfg.scale || 1) * 100) + "%";
     // No backlight device: no slider.
     const b = cfg.brightness ?? cfg.brightness_now;
@@ -618,7 +624,7 @@ function initScreen() {
 function renderJob(job, { box, stage, bar, detail }) {
     box.hidden = !job;
     if (!job) return;
-    stage.textContent = job.state === "failed" ? `${job.title}: failed` : (job.stage || job.title);
+    stage.textContent = job.state === "failed" ? _("{title}: failed", { title: job.title }) : (job.stage || job.title);
     const wrap = bar.parentElement;
     wrap.classList.toggle("indet", job.state === "running" && job.fraction == null);
     bar.style.width = ((job.state === "done" ? 1 : job.fraction || 0) * 100).toFixed(1) + "%";
@@ -699,17 +705,18 @@ function renderChannel(running) {
     });
     let hint = "Stable: tested releases. Testing: every change right away.";
     if (chanPick) {
-        hint = `Downloads the ${CHANNEL_NAMES[chanPick]} channel and switches to it after a restart.` +
-            (chanPick === "stable" && cur === "dev" ? " It may be older." : "");
+        hint = _(chanPick === "stable" && cur === "dev"
+            ? "Downloads the {channel} channel and switches to it after a restart. It may be older."
+            : "Downloads the {channel} channel and switches to it after a restart.", { channel: CHANNEL_NAMES[chanPick] });
     } else if (avail && cur === "custom") {
         hint = "Custom image: pick a channel to get updates again.";
     } else if (avail && s.channel !== s.next_channel) {
-        hint = `After a restart: ${CHANNEL_NAMES[s.next_channel] || "custom"} channel.`;
+        hint = _("After a restart: {channel} channel.", { channel: CHANNEL_NAMES[s.next_channel] || "custom" });
     }
     $("chan-hint").textContent = hint;
     $("chan-switch").hidden = !chanPick;
     $("chan-switch").disabled = running;
-    if (chanPick) $("chan-switch").textContent = `Hold: switch to the ${CHANNEL_NAMES[chanPick]} channel`;
+    if (chanPick) $("chan-switch").textContent = _("Hold: switch to the {channel} channel", { channel: CHANNEL_NAMES[chanPick] });
 }
 
 let sys = null;          // GET /system (bootc status + last check)
@@ -748,8 +755,8 @@ const AUTO_TRIES = 3;  // boot-counter's TRIES
 function fmtAgo(t) {
     const s = Date.now() / 1000 - t;
     if (s < 90) return "just now";
-    if (s < 3600) return `${Math.round(s / 60)} min ago`;
-    return "at " + new Date(t * 1000).toLocaleTimeString(LOCALE(), { hour: "2-digit", minute: "2-digit" });
+    if (s < 3600) return _("{n} min ago", { n: Math.round(s / 60) });
+    return _("at {time}", { time: new Date(t * 1000).toLocaleTimeString(LOCALE(), { hour: "2-digit", minute: "2-digit" }) });
 }
 const fmtDate = t => t ? new Date(t).toLocaleDateString(LOCALE(), { day: "numeric", month: "long", year: "numeric" }) : "";
 
@@ -806,12 +813,12 @@ function renderUpdate() {
     // A running job wins: bootc's status may be stale or unavailable meanwhile.
     if (working) {
         state = "busy";
-        title = job.kind === "switch" ? `${job.title}…` : "Updating the system…";
-        sub = job.kind === "upgrade" && s && s.update ? `Version ${versionName(s.update)}`
+        title = job.kind === "switch" ? _("{title}…", { title: job.title }) : "Updating the system…";
+        sub = job.kind === "upgrade" && s && s.update ? _("Version {version}", { version: versionName(s.update) })
             : "Keeps working as usual — the new version starts after a restart.";
     } else if (checking) {
         state = "busy"; title = "Checking for updates…";
-        sub = s && s.booted ? `Now running ${versionName(s.booted)}` : "";
+        sub = s && s.booted ? _("Now running {version}", { version: versionName(s.booted) }) : "";
     } else if (restoring) {
         state = "busy"; title = "Restoring the previous version…";
         sub = "Progress in the “Recovery” card.";
@@ -820,18 +827,19 @@ function renderUpdate() {
     } else if (!s.available) {
         state = "err"; title = "Updates unavailable"; sub = s.error || "";
     } else if (s.update) {
-        state = "new"; title = `Update available: ${versionName(s.update)}`;
-        sub = `Now running ${versionName(s.booted)}`;
+        state = "new"; title = _("Update available: {version}", { version: versionName(s.update) });
+        sub = _("Now running {version}", { version: versionName(s.booted) });
     } else if (s.staged) {
-        state = "ready"; title = `Version ${versionName(s.staged)} is waiting for a restart`;
-        sub = `Now running ${versionName(s.booted)}.`;
+        state = "ready"; title = _("Version {version} is waiting for a restart", { version: versionName(s.staged) });
+        sub = _("Now running {version}.", { version: versionName(s.booted) });
     } else if (s.checked && s.checked.error) {
-        state = "err"; title = "Couldn't check for updates"; sub = s.checked.error;
+        state = "err"; title = "Couldn't check for updates"; sub = i18n.tr(s.checked.error);
     } else if (s.checked && s.checked.time) {
         state = "ok"; title = "System is up to date";
-        sub = `${versionName(s.booted)}${s.channel === "dev" ? " (testing)" : ""} · checked ${fmtAgo(s.checked.time)}`;
+        sub = _(s.channel === "dev" ? "{version} (testing) · checked {ago}" : "{version} · checked {ago}",
+                { version: versionName(s.booted), ago: fmtAgo(s.checked.time) });
     } else {
-        state = "ok"; title = `Version ${versionName(s.booted)}`; sub = "Not checked for updates yet";
+        state = "ok"; title = _("Version {version}", { version: versionName(s.booted) }); sub = "Not checked for updates yet";
     }
     setStatus("upd", state, ICONS[state], title, sub);
     renderSteps(job && (job.kind === "upgrade" || job.kind === "switch") ? job : null, $("job-steps"));
@@ -852,19 +860,20 @@ function renderUpdate() {
     const fb = s && s.fallback;
     if (!s) setStatus("rb-st", "busy", ICONS.busy, "Loading…");
     else if (restoring) setStatus("rb-st", "busy", ICONS.busy, "Restoring the previous version…",
-        s.rollback ? `Going back to ${versionName(s.rollback)}` : "");
+        s.rollback ? _("Going back to {version}", { version: versionName(s.rollback) }) : "");
     else if (job && job.kind === "rollback" && job.state === "failed")
         setStatus("rb-st", "err", ICONS.err, "Couldn't restore", job.detail || "");
     else if (avail && s.rollback_queued) setStatus("rb-st", "ready", ICONS.ready, "The previous version starts after a restart",
-        `${versionName(s.rollback)} is set as the default; ${versionName(s.booted)} runs until the restart.`);
+        _("{rollback} is set as the default; {booted} runs until the restart.",
+          { rollback: versionName(s.rollback), booted: versionName(s.booted) }));
     else if (!avail) setStatus("rb-st", "err", ICONS.err, "Restore unavailable", s.error || "");
     else if (fb) setStatus("rb-st", "warn", ICONS.warn, "The new version didn't start",
-        rawVersion(fb.running) ? `Went back to ${rawVersion(fb.running)} (${fmtTime(fb.time * 1000)}).`
-            : `Went back to the previous version (${fmtTime(fb.time * 1000)}).`);
-    else if (s.rollback) setStatus("rb-st", "", ICONS.ready, `Previous version: ${versionName(s.rollback)}`,
-        `Now running ${versionName(s.booted)}.`);
-    else setStatus("rb-st", "off", ICONS.ready, "No previous version", `Now running ${versionName(s.booted)}.`);
-    $("rb-hint").textContent = `Goes back by itself after ${AUTO_TRIES} failed starts. Manually: Shift at boot.`;
+        _(rawVersion(fb.running) ? "Went back to {version} ({time})." : "Went back to the previous version ({time}).",
+          { version: rawVersion(fb.running), time: fmtTime(fb.time * 1000) }));
+    else if (s.rollback) setStatus("rb-st", "", ICONS.ready, _("Previous version: {version}", { version: versionName(s.rollback) }),
+        _("Now running {version}.", { version: versionName(s.booted) }));
+    else setStatus("rb-st", "off", ICONS.ready, "No previous version", _("Now running {version}.", { version: versionName(s.booted) }));
+    $("rb-hint").textContent = _("Goes back by itself after {n} failed starts. Manually: Shift at boot.", { n: AUTO_TRIES });
     renderNotes();
 }
 
@@ -1048,7 +1057,7 @@ function renderNetbar() {
     if (hmiWaiting) {
         nb.hidden = false;
         nb.innerHTML = `${ICONS.busy}<span>${n ? "Connecting to HMI…" : "Waiting for network…"}</span>`;
-        nb.title = n ? `${n.name}: the HMI isn't answering yet, the kiosk will switch to it by itself`
+        nb.title = n ? _("{name}: the HMI isn't answering yet, the kiosk will switch to it by itself", { name: n.name })
             : "The kiosk switches to the HMI once there's a network and the HMI answers";
         return;
     }
@@ -1056,7 +1065,7 @@ function renderNetbar() {
     if (n) {
         const icon = n.type === "wifi" ? wifiIcon(n.signal != null ? sigLevel(n.signal) : 3) : ICONS.ethernet;
         nb.innerHTML = `${icon}<span>${esc(n.type === "wifi" ? n.name : "Ethernet")}</span>`;
-        nb.title = n.type === "wifi" && n.signal != null ? `${n.name} · signal ${n.signal}%` : n.name;
+        nb.title = n.type === "wifi" && n.signal != null ? _("{name} · signal {signal}%", { name: n.name, signal: n.signal }) : n.name;
     }
 }
 
@@ -1125,13 +1134,14 @@ async function loadBoot() {
     const total = segs.reduce((a, [, v]) => a + v, 0);
     const ready = before + kernelToDone;
     if (b.hmi_shown != null) {
-        setStatus("boot-st", "", ICONS.clock, `HMI after ${secs(before + b.hmi_shown)} from power-on`,
-                  `system ready after ${secs(ready)}, ${secs(before)} of it before the kernel started (UEFI + GRUB)`);
+        setStatus("boot-st", "", ICONS.clock, _("HMI after {time} from power-on", { time: secs(before + b.hmi_shown) }),
+                  _("system ready after {ready}, {before} of it before the kernel started (UEFI + GRUB)",
+                    { ready: secs(ready), before: secs(before) }));
     } else if (b.total && b.hmi_unconfigured) {
-        setStatus("boot-st", "", ICONS.clock, `System ready after ${secs(ready)}`,
+        setStatus("boot-st", "", ICONS.clock, _("System ready after {time}", { time: secs(ready) }),
                   "No HMI address at boot: HMI time not measured");
     } else if (b.total) {
-        setStatus("boot-st", "", ICONS.clock, `System ready after ${secs(ready)}`,
+        setStatus("boot-st", "", ICONS.clock, _("System ready after {time}", { time: secs(ready) }),
                   "The HMI hasn't shown yet (no address, or the server isn't answering)");
     } else {
         setStatus("boot-st", "busy", ICONS.busy, "Still booting", b.error || "");
@@ -1156,7 +1166,7 @@ async function loadBoot() {
         `<span class="meter"><i style="width:${(u.dur / max * 100).toFixed(1)}%"></i></span></li>`).join("");
     // Critical chains: what local-fs and the kiosk waited for.
     $("boot-chains").innerHTML = (b.chains || []).filter(c => c.steps && c.steps.length).map(c =>
-        `<h3>What the boot waited for: ${esc(c.title)}</h3><ul class="chain">` +
+        `<h3>${_("What the boot waited for: {title}", { title: esc(c.title) })}</h3><ul class="chain">` +
         c.steps.map((s, i) =>
             `<li style="--d:${Math.min(i, 8)}"><span class="t">${s.at != null ? secs(s.at) : ""}</span>` +
             `<span class="u">${esc(s.unit)}</span>` +
@@ -1165,8 +1175,8 @@ async function loadBoot() {
     $("boot-more").hidden = !marks.length && !slow.length;
 
     const problems = [
-        ...(b.failed && b.failed.length ? [`Failed to start: ${b.failed.join(", ")}`] : []),
-        ...(b.journal_error ? [`No boot timeline (journalctl: ${b.journal_error})`] : []),
+        ...(b.failed && b.failed.length ? [_("Failed to start: {units}", { units: b.failed.join(", ") })] : []),
+        ...(b.journal_error ? [_("No boot timeline (journalctl: {error})", { error: b.journal_error })] : []),
     ];
     $("boot-failed").textContent = problems.join(" · ");
     $("boot-failed").hidden = !problems.length;
@@ -1207,7 +1217,7 @@ function initSystem() {
             cfg = c;
             $("sys-repo").value = cfg.releases_repo;
             $("sys-repo").blur();
-            toast(`Changelog from ${cfg.releases_repo}`);
+            toast(_("Changelog from {repo}", { repo: cfg.releases_repo }));
             $("upd-notes").dataset.key = "";
             return loadNotes();
         })
@@ -1228,7 +1238,7 @@ function initSystem() {
         hostSaved = r.hostname;
         $("host-name").value = r.hostname;
         $("host-name").blur();
-        toast(`Host name: ${r.hostname}. The router will see it on its next connection.`);
+        toast(_("Host name: {name}. The router will see it on its next connection.", { name: r.hostname }));
     }).then(() => { $("host-save").disabled = true; }).catch(() => {}));
 
     $("tz-region").addEventListener("change", e => renderTz(e.target.value));
@@ -1239,7 +1249,7 @@ function initSystem() {
             tzCurrent = r.timezone;
             setClock(r.time);
             renderTz();
-            toast(`Time zone: ${r.timezone}`);
+            toast(_("Time zone: {zone}", { zone: r.timezone }));
         }).catch(err => { toast(err.message, true); renderTz(); });
     });
 
@@ -1343,7 +1353,7 @@ async function loadInstaller() {
         const why = d.is_boot_medium ? "installation drive" : !ok ? "too small" : d.internal ? "internal" : "external";
         li.innerHTML = `<div class="item ${d.name === chosenDisk ? "on" : ""} ${ok ? "" : "off"}">
             <div class="name">${esc(d.model || d.name)} <span class="sub">${esc(d.path)}</span>
-              <div class="sub">${fmtSize(d.size)} · ${esc(why)}</div></div>
+              <div class="sub">${fmtSize(d.size)} · ${esc(_(why))}</div></div>
             ${d.name === chosenDisk ? '<span class="badge ok">selected</span>' : ""}</div>`;
         if (ok) li.addEventListener("click", () => { chosenDisk = d.name; loadInstaller(); });
         list.appendChild(li);
@@ -1352,7 +1362,9 @@ async function loadInstaller() {
 
     const pw = st.power;
     $("inst-power").hidden = pw.ac_online !== false;
-    $("inst-power").textContent = `The tablet is on battery${pw.battery != null ? ` (${pw.battery}%)` : ""}. Plug in the charger before installing.`;
+    $("inst-power").textContent = _(pw.battery != null
+        ? "The tablet is on battery ({pct}%). Plug in the charger before installing."
+        : "The tablet is on battery. Plug in the charger before installing.", { pct: pw.battery });
     $("inst-go").disabled = !p || !chosenDisk;
 }
 

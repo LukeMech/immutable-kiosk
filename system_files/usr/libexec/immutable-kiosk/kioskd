@@ -91,14 +91,47 @@ CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 
 # ---------------------------------------------------------------- helpers
 
+class Msg(str):
+    """English text for Settings with values in it, which keeps what it was
+    made from: Msg("Invalid DNS server: {dns}", dns=d). The page translates
+    the template and fills in the values (i18n.js): send_json lists every
+    Msg in an answer under "_i18n". Values: str or numbers, or Msg."""
+
+    def __new__(cls, template, **values):
+        self = super().__new__(cls, template.format(**values))
+        self.template, self.values = template, values
+        return self
+
+
+def i18n_of(obj, out):
+    """Every Msg in obj (and in Msg values) -> out[text] = [template, values]."""
+    if isinstance(obj, Msg):
+        out[str(obj)] = [obj.template, obj.values]
+        for v in obj.values.values():
+            i18n_of(v, out)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            i18n_of(v, out)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            i18n_of(v, out)
+    return out
+
+
+def text_of(e):
+    """An exception's message, a Msg if it was raised with one."""
+    a = e.args[0] if e.args else None
+    return a if isinstance(a, Msg) else str(e)
+
+
 def run(cmd, check=True, timeout=60, **kw):
     """Run a command, return stdout (str). Raises ApiError with stderr on failure."""
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
     except subprocess.TimeoutExpired:
-        raise ApiError(f"{cmd[0]}: timed out ({timeout} s)")
+        raise ApiError(Msg("{program}: timed out ({secs} s)", program=cmd[0], secs=timeout))
     except FileNotFoundError:
-        raise ApiError(f"program not found: {cmd[0]}")
+        raise ApiError(Msg("program not found: {program}", program=cmd[0]))
     if check and p.returncode != 0:
         raise ApiError(cmd_error(p, cmd[0]))
     return p.stdout
@@ -110,7 +143,7 @@ NM_ERRORS = [
     (r"secrets were required|802\.1x supplicant|no secrets", "Wrong password"),
     (r"wireless-security\.psk.*invalid|psk: property is invalid",
      "The password must be 8 to 63 characters (or 64 hex digits)"),
-    (r"no network with ssid ['\"]?(.+?)['\"]? found", "Network “{0}” not found"),
+    (r"no network with ssid ['\"]?(?P<ssid>.+?)['\"]? found", "Network “{ssid}” not found"),
     (r"wi-?fi network could not be found|ssid not found", "The network is out of range"),
     (r"ip configuration could not be reserved|dhcp", "No IP address: the network's DHCP server didn't answer"),
     (r"timeout expired|timed out", "The connection timed out"),
@@ -134,14 +167,14 @@ def cmd_error(p, name):
         for rx, msg in NM_ERRORS:
             m = re.search(rx, text, re.I)
             if m:
-                return msg.format(*m.groups())
+                return Msg(msg, **m.groupdict())
         if text:
             # "Error: Connection activation failed: <reason>." -> "<reason>"
             text = re.sub(r"^(error:\s*)?(connection activation failed:\s*)?(\(\d+\)\s*)?", "", text, flags=re.I)
-            return "Couldn't connect: " + text.rstrip(".")
+            return Msg("Couldn't connect: {reason}", reason=text.rstrip("."))
         return "Couldn't connect"
     text = re.sub(r"^error:\s*", "", "\n".join(lines), flags=re.I)
-    return text or f"{name} exited with code {p.returncode}"
+    return text or Msg("{program} exited with code {code}", program=name, code=p.returncode)
 
 
 class ApiError(Exception):
@@ -329,7 +362,7 @@ def save_config(update):
         except (TypeError, ValueError):
             raise ApiError("Brightness must be a number")
         if not BRIGHTNESS_MIN <= b <= 100:
-            raise ApiError(f"Brightness: {BRIGHTNESS_MIN}-100%")
+            raise ApiError(Msg("Brightness: {min}-100%", min=BRIGHTNESS_MIN))
         brightness_set(b)
         cfg["brightness"] = b
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -703,7 +736,7 @@ def network_set(body):
             try:
                 dns.append(str(ipaddress.IPv4Address(d)))
             except ValueError:
-                raise ApiError(f"Invalid DNS server: {d}")
+                raise ApiError(Msg("Invalid DNS server: {dns}", dns=d))
         args = ["ipv4.method", "manual", "ipv4.addresses", f"{addr}/{prefix}",
                 "ipv4.gateway", gw, "ipv4.dns", " ".join(dns)]
     else:
@@ -948,7 +981,7 @@ def start_job(kind, title, target, steps=()):
     global CURRENT_JOB
     with JOB_LOCK:
         if CURRENT_JOB and CURRENT_JOB.state == "running":
-            raise ApiError(f"Already running: {CURRENT_JOB.title}", HTTPStatus.CONFLICT)
+            raise ApiError(Msg("Already running: {title}", title=CURRENT_JOB.title), HTTPStatus.CONFLICT)
         job = Job(kind, title, steps)
         CURRENT_JOB = job
     EVENTS.emit("job")
@@ -960,9 +993,9 @@ def start_job(kind, title, target, steps=()):
             if job.state == "running":
                 job.state = "done"
         except Exception as e:  # noqa: BLE001 -- anything goes to the page
-            job.end_steps(error=str(e))
+            job.end_steps(error=text_of(e))
             job.state = "failed"
-            job.detail = str(e)
+            job.detail = text_of(e)
             job.add_log(f"ERROR: {e}")
         finally:
             job.finished = time.time()
@@ -1011,7 +1044,9 @@ def run_bootc_with_progress(job, args):
     # Speed over a ~5 s window, plus ETA.
     samples = []
 
-    def speed_text(done, total):
+    def progress(done, total):
+        """"12 / 345 MB", with the speed and time left once known."""
+        mb = {"done": f"{done / 1e6:.0f}", "total": f"{total / 1e6:.0f}"}
         now = time.monotonic()
         if samples and done < samples[-1][1]:
             samples.clear()  # a new download task started from zero
@@ -1020,11 +1055,12 @@ def run_bootc_with_progress(job, args):
             samples.pop(0)
         t0, b0 = samples[0]
         if now - t0 < 1 or done <= b0:
-            return ""
+            return Msg("{done} / {total} MB", **mb)
         rate = (done - b0) / (now - t0)
         left = (total - done) / rate
         eta = f"{left / 60:.0f} min" if left >= 90 else f"{max(1, left):.0f} s"
-        return f" · {decimal(rate / 1e6)} MB/s · about {eta} left"
+        return Msg("{done} / {total} MB · {rate} MB/s · about {eta} left", **mb,
+                   rate=decimal(rate / 1e6), eta=eta)
 
     def read_progress():
         with os.fdopen(r, "r") as f:
@@ -1039,7 +1075,7 @@ def run_bootc_with_progress(job, args):
                 elif t == "ProgressBytes" and task == "pulling":
                     done, total = ev.get("bytes") or 0, ev.get("bytesTotal") or 0
                     if total and done < total:
-                        job.step("pull", f"{done / 1e6:.0f} / {total / 1e6:.0f} MB" + speed_text(done, total),
+                        job.step("pull", progress(done, total),
                                  done / total)
                     else:
                         # Download complete (or cached): summarize the pull step.
@@ -1047,11 +1083,14 @@ def run_bootc_with_progress(job, args):
                             if any(st["key"] == "pull" for st in job.steps) else None
                         if pull and pull["state"] == "active" and total:
                             secs = time.time() - pull["started"]
-                            pull["detail"] = f"{total / 1e6:.0f} MB" + (
-                                f" · average {decimal(total / 1e6 / secs)} MB/s" if secs >= 1 else "")
+                            pull["detail"] = (
+                                Msg("{total} MB · average {rate} MB/s", total=f"{total / 1e6:.0f}",
+                                    rate=decimal(total / 1e6 / secs))
+                                if secs >= 1 else Msg("{total} MB", total=f"{total / 1e6:.0f}"))
                         cached = ev.get("bytesCached") or 0
                         job.step("local", "Writing the image to disk" if total else
-                                 (f"{cached / 1e6:.0f} MB was already on disk" if cached else "Writing the image to disk"))
+                                 (Msg("{mb} MB was already on disk", mb=f"{cached / 1e6:.0f}") if cached
+                                  else "Writing the image to disk"))
                         job.pace("local", 0.0, LOCAL_EXPECT_S)
                 elif task in ("pulling", "importing"):
                     job.step("local", "Writing the image to disk")
@@ -1112,7 +1151,7 @@ def bootc_status():
     try:
         st = json.loads(run(["bootc", "status", "--format=json"], timeout=30))
     except (ApiError, ValueError) as e:
-        return {"available": False, "error": str(e), "checked": LAST_CHECK}
+        return {"available": False, "error": text_of(e), "checked": LAST_CHECK}
 
     def sha(version):
         m = VERSION_SHA.search(version or "")
@@ -1268,7 +1307,7 @@ def check_for_update(job):
         REMOTE["value"] = None
         out = run(["bootc", "upgrade", "--check"], timeout=180)
     except ApiError as e:
-        LAST_CHECK.update(time=time.time(), error=str(e))
+        LAST_CHECK.update(time=time.time(), error=text_of(e))
         raise
     LAST_CHECK.update(time=time.time(), error=None)
     for line in out.splitlines():
@@ -1290,7 +1329,8 @@ def job_upgrade(job):
         job.result = st
         return
     update = st["update"]
-    job.step("check", f"New version: {update.get('version') or update.get('digest', '')[7:19]}")
+    job.step("check", Msg("New version: {version}",
+                          version=update.get("version") or update.get("digest", "")[7:19]))
     run_bootc_with_progress(job, ["upgrade"])
     job.end_steps()
     job.fraction = 1
@@ -1475,7 +1515,7 @@ def boot_journal():
             if unit == CAGE_UNIT:
                 cage_starts += 1
                 marks.append({"t": t, "label": "Kiosk: cage starts (plymouth goes away)" if cage_starts == 1
-                              else f"Kiosk: cage restarted (start #{cage_starts})"})
+                              else Msg("Kiosk: cage restarted (start #{n})", n=cage_starts)})
         elif mid == MSG_STARTED:
             t0 = starting.pop(unit, None)
             if t0 is not None and not unit.endswith((".device", ".target", ".slice", ".scope")):
@@ -1591,7 +1631,7 @@ def job_switch(image):
         job.end_steps()
         job.fraction = 1
         job.stage = "Done"
-        job.detail = f"After a restart the system runs image {image}"
+        job.detail = Msg("After a restart the system runs image {image}", image=image)
         job.result = bootc_status()
     return target
 
@@ -1750,7 +1790,7 @@ def job_install(disk_path):
         if dec.wait() != 0:
             raise RuntimeError("The system image on the USB drive is damaged (decompression error)")
         if size and written != size:
-            raise RuntimeError(f"Wrote {written} B instead of {size} B")
+            raise RuntimeError(Msg("Wrote {written} B instead of {size} B", written=written, size=size))
         if expected and digest.hexdigest() != expected:
             raise RuntimeError("Image checksum mismatch -- the installation drive is damaged")
 
@@ -1821,6 +1861,10 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- plumbing
     def send_json(self, obj, status=HTTPStatus.OK):
+        if isinstance(obj, dict):
+            texts = i18n_of(obj, {})
+            if texts:
+                obj = {**obj, "_i18n": texts}
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1894,9 +1938,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 raise ApiError("not found", HTTPStatus.NOT_FOUND)
         except ApiError as e:
-            self.send_json({"error": str(e)}, e.status)
+            self.send_json({"error": text_of(e)}, e.status)
         except Exception as e:  # noqa: BLE001
-            self.send_json({"error": f"Internal error: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.send_json({"error": Msg("Internal error: {error}", error=str(e))},
+                           HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_GET(self):
         self.dispatch("GET")
@@ -2055,8 +2100,10 @@ def r_hmi_test(body, q):
         with socket.create_connection((host, port), timeout=3):
             pass
     except OSError as e:
-        return {"ok": False, "message": f"Can't connect to {host}:{port} ({e.strerror or e})"}
-    return {"ok": True, "message": f"Port {port} on {host} answers ({(time.time() - t0) * 1000:.0f} ms)"}
+        return {"ok": False, "message": Msg("Can't connect to {host}:{port} ({reason})",
+                                            host=host, port=port, reason=e.strerror or str(e))}
+    return {"ok": True, "message": Msg("Port {port} on {host} answers ({ms} ms)",
+                                       port=port, host=host, ms=f"{(time.time() - t0) * 1000:.0f}")}
 
 
 def r_wifi(body, q):
@@ -2197,7 +2244,7 @@ def set_splash_orientation(output, transform):
             splash_state(state="done")
         except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot splash orientation {want}: {e}", flush=True)
-            splash_state(state="failed", error=str(e))
+            splash_state(state="failed", error=text_of(e))
 
 
 SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
@@ -2334,7 +2381,7 @@ def set_splash_look(what=""):
             splash_state(look={"state": "done", "what": what, "error": None})
         except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot screen look: {e}", flush=True)
-            splash_state(look={"state": "failed", "what": what, "error": str(e)})
+            splash_state(look={"state": "failed", "what": what, "error": text_of(e)})
 
 
 # ---------------------------------------------------------------- GRUB's boot screen
@@ -2902,7 +2949,8 @@ def r_system_switch(body, q):
         image = image[len("docker://"):]
     if not IMAGE_REF.match(image):
         raise ApiError("Invalid image name (e.g. ghcr.io/lukemech/immutable-kiosk-x86:latest)")
-    return start_job("switch", f"Switching image to {image}", job_switch(image), BOOTC_STEPS).as_dict()
+    return start_job("switch", Msg("Switching image to {image}", image=image), job_switch(image),
+                     BOOTC_STEPS).as_dict()
 
 
 def r_system_channel(body, q):
@@ -2919,8 +2967,8 @@ def r_system_channel(body, q):
     repo, _ = split_image(current)
     image = f"{repo}:{CHANNELS[channel]['tag']}"
     if image == current:
-        raise ApiError(f"The system is already on the {CHANNELS[channel]['name']} channel")
-    return start_job("switch", f"Switching to the {CHANNELS[channel]['name']} channel",
+        raise ApiError(Msg("The system is already on the {channel} channel", channel=CHANNELS[channel]["name"]))
+    return start_job("switch", Msg("Switching to the {channel} channel", channel=CHANNELS[channel]["name"]),
                      job_switch(image), BOOTC_STEPS).as_dict()
 
 
@@ -3035,7 +3083,8 @@ def r_installer_start(body, q):
     payload = payload_info()
     if payload and payload.get("size") and disk["size"] < int(payload["size"]):
         raise ApiError("The disk is too small for the system")
-    return start_job("install", f"Installing to {disk['path']}", job_install(disk["path"])).as_dict()
+    return start_job("install", Msg("Installing to {disk}", disk=disk["path"]),
+                     job_install(disk["path"])).as_dict()
 
 
 ROUTES = {
