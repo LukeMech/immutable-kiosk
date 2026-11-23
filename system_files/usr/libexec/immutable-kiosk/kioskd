@@ -2379,11 +2379,15 @@ def boot_frame(nw, nh, transform, d, accent, lang):
     return buf, box
 
 
-def frame_tiles(buf, nw, nh, box):
+def nearest_grub_colour(rgb):
+    return min(GRUB_COLORS, key=lambda n: sum((a - b) ** 2 for a, b in zip(GRUB_COLORS[n], rgb)))
+
+
+def frame_tiles(buf, nw, nh, box, palette):
     """The frame in gfxterm's grid: {(col, row): (colour name, bits)}, bits
-    CELL_W x CELL_H 0/1 row-major. Per cell the GRUB colour that best gives
-    its pixels as a share of that colour on black; the share is
-    Bayer-dithered (continuous across cells)."""
+    CELL_W x CELL_H 0/1 row-major. Per cell the colour of `palette` (GRUB
+    colour names) that best gives its pixels as a share of that colour on
+    black; a dim share is Bayer-dithered (continuous across cells)."""
     c0, r0 = (box[0] - GFXTERM_BORDER) // CELL_W, (box[1] - GFXTERM_BORDER) // CELL_H
     c1, r1 = (box[2] - GFXTERM_BORDER) // CELL_W, (box[3] - GFXTERM_BORDER) // CELL_H
     tiles = {}
@@ -2404,7 +2408,8 @@ def frame_tiles(buf, nw, nh, box):
             for _, _, t in px:
                 counts[t] = counts.get(t, 0) + 1
             best = None
-            for name, f in GRUB_COLORS.items():
+            for name in palette:
+                f = GRUB_COLORS[name]
                 ff = f[0] * f[0] + f[1] * f[1] + f[2] * f[2]
                 err, share = 0, {}
                 for t, n in counts.items():
@@ -2416,12 +2421,18 @@ def frame_tiles(buf, nw, nh, box):
             _, name, share = best
             shares = [share[t] for _, _, t in px]
             # Something solid in it (text, the accent's dot): crisp edges.
-            # Only a dim colour (the track) is dithered.
+            # Only a dim colour (the track) is dithered -- as a share of
+            # light, not of sRGB values: the eye averages light, and an sRGB
+            # share lit the track up far brighter than Plymouth's.
             if max(shares) > 0.85:
                 bits = tuple(1 if s >= 0.5 else 0 for s in shares)
             else:
-                bits = tuple(1 if s * 16 > BAYER[(y % 4) * 4 + x % 4] + 0.5 else 0
-                             for (x, y, _), s in zip(px, shares))
+                lf = [(c / 255) ** 2.2 for c in GRUB_COLORS[name]]
+                lff = sum(c * c for c in lf)
+                lin = {t: min(max(sum((c / 255) ** 2.2 * f for c, f in zip(t, lf)) / lff, 0.0), 1.0)
+                       for t in counts}
+                bits = tuple(1 if lin[t] * 16 > BAYER[(y % 4) * 4 + x % 4] + 0.5 else 0
+                             for x, y, t in px)
             if any(bits):
                 tiles[col, row] = (name, bits)
     return tiles
@@ -2463,7 +2474,12 @@ def grub_splash_files(nw, nh, transform, d, accent, lang, key=""):
     buf, box = boot_frame(nw, nh, transform, d, accent, lang)
     if box[2] < 0:
         return None
-    tiles = frame_tiles(buf, nw, nh, box)
+    # Two colours: the text's (the track too, dithered) and the accent's.
+    # GRUB puts the whole screen through the firmware at every echo -- a
+    # second or more on the 408 for one echo per row; this way the frame
+    # takes as many echos as colour changes: two or three.
+    palette = {nearest_grub_colour(d["text"]), nearest_grub_colour(d["accents"][accent])}
+    tiles = frame_tiles(buf, nw, nh, box, palette)
     columns = (nw - 2 * GFXTERM_BORDER) // CELL_W
     rows = (nh - 2 * GFXTERM_BORDER) // CELL_H
     # Lines shorter than the screen (a full one wraps), none scrolled away.
@@ -2474,26 +2490,28 @@ def grub_splash_files(nw, nh, transform, d, accent, lang, key=""):
         if bits not in codes:
             codes[bits] = 0xE000 + len(codes)    # Private Use Area
             glyphs[codes[bits]] = bits
-    lines, colour = [], None
-    for row in range(max(r for _, r in tiles) + 1):
-        cells = sorted(c for c, r in tiles if r == row)
-        if not cells:
-            lines.append("  echo")
-            continue
-        col, run = 0, ""
-        out = []
-        for c in cells:
+    # The grid row by row as one text (line breaks as echo -e's backslash-n),
+    # a new part only where the colour changes (spaces and breaks take any).
+    parts = []                                  # [colour or None, text]
+    last = max(r for _, r in tiles)
+    for row in range(last + 1):
+        col = 0
+        for c in sorted(c for c, r in tiles if r == row):
             name, bits = tiles[c, row]
-            if name != colour and run:
-                out.append(f'  echo -n "{run}"')
-                run = ""
-            if name != colour:
-                out.append(f"  set color_normal={name}/black")
-                colour = name
-            run += " " * (c - col) + chr(codes[bits])
+            if not parts or parts[-1][0] not in (name, None):
+                parts.append([name, ""])
+            parts[-1][0] = name
+            parts[-1][1] += " " * (c - col) + chr(codes[bits])
             col = c + 1
-        out.append(f'  echo "{run}"')
-        lines += out
+        if row < last:
+            if not parts:
+                parts.append([None, ""])
+            parts[-1][1] += "\\n"
+    lines = []
+    for name, text in parts:
+        if name:
+            lines.append(f"  set color_normal={name}/black")
+        lines.append(f"  echo -e -n '{text}'")
     cfg = f"""\
 # key: {key}
 # immutable-kiosk boot screen -- written by kioskd (set_grub_splash) with
@@ -2529,12 +2547,13 @@ function kiosk_splash {{
   clear
 {chr(10).join(lines)}
   set color_normal=black/black
-  echo -n " "
+  echo " "
 }}
 
 # Boot entries start with "savedefault" when these are set (blsuki; older
 # blscfg: save_default): GRUB has just cleared the screen, the kernel and
-# the initramfs are about to be read.
+# the initramfs are about to be read. Drawn only then, once: drawn before
+# the menu's wait too, it blinked as GRUB cleared the screen to boot.
 function savedefault {{
   if [ "$kiosk_splash_ok" = 1 ]; then
     kiosk_splash
@@ -2544,7 +2563,6 @@ function savedefault {{
 if [ "$kiosk_splash_ok" = 1 ]; then
   set blsuki_save_default=true
   set save_default=true
-  kiosk_splash
 fi
 """
     return cfg, pf2_font(glyphs)
