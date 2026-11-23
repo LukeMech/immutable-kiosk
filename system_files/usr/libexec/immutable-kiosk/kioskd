@@ -10,6 +10,7 @@ be 127.0.0.1:8088 / localhost:8088 (DNS rebinding).
 
 import base64
 import errno
+import fcntl
 import sys
 import ipaddress
 import json
@@ -330,26 +331,137 @@ def nm_kv(args):
     return d
 
 
-def saved_wifi():
-    """[{name, uuid, ssid, active}] for every saved Wi-Fi profile."""
-    result = []
-    for name, uuid, ctype, dev in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"]):
-        if ctype != "802-11-wireless":
-            continue
-        ssid = run(["nmcli", "-g", "802-11-wireless.ssid", "con", "show", uuid], check=False).strip()
-        result.append({"name": name, "uuid": uuid, "ssid": ssid or name, "active": bool(dev)})
-    return result
+def parallel(*calls):
+    """Run zero-argument callables at once, results in order; the first
+    exception is re-raised. Every nmcli start costs ~0.5 s on the Atom
+    (mostly loading NetworkManager's objects over D-Bus), one after another
+    they added up to many seconds."""
+    results, errors = [None] * len(calls), [None] * len(calls)
+
+    def one(i, fn):
+        try:
+            results[i] = fn()
+        except Exception as e:  # noqa: BLE001 -- re-raised below
+            errors[i] = e
+    threads = [threading.Thread(target=one, args=(i, fn), daemon=True) for i, fn in enumerate(calls)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for e in errors:
+        if e is not None:
+            raise e
+    return results
+
+
+class Coalesce:
+    """A read that callers share: one arriving while it runs gets that run's
+    result instead of starting another (the page, the top bar and a burst
+    of events often ask at once), and a result younger than `ttl` s is
+    reused. invalidate() after a change; NetworkManager's signals do too."""
+
+    def __init__(self, fn, ttl):
+        self.fn, self.ttl = fn, ttl
+        self.lock = threading.Lock()
+        self.pending = None     # threading.Event of the run under way
+        self.last = None        # (monotonic time, value) of the last good run
+
+    def invalidate(self):
+        with self.lock:
+            self.last = None
+
+    def __call__(self):
+        with self.lock:
+            if self.last and time.monotonic() - self.last[0] < self.ttl:
+                return self.last[1]
+            ev, leader = self.pending, self.pending is None
+            if leader:
+                ev = self.pending = threading.Event()
+                ev.result = (None, None)
+                started = time.monotonic()
+        if not leader:
+            ev.wait()
+        else:
+            try:
+                ev.result = (self.fn(), None)
+            except Exception as e:  # noqa: BLE001 -- handed to every waiter
+                ev.result = (None, e)
+            with self.lock:
+                self.pending = None
+                # Not if invalidated meanwhile: the result may predate the change.
+                if ev.result[1] is None and (self.last is None or self.last[0] < started):
+                    self.last = (started, ev.result[0])
+            ev.set()
+        value, error = ev.result
+        if error is not None:
+            raise error
+        return value
+
+
+# Saved profile -> its SSID. A profile's SSID doesn't change (a new password
+# makes a new profile), so each costs one nmcli call, once.
+_ssids = {}
+
+
+def saved_wifi(rows=None):
+    """[{name, uuid, ssid, active}] for every saved Wi-Fi profile; `rows`:
+    `nmcli con show` NAME,UUID,TYPE,DEVICE rows if already read."""
+    if rows is None:
+        rows = nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"])
+    wifi = [(name, uuid, dev) for name, uuid, ctype, dev in rows if ctype == "802-11-wireless"]
+    missing = [uuid for _, uuid, _ in wifi if uuid not in _ssids]
+
+    def ssid_of(uuid):
+        return lambda: run(["nmcli", "-g", "802-11-wireless.ssid", "con", "show", uuid], check=False).strip()
+    for uuid, ssid in zip(missing, parallel(*[ssid_of(u) for u in missing])):
+        if ssid:
+            _ssids[uuid] = ssid
+    return [{"name": name, "uuid": uuid, "ssid": _ssids.get(uuid) or name, "active": bool(dev)}
+            for name, uuid, dev in wifi]
+
+
+_scan = {"time": -1e9}
+
+
+def request_scan():
+    """Ask NetworkManager for a fresh scan without waiting for it (it takes
+    seconds): the list shows the last results at once, and the new ones
+    come as D-Bus signals -> "net" event -> the page reloads. At most every
+    30 s."""
+    now = time.monotonic()
+    if now - _scan["time"] < 30:
+        return
+    _scan["time"] = now
+    threading.Thread(target=run, args=(["nmcli", "dev", "wifi", "rescan"],),
+                     kwargs={"check": False, "timeout": 30}, daemon=True).start()
 
 
 def wifi_state(rescan):
-    radio = run(["nmcli", "radio", "wifi"], check=False).strip() == "enabled"
-    saved = saved_wifi()
+    """rescan: wait for a new scan (the Scan button); otherwise NetworkManager's
+    last results."""
+    def aps():
+        try:
+            return nm_rows(["-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list",
+                            "--rescan", "yes" if rescan else "no"], timeout=45)
+        except ApiError as e:
+            return e  # fine with the radio off
+
+    def devices():
+        try:
+            return nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
+        except ApiError:
+            return None
+    radio, con_rows, dev_rows, ap_rows = parallel(
+        lambda: run(["nmcli", "radio", "wifi"], check=False).strip() == "enabled",
+        lambda: nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"]),
+        devices, aps)
+    saved = saved_wifi(con_rows)
     saved_ssids = {s["ssid"] for s in saved}
     networks = {}
     if radio:
-        rows = nm_rows(["-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list",
-                        "--rescan", "yes" if rescan else "auto"], timeout=45)
-        for in_use, ssid, signal, security in rows:
+        if isinstance(ap_rows, ApiError):
+            raise ap_rows
+        for in_use, ssid, signal, security in ap_rows:
             if not ssid:
                 continue  # hidden network: joined by name instead
             n = networks.get(ssid)
@@ -365,48 +477,70 @@ def wifi_state(rescan):
             elif in_use == "*":
                 n["in_use"] = True
     nets = sorted(networks.values(), key=lambda n: (not n["in_use"], -n["signal"]))
-    return {"enabled": radio, "networks": nets, "saved": saved, "device": wifi_device()}
+    return {"enabled": radio, "networks": nets, "saved": saved, "device": wifi_device(dev_rows)}
+
+
+WIFI = Coalesce(lambda: wifi_state(False), 3.0)
 
 
 def net_brief():
-    """Connected device for the top bar (polled every 5 s, so no rescan);
-    Ethernet wins over Wi-Fi. None = offline."""
-    try:
-        rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"], timeout=5)
-    except ApiError:
+    """Connected device for the top bar (no rescan); Ethernet wins over
+    Wi-Fi. None = offline."""
+    def signal():
+        try:
+            for in_use, sig in nm_rows(["-f", "IN-USE,SIGNAL", "dev", "wifi", "list", "--rescan", "no"], timeout=5):
+                if in_use == "*":
+                    return int(sig or 0)
+        except (ApiError, ValueError):
+            pass
         return None
+
+    def devices():
+        try:
+            return nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"], timeout=5)
+        except ApiError:
+            return None
+    rows, sig = parallel(devices, signal)
     best = None
-    for _dev, typ, state, conn in rows:
+    for _dev, typ, state, conn in rows or []:
         if typ not in ("ethernet", "wifi") or not state.startswith("connected"):
             continue
         item = {"type": typ, "name": conn if conn not in ("", "--") else typ}
         if typ == "ethernet":
             return item
         best = best or item
-    if best:
-        try:
-            for in_use, signal in nm_rows(["-f", "IN-USE,SIGNAL", "dev", "wifi", "list", "--rescan", "no"], timeout=5):
-                if in_use == "*":
-                    best["signal"] = int(signal or 0)
-                    break
-        except (ApiError, ValueError):
-            pass
+    if best and sig is not None:
+        best["signal"] = sig
     return best
 
 
-def wifi_device():
-    """{device, state (nmcli's), connection, address}; None = no Wi-Fi adapter."""
+NET_BRIEF = Coalesce(net_brief, 3.0)
+
+
+def ipv4_address(ifname):
+    """The interface's IPv4 address ("" if none), from the kernel (SIOCGIFADDR)
+    instead of another nmcli."""
     try:
-        rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
-    except ApiError:
-        return None
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            packed = fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", ifname[:15].encode()))
+        return socket.inet_ntoa(packed[20:24])
+    except (OSError, ValueError):
+        return ""
+
+
+def wifi_device(rows=None):
+    """{device, state (nmcli's), connection, address}; None = no Wi-Fi adapter.
+    `rows`: `nmcli dev` DEVICE,TYPE,STATE,CONNECTION rows if already read
+    (None: couldn't be)."""
+    if rows is None:
+        try:
+            rows = nm_rows(["-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
+        except ApiError:
+            return None
     for dev, typ, state, conn in rows:
         if typ != "wifi":
             continue
-        addr = ""
-        if state.startswith("connected"):
-            a = nm_kv(["-f", "IP4.ADDRESS", "dev", "show", dev]).get("IP4.ADDRESS", "")
-            addr = (a[0] if isinstance(a, list) else a).split("/")[0]
+        addr = ipv4_address(dev) if state.startswith("connected") else ""
         return {"device": dev, "state": state, "connection": "" if conn in ("", "--") else conn, "address": addr}
     return None
 
@@ -432,11 +566,14 @@ def wifi_connect(ssid, password, hidden):
 
 def network_state():
     conns = []
-    for name, uuid, ctype, dev in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show", "--active"]):
-        if ctype == "loopback" or dev == "lo":
-            continue
-        cfg = nm_kv(["-f", "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "con", "show", uuid])
-        live = nm_kv(["-f", "IP4", "con", "show", uuid])
+    active = [r for r in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show", "--active"])
+              if r[2] != "loopback" and r[3] != "lo"]
+    # Every connection's profile and live IPv4 at once (see parallel()).
+    reads = parallel(*[lambda u=uuid, f=fields: nm_kv(["-f", f, "con", "show", u])
+                       for _, uuid, _, _ in active
+                       for fields in ("ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "IP4")])
+    for i, (name, uuid, ctype, dev) in enumerate(active):
+        cfg, live = reads[2 * i], reads[2 * i + 1]
 
         def as_list(v):
             if not v:
@@ -462,6 +599,9 @@ def network_state():
             },
         })
     return {"hostname": socket.gethostname(), "connections": conns}
+
+
+NETWORK = Coalesce(network_state, 3.0)
 
 
 def network_set(body):
@@ -560,13 +700,16 @@ class Debounce:
         EVENTS.emit(self.topic)
 
 
-def watch_lines(cmd, debounce, name):
-    """Any output line of a monitor command pokes `debounce`; restarted if it exits."""
+def watch_lines(cmd, debounce, name, wanted=None, on_line=None):
+    """Any output line of a monitor command (that `wanted` accepts) pokes
+    `debounce` and calls `on_line`; restarted if it exits."""
     while True:
         try:
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             for line in p.stdout:
-                if line.strip():
+                if line.strip() and (wanted is None or wanted(line)):
+                    if on_line:
+                        on_line()
                     debounce.poke()
             p.wait()
         except OSError as e:
@@ -608,10 +751,24 @@ def watch_clock():
             EVENTS.emit("clock")
 
 
+def nm_signal_wanted(line):
+    """Not the access points' own property changes: their signal strength
+    changes every few seconds, and each reloaded the whole Network tab
+    (many nmcli calls) -- the Atom never caught up. Networks appearing or
+    going, and new scan results, come on the device's path."""
+    return not line.startswith("/org/freedesktop/NetworkManager/AccessPoint/")
+
+
+def nm_changed():
+    for cache in (WIFI, NET_BRIEF, NETWORK):
+        cache.invalidate()
+
+
 def start_watchers():
     net = Debounce("net", 1.0)
     threading.Thread(target=watch_lines, daemon=True, name="nm", args=(
-        ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager")).start()
+        ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager",
+        nm_signal_wanted, nm_changed)).start()
     # Disk hotplug (installer's list).
     threading.Thread(target=watch_lines, daemon=True, name="udev-block", args=(
         ["udevadm", "monitor", "--udev", "--subsystem-match=block"], Debounce("disks", 1.0), "disks")).start()
@@ -1673,7 +1830,7 @@ def r_info(body, q):
         "device": {"product": read_dmi("product_name"), "vendor": read_dmi("sys_vendor"),
                    "cpu": cpu_model(), "memory_mb": memory_mb()},
         "power": power_state(),
-        "net": net_brief(),
+        "net": NET_BRIEF(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "timezone": current_timezone(),
     }
@@ -1726,12 +1883,25 @@ def r_hmi_test(body, q):
 
 
 def r_wifi(body, q):
-    return wifi_state(rescan=q.get("rescan", ["0"])[0] == "1")
+    """?rescan=1: wait for a new scan; ?scan=1 (the tab opened): last results
+    now, a scan in the background."""
+    if q.get("rescan", ["0"])[0] == "1":
+        WIFI.invalidate()
+        return wifi_state(rescan=True)
+    if q.get("scan", ["0"])[0] == "1":
+        request_scan()
+    return WIFI()
+
+
+def wifi_changed():
+    """After a change made here: fresh state, not a read that predates it."""
+    nm_changed()
+    return wifi_state(rescan=False)
 
 
 def r_wifi_connect(body, q):
     wifi_connect(str(body.get("ssid", "")), str(body.get("password", "")), bool(body.get("hidden")))
-    return wifi_state(rescan=False)
+    return wifi_changed()
 
 
 def r_wifi_forget(body, q):
@@ -1739,7 +1909,8 @@ def r_wifi_forget(body, q):
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
         raise ApiError("Invalid profile")
     run(["nmcli", "con", "delete", uuid])
-    return wifi_state(rescan=False)
+    _ssids.pop(uuid, None)
+    return wifi_changed()
 
 
 def r_wifi_disconnect(body, q):
@@ -1747,20 +1918,21 @@ def r_wifi_disconnect(body, q):
     dev = wifi_device()
     if dev and dev["state"].startswith(("connected", "connecting")):
         run(["nmcli", "dev", "disconnect", dev["device"]], timeout=30)
-    return wifi_state(rescan=False)
+    return wifi_changed()
 
 
 def r_wifi_radio(body, q):
     run(["nmcli", "radio", "wifi", "on" if body.get("enabled") else "off"])
-    return wifi_state(rescan=False)
+    return wifi_changed()
 
 
 def r_network(body, q):
-    return network_state()
+    return NETWORK()
 
 
 def r_network_set(body, q):
     network_set(body)
+    nm_changed()
     return {"ok": True}
 
 
