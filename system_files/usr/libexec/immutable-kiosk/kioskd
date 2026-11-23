@@ -2268,8 +2268,8 @@ def set_splash_look(what=""):
 # Until i915 is up (~8 s) Plymouth can't draw, and GRUB reading the kernel
 # and the initramfs through the firmware is most of that. So GRUB shows the
 # boot screen's first frame -- the empty bar, "Starting…" -- from its start,
-# and that frame stays while the kernel boots (no kernel console draws over
-# it: fbdev_emulation=0; i915.fastboot keeps the firmware's framebuffer) until
+# and that frame stays while the kernel boots (fbcon waits for text, quiet
+# prints none, i915.fastboot keeps the firmware's framebuffer) until
 # Plymouth draws the same frame there (immutable-kiosk.script: no fade-in).
 #
 # Fedora's signed GRUB has no PNG background without a module it doesn't
@@ -2678,7 +2678,8 @@ def power_off(action):
     if pw:
         try:
             subprocess.run([KIOSK_SPLASH, "--shutdown", "reboot" if action == "reboot" else "shutdown"],
-                           user=pw.pw_uid, group=pw.pw_gid, extra_groups=[], cwd="/",
+                           user=pw.pw_uid, group=pw.pw_gid, cwd="/",
+                           extra_groups=os.getgrouplist(pw.pw_name, pw.pw_gid),  # video: /dev/fb0
                            env={"PATH": "/usr/bin", "HOME": pw.pw_dir, "XDG_RUNTIME_DIR": runtime},
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=10)
         except (OSError, subprocess.SubprocessError) as e:

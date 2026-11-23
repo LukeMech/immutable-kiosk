@@ -1,8 +1,2 @@
 # Quiet boot with the Plymouth splash (15-plymouth.sh), no cursor; none on serial consoles.
-# drm_kms_helper.fbdev_emulation=0: no kernel framebuffer console. Nothing here
-# reads it (no logins on any VT), and it's what showed a stale frame (GRUB's
-# boot frame, console text) whenever the screen had no owner -- between cage
-# and Plymouth's shutdown screen. Without it the kiosk's last frame (its own
-# shutdown screen) stays until Plymouth draws the same one. Debugging on a
-# VT (systemd.debug_shell=1): drop this argument too (Esc in GRUB, edit).
-kargs = ["quiet", "loglevel=3", "vt.global_cursor_default=0", "consoleblank=0", "splash", "plymouth.ignore-serial-consoles", "drm_kms_helper.fbdev_emulation=0"]
+kargs = ["quiet", "loglevel=3", "vt.global_cursor_default=0", "consoleblank=0", "splash", "plymouth.ignore-serial-consoles"]
