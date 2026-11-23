@@ -6,10 +6,11 @@ Two WebKit views in a stack:
                 without an HMI address; the only view on the installer ISO.
   * "hmi":      the configured web HMI, fullscreen. Loaded only once its
                 server answers (probe_hmi), then shown by itself.
-Until then the start-up screen stays (kiosk-splash: "Connecting…" once the
-HMI doesn't answer at once); an HMI that stops answering on screen gives
-way to the same ("connecting", drawn here). The Settings corner, held ~1 s,
-opens Settings from any of them, and then nothing switches by itself.
+Until then "connecting" shows ("Connecting…", drawn here as kiosk-splash
+draws its bar), from the moment WebKit has loaded; an HMI that stops
+answering on screen gives way to it too. The Settings corner, held ~1 s,
+opens Settings from it (a hint says which), and then nothing switches by
+itself.
 
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
 HMI never shares a JavaScript context with Settings. Settings talks back
@@ -190,11 +191,11 @@ def apply_output(cfg):
 SPLASH_PID = os.environ.pop("KIOSK_SPLASH_PID", "")
 
 
-def splash_signal(sig):
-    """SIGTERM: a page shows, it ends. SIGUSR1: "Connecting…", no time limit."""
+def end_splash():
+    """Stop kiosk-splash once this window shows something."""
     if SPLASH_PID.isdigit():
         try:
-            os.kill(int(SPLASH_PID), sig)
+            os.kill(int(SPLASH_PID), signal.SIGTERM)
         except OSError:
             pass
 
@@ -288,7 +289,6 @@ class KioskShell(Gtk.Application):
         # The start-up or connecting screen shows, and the HMI replaces it
         # by itself once it has loaded. Off once Settings is opened.
         self.waiting_for_hmi = False
-        self.splash_connecting = False
         self.pulse_source = None
         self.probe_gen = 0  # the newest probe_hmi; older answers are dropped
 
@@ -375,19 +375,23 @@ class KioskShell(Gtk.Application):
                 threading.Thread(target=self.report_hmi_shown, args=(False,), daemon=True).start()
         self.apply_scale()
 
-        # With an address: the start-up screen until the HMI shows (or the
-        # Settings corner is held). Without: Settings once rendered (at most
-        # 30 s). Settings loads either way: its first page means the boot is
-        # good (report_boot_ok), the HMI starts after it (start_hmi).
+        # With an address: "Connecting…" now, the HMI loading, alone (two web
+        # processes starting at once slow both down on an Atom); Settings
+        # loads once the HMI shows or doesn't answer, at the latest after
+        # 30 s (its first page also means the boot is good, report_boot_ok).
+        # Without: Settings once rendered (the splash stays until then, at
+        # most 30 s).
         self.waiting_for_hmi = bool(self.hmi and self.cfg.get("hmi_url"))
-        self.pending = None if self.waiting_for_hmi else "settings"
-        self.ensure_settings()
+        if self.waiting_for_hmi:
+            self.show("connecting")
+            self.start_hmi()
+        else:
+            self.pending = "settings"
+            self.ensure_settings()
         GLib.timeout_add_seconds(30, self.reveal)
         threading.Thread(target=self.listen_events, daemon=True).start()
 
     def start_hmi(self):
-        """After Settings' first page: two web processes starting at once
-        slow both down on an Atom."""
         if self.hmi and not self.hmi_started:
             self.hmi_started = True
             self.load_hmi()
@@ -438,19 +442,13 @@ class KioskShell(Gtk.Application):
 
     def reveal(self):
         """Settings' first page, or 30 s: Settings if it's the first screen;
-        the HMI starts loading. Still waiting for it then: "Connecting…"."""
+        Settings loaded and the HMI started either way."""
         if self.pending:
             name, self.pending = self.pending, None
             self.show(name)
+        self.ensure_settings()
         self.start_hmi()
-        if self.waiting_for_hmi and self.stack.get_visible_child_name() == "splash":
-            self.tell_splash_connecting()
         return GLib.SOURCE_REMOVE
-
-    def tell_splash_connecting(self):
-        if not self.splash_connecting:
-            self.splash_connecting = True
-            splash_signal(signal.SIGUSR1)
 
     def open_settings(self):
         """The Settings corner held: Settings, and the HMI no longer replaces
@@ -459,8 +457,8 @@ class KioskShell(Gtk.Application):
         self.show("settings")
 
     def make_connecting_view(self):
-        """The HMI gone while on screen: "Connecting…" over a loading bar, as
-        kiosk-splash draws it at start-up (its colours and size)."""
+        """"Connecting…" over a loading bar, as kiosk-splash draws its own
+        (its colours and size), and which corner opens Settings."""
         try:
             d = json.loads(SPLASH_DATA.read_text())
         except (OSError, ValueError):
@@ -472,7 +470,8 @@ class KioskShell(Gtk.Application):
         css.load_from_data((
             f".connecting progressbar trough {{ background: {rgb(d.get('track'), '#2a3542')}; }}\n"
             f".connecting progressbar progress {{ background: {rgb(fill, '#2f81f7')}; }}\n"
-            f".connecting label {{ color: {rgb(d.get('text'), '#e6edf3')}; }}\n").encode())
+            f".connecting label {{ color: {rgb(d.get('text'), '#e6edf3')}; }}\n"
+            ".connecting label.hint { font-size: 15px; opacity: .6; margin-top: 24px; }\n").encode())
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
         bar = d.get("bar", {})
@@ -483,6 +482,9 @@ class KioskShell(Gtk.Application):
         self.connecting_bar.set_size_request(int(bar.get("max", 480)), -1)
         box.append(self.connecting_bar)
         box.append(Gtk.Label(label=self.t("Łączę…", "Connecting…")))
+        self.connecting_hint = Gtk.Label()
+        self.connecting_hint.add_css_class("hint")
+        box.append(self.connecting_hint)
         page = Gtk.Box(halign=Gtk.Align.FILL, valign=Gtk.Align.FILL, hexpand=True, vexpand=True)
         page.add_css_class("connecting")
         box.set_hexpand(True)
@@ -505,7 +507,7 @@ class KioskShell(Gtk.Application):
 
         def finish():
             self.win.remove_css_class("splashing")
-            splash_signal(signal.SIGTERM)
+            end_splash()
             return GLib.SOURCE_REMOVE
         GLib.timeout_add(self.stack.get_transition_duration() + 150, finish)
 
@@ -626,6 +628,9 @@ class KioskShell(Gtk.Application):
         if corner not in CORNERS:
             corner = "top-right"
         h, v = CORNERS[corner]
+        arrow = {"top-left": "↖", "top-right": "↗", "bottom-left": "↙", "bottom-right": "↘"}[corner]
+        self.connecting_hint.set_label(self.t(f"Ustawienia: przytrzymaj róg {arrow} przez 1 s",
+                                              f"Settings: hold the {arrow} corner for 1 s"))
         self.overlay.remove_overlay(self.hotcorner)
         self.hotcorner.set_halign(h)
         self.hotcorner.set_valign(v)
@@ -688,8 +693,7 @@ class KioskShell(Gtk.Application):
             self.hmi_error = False
             self.hmi.load_uri(url)
         else:
-            if self.waiting_for_hmi and self.stack.get_visible_child_name() == "splash":
-                self.tell_splash_connecting()
+            self.ensure_settings()
             self.show_error(self.t("Brak połączenia z HMI", "Can't reach the HMI"),
                             self.t("Nie można otworzyć", "Couldn't open") +
                             f" <code>{esc(url)}</code>.<br>{esc(self.probe_reason(err))}", url)
@@ -773,11 +777,8 @@ class KioskShell(Gtk.Application):
     def on_any_load_changed(self, view, event):
         """The first page rendered by any view means the boot is good
         (kioskd tells boot-counter; see automatic rollback)."""
-        if event == WebKit.LoadEvent.FINISHED and view is self.settings:
-            if self.pending == "settings":
-                self.reveal()
-            else:
-                self.start_hmi()
+        if event == WebKit.LoadEvent.FINISHED and view is self.settings and self.pending == "settings":
+            self.reveal()
         if event == WebKit.LoadEvent.FINISHED and not self.ok_reported:
             self.ok_reported = True
             threading.Thread(target=self.report_boot_ok, daemon=True).start()
@@ -803,6 +804,8 @@ class KioskShell(Gtk.Application):
                 self.waiting_for_hmi = False
                 if self.stack.get_visible_child_name() in ("splash", "connecting"):
                     self.show("hmi")
+            # Settings loads now, behind it, after a head start for the HMI's scripts.
+            GLib.timeout_add_seconds(3, self.ensure_settings)
             if not self.boot_reported:
                 # For Settings' boot timing.
                 self.boot_reported = True
