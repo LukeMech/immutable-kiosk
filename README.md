@@ -35,7 +35,9 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
 - **kioskd** ([`kioskd`](system_files/usr/libexec/immutable-kiosk/kioskd),
   Python stdlib only, root): serves the page and a JSON API on
   `127.0.0.1:8088` -- `nmcli` for Wi-Fi/IP, `bootc` for updates (progress
-  from `--progress-fd`, like lm-server's Cockpit page), the installer. Any
+  from `--progress-fd`, like lm-server's Cockpit page; the update check asks
+  the registry for the manifest directly, `bootc` verifies the signature
+  when it downloads), the installer. Any
   other page (the HMI included) is kept out by a required `X-Kiosk` header
   (no CORS) and a `Host` check.
 - **On-screen keyboard** ([`osk.js`](system_files/usr/share/immutable-kiosk/web/osk.js)):
