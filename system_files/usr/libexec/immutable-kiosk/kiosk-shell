@@ -554,11 +554,16 @@ class KioskShell(Gtk.Application):
 
         ucm = self.hmi.get_user_content_manager()
         ucm.remove_all_scripts()
-        if cfg.get("osk_in_hmi", True) and OSK_JS.exists():
+        osk = bool(cfg.get("osk_in_hmi", True) and OSK_JS.exists())
+        if osk:
             ucm.add_script(WebKit.UserScript.new(
                 OSK_JS.read_text(), WebKit.UserContentInjectedFrames.ALL_FRAMES,
                 WebKit.UserScriptInjectionTime.END, None, None))
-        if force_load or cfg.get("hmi_url") != self.loaded_url:
+        # A user script only takes effect on the next page load: a changed
+        # OSK option reloads the HMI, or the open page keeps the old one.
+        osk_changed = getattr(self, "osk_loaded", osk) != osk
+        self.osk_loaded = osk
+        if force_load or cfg.get("hmi_url") != self.loaded_url or osk_changed:
             self.load_hmi()
 
     def place_corners(self):
