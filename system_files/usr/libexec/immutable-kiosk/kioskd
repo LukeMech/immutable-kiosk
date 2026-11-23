@@ -1876,6 +1876,28 @@ def current_timezone():
 
 
 LANGUAGES = ("pl", "en")
+# The system locale (/etc/locale.conf) follows Settings' language: dates,
+# number formats and GTK/WebKit's own strings (glibc-langpack-en/-pl,
+# 05-base.sh). Programs started afterwards pick it up.
+SYSTEM_LOCALES = {"en": "en_US.UTF-8", "pl": "pl_PL.UTF-8"}
+LOCALE_CONF = Path("/etc/locale.conf")
+
+
+def set_system_locale():
+    lang = SYSTEM_LOCALES.get(load_config().get("language"), SYSTEM_LOCALES["en"])
+    want = f"LANG={lang}\n"
+    try:
+        if LOCALE_CONF.read_text() == want:
+            return
+    except OSError:
+        pass
+    try:
+        tmp = LOCALE_CONF.with_name(".locale.conf.tmp")
+        tmp.write_text(want)
+        tmp.replace(LOCALE_CONF)
+        print(f"kioskd: system locale {lang}", flush=True)
+    except OSError as e:
+        print(f"kioskd: system locale {lang}: {e}", flush=True)
 
 
 def cpu_model():
@@ -1960,6 +1982,8 @@ def r_config_set(body, q):
     for what in ("accent", "language"):
         if what in body:
             threading.Thread(target=look, args=(what,), daemon=True).start()
+    if "language" in body:
+        set_system_locale()
     return cfg
 
 
@@ -3018,6 +3042,9 @@ def main():
             brightness_set(saved)
         except (ApiError, OSError, ValueError) as e:
             print(f"kioskd: brightness {saved}%: {e}", flush=True)
+    # A language set before this version, or the image's default: in step.
+    if mode() != "installer":
+        set_system_locale()
     print(f"kioskd: listening on http://{LISTEN[0]}:{LISTEN[1]} (mode: {mode()})", flush=True)
     srv.serve_forever()
 
