@@ -37,8 +37,10 @@ Environment=XDG_SESSION_CLASS=user-light
 ExecStart=/usr/bin/cage -d -- /usr/libexec/immutable-kiosk/kiosk-session
 Restart=always
 RestartSec=2
-UtmpIdentifier=tty1
-UtmpMode=user
+# No utmp entry (no UtmpIdentifier=): wall messages ("The system will
+# reboot now!") go to every terminal utmp lists, and text on tty1 makes the
+# kernel console take the screen over the restart screen. The logind
+# session comes from PAM, not utmp.
 TTYPath=/dev/tty1
 # No TTYReset/TTYVTDisallocate: they'd switch tty1 to text mode and blank
 # plymouth's frame before cage draws.
