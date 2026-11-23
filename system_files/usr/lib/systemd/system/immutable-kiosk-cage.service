@@ -45,8 +45,12 @@ TTYPath=/dev/tty1
 TTYVHangup=yes
 StandardInput=tty-fail
 StandardOutput=journal
-# Console output only shows when cage dies -- exactly when it's needed.
-StandardError=journal+console
+StandardError=journal
+# When cage dies, its last words on the console (tty1, until the restart).
+# Not straight from stderr: at shutdown cage and kiosk-shell say goodbye
+# there too, and that text showed for a second before the shutdown screen.
+# A stop (SIGTERM) is "success". "+": as root, for the journal.
+ExecStopPost=+/bin/sh -c '[ "$$SERVICE_RESULT" = success ] || journalctl -b -o cat -n 15 --no-pager _SYSTEMD_UNIT=immutable-kiosk-cage.service > /dev/tty1 2>&1'
 
 [Install]
 WantedBy=graphical.target
