@@ -210,7 +210,7 @@ def cmd_watchdog():
             return 0
         time.sleep(5)
     log("the kiosk never came up -- rebooting (GRUB counts this try)")
-    subprocess.run(["systemctl", "reboot", "--no-wall"])
+    subprocess.run(["systemctl", "reboot"])
     return 0
 
 

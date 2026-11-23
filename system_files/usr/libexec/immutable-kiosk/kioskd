@@ -2268,8 +2268,8 @@ def set_splash_look(what=""):
 # Until i915 is up (~8 s) Plymouth can't draw, and GRUB reading the kernel
 # and the initramfs through the firmware is most of that. So GRUB shows the
 # boot screen's first frame -- the empty bar, "Starting…" -- from its start,
-# and that frame stays while the kernel boots (fbcon waits for text, quiet
-# prints none, i915.fastboot keeps the firmware's framebuffer) until
+# and that frame stays while the kernel boots (no kernel console draws over
+# it: fbdev_emulation=0; i915.fastboot keeps the firmware's framebuffer) until
 # Plymouth draws the same frame there (immutable-kiosk.script: no fade-in).
 #
 # Fedora's signed GRUB has no PNG background without a module it doesn't
@@ -2649,35 +2649,51 @@ def r_splash(body, q):
 _plymouth = {"done": False}
 
 
-def clear_fbdev():
-    """Black /dev/fb0. i915's console framebuffer is the one it took over
-    from the firmware, GRUB's boot frame still in it; when cage lets go of
-    the screen at shutdown the kernel shows it until Plymouth's shutdown
-    screen is up -- a second of a stale boot screen. Not on screen now
-    (cage is), so this shows nothing."""
-    try:
-        with open("/dev/fb0", "r+b", buffering=0) as fb:
-            zeros = bytes(1 << 20)
-            while fb.write(zeros):
-                pass
-    except OSError as e:
-        if e.errno not in (errno.ENOSPC, errno.EFBIG, errno.ENOENT, errno.ENODEV, errno.ENXIO):
-            print(f"kioskd: clearing /dev/fb0: {e}", flush=True)
-
-
 def plymouth_quit():
     if not _plymouth["done"]:
         _plymouth["done"] = True
-
-        def quit_and_clear():
-            run(["plymouth", "quit", "--retain-splash"], check=False, timeout=30)
-            clear_fbdev()
-        threading.Thread(target=quit_and_clear, daemon=True).start()
+        threading.Thread(target=run, args=(["plymouth", "quit", "--retain-splash"],),
+                         kwargs={"check": False, "timeout": 30}, daemon=True).start()
 
 
 def r_display_set(body, q):
     plymouth_quit()
     return {"ok": True}
+
+
+KIOSK_SPLASH = "/usr/libexec/immutable-kiosk/kiosk-splash"
+
+
+def power_off(action):
+    """systemctl reboot / poweroff, with the kiosk's restart / power-off
+    screen up first: it shows at once, not when systemd gets to cage, and it
+    is what stays on screen until Plymouth's identical one (kiosk-splash
+    --shutdown). kiosk-splash returns once it's on screen (at most ~3 s)."""
+    import pwd
+    try:
+        pw = pwd.getpwnam("kiosk")
+    except KeyError:
+        pw = None
+    runtime = f"/run/user/{pw.pw_uid}" if pw else None
+    if pw:
+        try:
+            subprocess.run([KIOSK_SPLASH, "--shutdown", "reboot" if action == "reboot" else "shutdown"],
+                           user=pw.pw_uid, group=pw.pw_gid, extra_groups=[], cwd="/",
+                           env={"PATH": "/usr/bin", "HOME": pw.pw_dir, "XDG_RUNTIME_DIR": runtime},
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=10)
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"kioskd: shutdown screen: {e}", flush=True)
+    p = subprocess.run(["systemctl", action], capture_output=True, text=True, timeout=30)
+    if p.returncode != 0:
+        # No shutdown after all: the kiosk again (the screen's pid: its marker).
+        if runtime:
+            try:
+                pid = int(Path(runtime, "kiosk-shutdown-screen").read_text().strip())
+                if b"kiosk-splash" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                    os.kill(pid, 9)
+            except (OSError, ValueError):
+                pass
+        raise ApiError((p.stderr or p.stdout).strip() or f"systemctl {action}: {p.returncode}")
 
 
 def touchscreens():
@@ -2845,9 +2861,9 @@ def job_rollback(job):
         for line in run(["bootc", "rollback"], timeout=180).splitlines():
             job.add_log(line)
     job.result = bootc_status()
-    job.step("reboot", "The screen goes dark for a moment, then the previous version starts")
+    job.step("reboot", "The system restarts into the previous version")
     time.sleep(2)  # the page gets to show this step
-    run(["systemctl", "reboot", "--no-wall"], timeout=30)
+    power_off("reboot")
     # The reboot should have ended this process.
     time.sleep(120)
     raise RuntimeError("The system didn't restart — the previous version will start on the next boot")
@@ -2905,10 +2921,14 @@ def r_power(body, q):
     action = body.get("action")
     if action not in ("reboot", "poweroff"):
         raise ApiError("Unknown action")
-    # Reply first, act a moment later. --no-wall: systemd's "The system will
-    # ... now!" goes to every logged-in terminal -- tty1 is cage's session,
-    # so it showed on the screen before the shutdown screen.
-    threading.Timer(1.0, subprocess.run, args=(["systemctl", action, "--no-wall"],)).start()
+    # Reply first: the screen comes up meanwhile (no delay -- it covers the
+    # page anyway).
+    def act():
+        try:
+            power_off(action)
+        except (ApiError, OSError, subprocess.SubprocessError) as e:
+            print(f"kioskd: {action}: {e}", flush=True)
+    threading.Thread(target=act, daemon=True).start()
     return {"ok": True}
 
 

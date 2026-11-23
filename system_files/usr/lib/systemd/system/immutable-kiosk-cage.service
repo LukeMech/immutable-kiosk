@@ -46,11 +46,12 @@ TTYVHangup=yes
 StandardInput=tty-fail
 StandardOutput=journal
 StandardError=journal
-# When cage dies, its last words on the console (tty1, until the restart).
-# Not straight from stderr: at shutdown cage and kiosk-shell say goodbye
-# there too, and that text showed for a second before the shutdown screen.
-# A stop (SIGTERM) is "success". "+": as root, for the journal.
-ExecStopPost=+/bin/sh -c '[ "$$SERVICE_RESULT" = success ] || journalctl -b -o cat -n 15 --no-pager _SYSTEMD_UNIT=immutable-kiosk-cage.service > /dev/tty1 2>&1'
+# Shutting down: the restart / power-off screen comes up in the kiosk
+# before cage is stopped, and stays as its last frame until Plymouth draws
+# the same screen. kioskd usually has it up already (it starts it the moment
+# Settings asks); this covers any other shutdown (power key, systemctl).
+# Returns once it's on screen; nothing when cage just restarts.
+ExecStop=-/usr/libexec/immutable-kiosk/kiosk-splash --shutdown auto
 
 [Install]
 WantedBy=graphical.target

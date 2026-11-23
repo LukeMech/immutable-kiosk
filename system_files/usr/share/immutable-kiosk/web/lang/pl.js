@@ -336,8 +336,7 @@ window.I18N_LANGS.pl = function (tr) {
         "The new version starts after a restart": "Nowa wersja zostanie uruchomiona po restarcie",
         "Set the previous version as default": "Ustawienie poprzedniej wersji jako domyślnej",
         "Restart": "Ponowne uruchomienie",
-        "The screen goes dark for a moment, then the previous version starts":
-            "Ekran na chwilę zgaśnie, potem uruchomi się poprzednia wersja",
+        "The system restarts into the previous version": "System uruchomi się ponownie w poprzedniej wersji",
         // installer job
         "No system image on the installation drive": "Brak obrazu systemu na nośniku instalacyjnym",
         "Preparing the disk": "Przygotowanie dysku",

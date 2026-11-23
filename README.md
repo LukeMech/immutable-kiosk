@@ -44,7 +44,11 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
   first frame (kioskd turns it into glyphs of a GRUB font for the panel's
   rotation, accent and language: `/boot/grub2/console.cfg`); it stays up
   while the kernel starts, Plymouth takes over the same frame once i915 is
-  up, and `kiosk-splash` in cage finishes the bar.
+  up, and `kiosk-splash` in cage finishes the bar. Restart and power off
+  the other way round: `kiosk-splash --shutdown` shows Plymouth's restart
+  screen in the kiosk the moment it's asked for, and that frame stays (no
+  kernel console: `drm_kms_helper.fbdev_emulation=0`) until Plymouth takes
+  over with the same screen.
 - **On-screen keyboard** ([`osk.js`](system_files/usr/share/immutable-kiosk/web/osk.js)):
   Polish letters via the `ąę` key, numeric pad for number/IP fields, shadow
   DOM. Used by Settings and injected into the HMI page (switchable), so
