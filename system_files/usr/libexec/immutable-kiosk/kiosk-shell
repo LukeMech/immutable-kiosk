@@ -8,8 +8,9 @@ Two WebKit views in a stack:
                 server answers (probe_hmi), then shown by itself.
 Until then "connecting" shows ("Connecting…", drawn here as kiosk-splash
 draws its bar), from the moment WebKit has loaded; an HMI that stops
-answering on screen gives way to it too. The Settings corner, held 2 s,
-opens Settings from it, and then nothing switches by itself.
+answering or fails to load on screen gives way to it too (there is no
+error page). The Settings corner, held 2 s, opens Settings from it, and
+then nothing switches by itself.
 
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
 HMI never shares a JavaScript context with Settings. Settings talks back
@@ -94,6 +95,8 @@ window.splashing, window.splashing stack, window.splashing .splash { background:
 
 # The connecting screen's bar: kiosk-splash's colours and size (splash-bar.json).
 SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
+
+HOTCORNER_HOLD_MS = 2000  # the Settings corner's hold
 
 CORNERS = {
     "top-left": (Gtk.Align.START, Gtk.Align.START),
@@ -229,35 +232,7 @@ def probe_hmi(url):
     return status if status in (502, 503, 504) else None
 
 
-# ------------------------------------------------------------ error page
-
-ERROR_PAGE = """<!doctype html><html lang="{lang}"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  html,body{{margin:0;height:100%;background:#10151c;color:#e6edf3;
-    font:18px/1.45 "Noto Sans",system-ui,sans-serif;-webkit-user-select:none}}
-  main{{display:flex;flex-direction:column;justify-content:center;align-items:center;
-    height:100%;padding:24px;box-sizing:border-box;text-align:center;gap:14px}}
-  h1{{font-size:26px;margin:0}} p{{margin:0;color:#9aa7b4;max-width:34em;overflow-wrap:anywhere}}
-  code{{color:#e6edf3}}
-  .row{{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:18px}}
-  button{{font:inherit;font-weight:600;min-height:64px;padding:0 28px;border-radius:14px;border:0;
-    background:#2f81f7;color:#fff}} button.sec{{background:#273241}}
-</style>
-<main>
-  <h1>{title}</h1>
-  <p>{detail}</p>
-  <p>{retry_in} <span id="s">{retry}</span> s</p>
-  <div class="row">
-    <button onclick="go('settings')">⚙ {settings}</button>
-    <button class="sec" onclick="go('retry')">↻ {retry_now}</button>
-  </div>
-</main>
-<script>
-  function go(c){{window.webkit.messageHandlers.kioskNav.postMessage(c)}}
-  let s={retry};setInterval(()=>{{if(s>0)document.getElementById('s').textContent=--s}},1000);
-</script></html>"""
-
+# ------------------------------------------------------------ helpers
 
 def is_benign(error):
     """A load replaced by another one (navigation, our own retry) -- not a failure."""
@@ -266,10 +241,6 @@ def is_benign(error):
     if error.domain == "WebKitPolicyError":
         return error.code == int(WebKit.PolicyError.FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE)
     return False
-
-
-def esc(s):
-    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
 # ------------------------------------------------------------ app
@@ -293,6 +264,10 @@ class KioskShell(Gtk.Application):
         self.waiting_for_hmi = False
         self.pulse_source = None
         self.probe_gen = 0  # the newest probe_hmi; older answers are dropped
+        # The HMI's page is loaded and answering: "Back to HMI" shows it;
+        # otherwise the connecting screen, until it is.
+        self.hmi_ready = False
+        self.hmi_loading = False  # load_hmi until the page finishes or fails
 
     # -- setup
     def do_activate(self):
@@ -306,8 +281,6 @@ class KioskShell(Gtk.Application):
         # (as in cage), by the monitor's physical DPI: 1.97x on the 408.
         # 1 CSS px = 1 screen px; Settings' scaling is the zoom on top.
         Gtk.Settings.get_default().set_property("gtk-xft-dpi", 96 * 1024)
-        # The Settings corner's hold is twice this (make_hotcorner): 2 s.
-        Gtk.Settings.get_default().set_property("gtk-long-press-time", 1000)
 
         self.cfg = self.wait_for_config()
         apply_output(self.cfg)  # before the first frame: no portrait flash
@@ -432,10 +405,12 @@ class KioskShell(Gtk.Application):
         on purpose stays."""
         if not self.hmi or not self.hmi_started or st.get("url") != self.cfg.get("hmi_url"):
             return GLib.SOURCE_REMOVE
-        if st.get("ok") is False and self.stack.get_visible_child_name() == "hmi":
-            self.waiting_for_hmi = True
-            self.show("connecting")
-        elif st.get("ok") and (self.waiting_for_hmi or self.hmi_error):
+        if st.get("ok") is False:
+            self.hmi_ready = False  # the page is dead: loaded afresh once it answers
+            if self.stack.get_visible_child_name() == "hmi":
+                self.waiting_for_hmi = True
+                self.show("connecting")
+        elif st.get("ok") and not self.hmi_loading and (self.hmi_error or not self.hmi_ready):
             self.load_hmi()
         return GLib.SOURCE_REMOVE
 
@@ -572,10 +547,8 @@ class KioskShell(Gtk.Application):
         return view
 
     def make_hmi_view(self):
-        ucm = WebKit.UserContentManager()
-        ucm.register_script_message_handler("kioskNav", None)
-        ucm.connect("script-message-received::kioskNav", self.on_hmi_nav)
-        view = WebKit.WebView(user_content_manager=ucm, network_session=self.hmi_session)
+        view = WebKit.WebView(user_content_manager=WebKit.UserContentManager(),
+                              network_session=self.hmi_session)
         self.common_view_setup(view)
         view.connect("load-failed", self.on_hmi_load_failed)
         view.connect("load-failed-with-tls-errors", self.on_hmi_tls_error)
@@ -590,33 +563,77 @@ class KioskShell(Gtk.Application):
         screen's very corner (hotcorner_size). Watched on the whole window
         before the page sees it (capture phase): a tap there still reaches
         the HMI below, only the hold is taken from it. The box only shows
-        that the hold has started."""
+        that the hold has started.
+
+        Raw events and a timer of its own, not a GtkGestureLongPress: that
+        gesture still started its timer for a touch refused outside the
+        corner, never saw that touch end, and opened Settings 2 s after any
+        tap on the HMI."""
         box = Gtk.Box(can_target=False)
         box.add_css_class("hotcorner")
-        press = Gtk.GestureLongPress(touch_only=False)
-        # 2 s: twice gtk-long-press-time (set to 1 s in do_activate), the
-        # largest factor GTK takes.
-        press.set_delay_factor(2.0)
-        press.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        T = Gdk.EventType
+        hold = {"on": False, "timer": 0, "fired": False}
 
-        def begin(g, seq):
-            ok, x, y = g.get_point(seq)
-            if not (ok and box.get_visible() and self.in_hotcorner(x, y)):
-                g.set_state(Gtk.EventSequenceState.DENIED)
-                return
-            size = self.hotcorner_size()
-            box.set_size_request(size, size)
-            box.add_css_class("armed")
-
-        def pressed(g, _x, _y):
-            g.set_state(Gtk.EventSequenceState.CLAIMED)  # the page's touch ends here
+        def disarm():
+            if hold["timer"]:
+                GLib.source_remove(hold["timer"])
+            hold.update(on=False, timer=0)
             box.remove_css_class("armed")
-            self.open_settings()
-        press.connect("begin", begin)
-        press.connect("end", lambda *a: box.remove_css_class("armed"))
-        press.connect("cancelled", lambda *a: box.remove_css_class("armed"))
-        press.connect("pressed", pressed)
-        self.win.add_controller(press)
+
+        # Only tracks the touch, never refuses one: claimed when the hold
+        # fires, so the page gets its touch cancelled, not released (a click).
+        claim = Gtk.GestureDrag(touch_only=False)
+        claim.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self.win.add_controller(claim)
+
+        def fire():
+            hold["timer"] = 0
+            box.remove_css_class("armed")
+            if box.get_visible():
+                hold["fired"] = True  # the rest of this touch goes nowhere
+                if claim.is_active():
+                    claim.set_state(Gtk.EventSequenceState.CLAIMED)
+                self.open_settings()
+            return GLib.SOURCE_REMOVE
+
+        def on_event(_c, ev):
+            t = ev.get_event_type()
+            if t in (T.TOUCH_BEGIN, T.BUTTON_PRESS):
+                if hold["on"]:
+                    if not hold["fired"]:
+                        disarm()  # a second finger: not a hold
+                    return False
+                ok, x, y = ev.get_position()
+                if (ok and box.get_visible() and self.in_hotcorner(x, y)
+                        and (t == T.TOUCH_BEGIN or ev.get_button() == 1)):
+                    size = self.hotcorner_size()
+                    box.set_size_request(size, size)
+                    box.add_css_class("armed")
+                    hold.update(on=True, fired=False,
+                                timer=GLib.timeout_add(HOTCORNER_HOLD_MS, fire))
+                return False
+            # One finger at a time (a second one disarms above), so any
+            # move or release is the held one's.
+            if not hold["on"]:
+                return False
+            if t in (T.TOUCH_UPDATE, T.MOTION_NOTIFY):
+                if hold["fired"]:
+                    return True
+                ok, x, y = ev.get_position()
+                if not (ok and self.in_hotcorner(x, y)):
+                    disarm()  # moved out of the corner
+                return False
+            if t in (T.TOUCH_END, T.TOUCH_CANCEL, T.BUTTON_RELEASE):
+                fired = hold["fired"]
+                disarm()
+                hold["fired"] = False
+                return fired
+            return False
+
+        watch = Gtk.EventControllerLegacy()
+        watch.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        watch.connect("event", on_event)
+        self.win.add_controller(watch)
         return box
 
     def hotcorner_size(self):
@@ -639,8 +656,17 @@ class KioskShell(Gtk.Application):
         return GLib.SOURCE_REMOVE
 
     def show(self, name):
-        if name == "hmi" and not self.hmi:
-            return
+        if name == "hmi":
+            if not self.hmi or not self.cfg.get("hmi_url"):
+                return  # nothing to go back to
+            if not self.hmi_ready:
+                # Not loaded, or not answering: the connecting screen, and the
+                # HMI replaces it once it has loaded (a failed try now again).
+                self.waiting_for_hmi = True
+                name = "connecting"
+                self.start_hmi()
+                if self.hmi_error:
+                    self.load_hmi()
         self.pending = None  # an explicit switch ends the start-up screen
         if name == "settings":
             self.ensure_settings()
@@ -730,10 +756,14 @@ class KioskShell(Gtk.Application):
         url = self.cfg.get("hmi_url")
         self.loaded_url = url
         self.probe_gen += 1
+        self.hmi_ready = False
+        self.hmi_loading = bool(url)
         if not url:
-            self.show_error(self.t("Brak adresu HMI", "No HMI address"),
-                            self.t("Ustaw adres wizualizacji w Ustawieniach.", "Set the HMI's address in Settings."),
-                            None)
+            # No address (cleared): no HMI and nothing to wait for.
+            self.hmi_error = False
+            self.waiting_for_hmi = False
+            if self.stack.get_visible_child_name() in ("hmi", "connecting"):
+                self.show("settings")
             return
         gen = self.probe_gen
 
@@ -749,10 +779,7 @@ class KioskShell(Gtk.Application):
             self.hmi_error = False
             self.hmi.load_uri(url)
         else:
-            self.ensure_settings()
-            self.show_error(self.t("Brak połączenia z HMI", "Can't reach the HMI"),
-                            self.t("Nie można otworzyć", "Couldn't open") +
-                            f" <code>{esc(url)}</code>.<br>{esc(self.probe_reason(err))}", url)
+            self.hmi_failed(self.probe_reason(err))
         return GLib.SOURCE_REMOVE
 
     def probe_reason(self, err):
@@ -797,22 +824,23 @@ class KioskShell(Gtk.Application):
         """kiosk-shell's own texts in Settings' language (English by default)."""
         return pl if (self.cfg or {}).get("language", "en") == "pl" else en
 
-    def show_error(self, title, detail, failing_uri):
+    def hmi_failed(self, reason):
+        """No HMI for now: tried again shortly, and the connecting screen
+        instead of it if it's on screen. Settings stays."""
+        log("HMI:", reason)
         self.hmi_error = True
-        self.ensure_settings()  # the error page's "Settings" button is the way out
-        secs = self.schedule_retry() if failing_uri else 0
-        html = ERROR_PAGE.format(
-            title=esc(title), detail=detail, retry=secs, lang=(self.cfg or {}).get("language", "en"),
-            retry_in=self.t("Ponowna próba za", "Trying again in"), settings=self.t("Ustawienia", "Settings"),
-            retry_now=self.t("Spróbuj teraz", "Try now"))
-        self.hmi.load_alternate_html(html, failing_uri or "about:blank", None)
+        self.hmi_ready = False
+        self.hmi_loading = False
+        self.ensure_settings()
+        self.schedule_retry()
+        if self.stack.get_visible_child_name() == "hmi":
+            self.waiting_for_hmi = True
+            self.show("connecting")
 
     def on_hmi_load_failed(self, view, event, uri, error):
         if is_benign(error):
             return False
-        self.show_error(self.t("Brak połączenia z HMI", "Can't reach the HMI"),
-                        self.t("Nie można otworzyć", "Couldn't open") +
-                        f" <code>{esc(uri)}</code>.<br>{esc(error.message)}", uri)
+        self.hmi_failed(error.message)
         return True
 
     def on_hmi_tls_error(self, view, uri, certificate, errors):
@@ -823,11 +851,10 @@ class KioskShell(Gtk.Application):
             self.hmi_session.allow_tls_certificate_for_host(certificate, host)
             view.load_uri(uri)
             return True
-        self.show_error(self.t("Niezaufany certyfikat", "Untrusted certificate"),
-                        self.t(f"Serwer <code>{esc(host)}</code> przedstawił niezaufany certyfikat. "
-                               "Włącz „Akceptuj certyfikat HMI” w Ustawieniach.",
-                               f"The server <code>{esc(host)}</code> presented an untrusted certificate. "
-                               "Turn on “Accept the HMI's certificate” in Settings."), uri)
+        self.hmi_failed(self.t(f"Serwer {host} przedstawił niezaufany certyfikat. "
+                               "Włącz „Akceptuj certyfikat serwera HMI” w Ustawieniach.",
+                               f"The server {host} presented an untrusted certificate. "
+                               "Turn on “Accept the HMI server's certificate” in Settings."))
         return True
 
     def on_any_load_changed(self, view, event):
@@ -851,10 +878,12 @@ class KioskShell(Gtk.Application):
     def on_hmi_load_changed(self, view, event):
         self.on_any_load_changed(view, event)
         if self.hmi_error:
-            return  # the error page, or its retry would be cancelled
+            return  # a failed load's end, or its retry would be cancelled
         if event == WebKit.LoadEvent.COMMITTED:
             self.cancel_retry()
         elif event == WebKit.LoadEvent.FINISHED:
+            self.hmi_ready = True
+            self.hmi_loading = False
             if self.waiting_for_hmi:
                 # The start-up / connecting screen until now: the HMI replaces it.
                 self.waiting_for_hmi = False
@@ -879,13 +908,6 @@ class KioskShell(Gtk.Application):
         if uri:
             view.load_uri(uri)
         return None
-
-    def on_hmi_nav(self, ucm, value):
-        cmd = value.to_string()
-        if cmd == "settings":
-            self.show("settings")
-        elif cmd == "retry":
-            self.load_hmi()
 
     # -- settings view
     def settings_policy(self, view, decision, kind):

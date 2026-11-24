@@ -170,6 +170,7 @@ function renderHmiUrl() {
     // Empty port: the scheme's default, shown as the placeholder.
     $("hmi-port").placeholder = hmiDraft.scheme === "https" ? "443" : "80";
     const url = hmiDraftUrl();
+    renderBack();
     if (!url) {
         setStatus("hmi-st", "warn", ICONS.warn, "No HMI address", "Enter the HMI server's address to show the HMI.");
         return;
@@ -178,7 +179,6 @@ function renderHmiUrl() {
     if (url !== (cfg && cfg.hmi_url)) setStatus("hmi-st", "", ICONS.screen, url, "");
     else if (!st || st.ok == null) setStatus("hmi-st", "busy", ICONS.busy, url, "Checking the connection…");
     else setStatus("hmi-st", st.ok ? "ok" : "err", st.ok ? ICONS.ok : ICONS.err, url, st.message);
-    renderBack();
 }
 
 function readHmiForm() {
@@ -196,9 +196,6 @@ async function loadHmi() {
     $("hmi-path").value = hmiDraft.path;
     seg($("hmi-scheme"), hmiDraft.scheme, v => {
         hmiDraft.scheme = v;
-        // On a TwinCAT default port, follow to the other protocol's default.
-        if (v === "http" && String(hmiDraft.port) === "1020") $("hmi-port").value = "1010";
-        if (v === "https" && String(hmiDraft.port) === "1010") $("hmi-port").value = "1020";
         seg($("hmi-scheme"), v);
         saveHmi();
     });
@@ -240,13 +237,6 @@ function initHmi() {
         $(id).addEventListener("input", readHmiForm);
         $(id).addEventListener("change", saveHmi);
     });
-    document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
-        const [scheme, port] = b.dataset.preset.split(":");
-        hmiDraft.scheme = scheme;
-        $("hmi-port").value = port;
-        seg($("hmi-scheme"), scheme);
-        saveHmi();
-    }));
     const saveOpts = () => api("/config", {
         accept_self_signed: $("opt-cert").checked,
         osk_in_hmi: $("opt-osk").checked,

@@ -112,12 +112,6 @@ div.inline { margin-top: 6px; }
 }
 .seg button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.chip {
-    all: unset; min-height: 48px; padding: 0 16px; border-radius: 24px; border: 1px solid var(--line);
-    color: var(--muted); display: grid; place-items: center; font-size: 16px;
-}
-
 .switch { display: flex; align-items: center; gap: 14px; min-height: 56px; color: var(--text); font-size: 18px; margin: 6px 0 0; }
 .switch.inline { margin: 0; }
 .switch input {

@@ -52,8 +52,8 @@ LIVE_MOUNT = Path("/run/initramfs/live")
 ROTATIONS = ("portrait", "landscape", "normal", "90", "180", "270")
 
 DEFAULT_CONFIG = {
-    # TwinCAT HMI Server (TF2000) listens on 1010 (HTTP) / 1020 (HTTPS) by default.
-    "hmi": {"scheme": "https", "host": "", "port": 1020, "path": "/"},
+    # Port None: the scheme's default (443 / 80).
+    "hmi": {"scheme": "https", "host": "", "port": None, "path": "/"},
     # None = model default (default_rotation()).
     "rotation": None,
     # "WxH" or "WxH@R" (wlr-randr --mode); None = panel's preferred mode.
