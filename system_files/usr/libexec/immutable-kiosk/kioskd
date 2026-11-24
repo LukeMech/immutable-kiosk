@@ -794,18 +794,58 @@ def ipv4_args(body):
 
 
 def network_set(body):
-    """The connection's IPv4 settings. One that is up (or coming up, e.g.
-    waiting for DHCP) is brought up again with them; a saved one that isn't
-    uses them on its next connection."""
+    """The connection's IPv4 settings. One that is up gets them in place
+    (`nmcli dev reapply`: the Wi-Fi stays associated); one coming up (e.g.
+    waiting for DHCP) is brought up again with them (reconnect); a saved
+    one that isn't uses them on its next connection."""
     uuid = body.get("uuid") or ""
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
         raise ApiError("No connection to change")
     run(["nmcli", "con", "mod", uuid] + ipv4_args(body))
-    if not run(["nmcli", "-g", "GENERAL.STATE", "con", "show", uuid], check=False).strip():
+    try:
+        g = nm_kv(["-f", "GENERAL.STATE,GENERAL.DEVICES", "con", "show", uuid])
+    except ApiError:
         return
-    # Re-activation drops the link briefly: run in background, the page polls.
-    threading.Thread(target=run, args=(["nmcli", "con", "up", uuid],),
-                     kwargs={"check": False, "timeout": 60}, daemon=True).start()
+    state, dev = g.get("GENERAL.STATE", ""), g.get("GENERAL.DEVICES", "")
+    if not state:
+        return
+    if state == "activated" and dev:
+        try:
+            run(["nmcli", "dev", "reapply", dev], timeout=30)
+            return
+        except ApiError as e:
+            print(f"kioskd: reapply {dev}: {e}", flush=True)  # then a reconnect
+    reconnect(uuid)
+
+
+_reconnects = {"lock": threading.Lock(), "running": set(), "again": set()}
+
+
+def reconnect(uuid):
+    """`nmcli con up` in the background, one per connection at a time: a
+    save while one runs makes one more after it. (Each restarts the Wi-Fi
+    association; a save per field left started them on top of each other,
+    and the network took very long or never came up.)"""
+    r = _reconnects
+    with r["lock"]:
+        if uuid in r["running"]:
+            r["again"].add(uuid)
+            return
+        r["running"].add(uuid)
+
+    def work():
+        while True:
+            try:
+                run(["nmcli", "con", "up", uuid], check=False, timeout=90)
+            except ApiError as e:
+                print(f"kioskd: reconnect: {e}", flush=True)
+            with r["lock"]:
+                if uuid in r["again"]:
+                    r["again"].discard(uuid)
+                    continue
+                r["running"].discard(uuid)
+                return
+    threading.Thread(target=work, daemon=True).start()
 
 
 # ---------------------------------------------------------------- events

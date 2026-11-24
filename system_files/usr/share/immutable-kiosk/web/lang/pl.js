@@ -130,7 +130,7 @@ window.I18N_LANGS.pl = function (tr) {
         "The server doesn't answer properly": "Serwer nie odpowiada poprawnie",
         "The HMI isn't answering": "HMI nie odpowiada",
         "Settings saved": "Ustawienia zapisane",
-        "Reconnecting with them…": "Ponowne łączenie z nowymi ustawieniami…",
+        "Applied to the connection.": "Zastosowane w połączeniu.",
         "Used on the next connection to this network.": "Zadziałają przy następnym połączeniu z tą siecią.",
         "Couldn't save the settings": "Nie udało się zapisać ustawień",
         // ---- Resets (each tab)

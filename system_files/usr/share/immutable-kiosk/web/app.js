@@ -582,7 +582,7 @@ function ipSettings(c, owner) {
         show("busy", ICONS.busy, "Saving…", "");
         try {
             await api("/network", { uuid: c.uuid, ...b });
-            show("ok", ICONS.ok, "Settings saved", c.active ? "Reconnecting with them…"
+            show("ok", ICONS.ok, "Settings saved", c.active ? "Applied to the connection."
                 : "Used on the next connection to this network.");
             owner.classList.remove("dirty");  // NetworkManager's events bring the new state
         } catch (e) {
