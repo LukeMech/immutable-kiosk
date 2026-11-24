@@ -67,8 +67,9 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
    bootloader is Fedora's signed shim).
 4. The installer page lists the disks, internal eMMC preselected → hold
    **Hold for 3 s to install**. It streams the compressed disk image
-   onto the eMMC with a real progress bar (MB/s, time left), reads it back
-   to verify, then asks you to pull the stick and reboot.
+   onto the eMMC with a real progress bar (MB/s, time left), checks its
+   sha256 as it goes and reads parts of the disk back, then asks you to
+   pull the stick and reboot.
 5. First boot grows the root partition to the whole eMMC and opens Settings
    (no HMI configured yet): Wi-Fi → HMI address (saved as you go) →
    *← Back to HMI*. Every later start shows Settings until the HMI's server
