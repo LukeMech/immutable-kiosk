@@ -1824,6 +1824,11 @@ def installer_state():
 CHUNK = 4 * 1024 * 1024
 SYNC_EVERY = 64 * 1024 * 1024
 LOG_EVERY = 512 * 1024 * 1024  # a progress line in "Details" every 512 MiB
+# Read back after the write: every SAMPLE_EVERY-th chunk and the last one
+# (~32 x 4 MiB for a 4 GB image: a second or two), not the whole disk (~2
+# min). The stream's sha256 already proves the image itself; this catches
+# a write that didn't reach the disk.
+SAMPLE_EVERY = 32
 
 
 def _mmss(seconds):
@@ -1859,6 +1864,8 @@ def job_install(disk_path):
         next_log = LOG_EVERY
         digest = hashlib.sha256()
         written = 0
+        samples = []  # (offset, length, sha256) of the chunks read back after
+        last = b""
         t0 = time.time()
         dec = subprocess.Popen(["zstd", "-dc", payload["path"]], stdout=subprocess.PIPE)
         # O_EXCL on a block device: refuses if anything still has it mounted.
@@ -1870,6 +1877,9 @@ def job_install(disk_path):
                 if not buf:
                     break
                 digest.update(buf)
+                if (written // CHUNK) % SAMPLE_EVERY == 0:
+                    samples.append((written, len(buf), hashlib.sha256(buf).digest()))
+                last = buf
                 view = memoryview(buf)
                 while view:
                     n = os.write(fd, view)
@@ -1902,30 +1912,21 @@ def job_install(disk_path):
         job.stage = "Verifying the write"
         job.add_log(job.stage)
         job.fraction = 0
+        if last and (not samples or samples[-1][0] != written - len(last)):
+            samples.append((written - len(last), len(last), hashlib.sha256(last).digest()))
         run(["blockdev", "--flushbufs", disk_path], check=False)
-        check = hashlib.sha256()
-        read = 0
         t0 = time.time()
-        next_log = LOG_EVERY
         fd = os.open(disk_path, os.O_RDONLY)
         try:
-            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-            while read < written:
-                buf = os.read(fd, min(CHUNK, written - read))
-                if not buf:
-                    break
-                check.update(buf)
-                read += len(buf)
-                if read % (64 * CHUNK) < CHUNK:
-                    _progress(job, read, written, t0)
-                if read >= next_log:
-                    job.add_log(f"  {job.detail}")
-                    next_log += LOG_EVERY
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)  # from the disk, not the cache
+            for i, (offset, length, want) in enumerate(samples):
+                if hashlib.sha256(os.pread(fd, length, offset)).digest() != want:
+                    job.add_log(f"  differs at {offset / 1e6:.0f} MB")
+                    raise RuntimeError("Verification failed: the data on the disk differs from the image. Try again.")
+                job.fraction = (i + 1) / len(samples)
         finally:
             os.close(fd)
-        if check.hexdigest() != digest.hexdigest():
-            raise RuntimeError("Verification failed: the data on the disk differs from the image. Try again.")
-        job.add_log(f"  read {read / 1e9:.2f} GB in {_mmss(time.time() - t0)}, data matches")
+        job.add_log(f"  {len(samples)} parts across the disk read back in {time.time() - t0:.1f} s, data matches")
 
         job.stage = "Finishing"
         job.add_log(job.stage)
