@@ -27,6 +27,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -345,7 +346,7 @@ class KioskShell(Gtk.Application):
                 # No address at boot: an HMI set up later says nothing about
                 # boot time, so the boot timing stops here.
                 self.boot_reported = True
-                threading.Thread(target=self.report_hmi_shown, args=(False,), daemon=True).start()
+                threading.Thread(target=self.report_hmi_shown, args=(None,), daemon=True).start()
         self.apply_scale()
 
         # With an address: "Connecting…" now, the HMI loading, alone (two web
@@ -600,6 +601,8 @@ class KioskShell(Gtk.Application):
         if name == "settings":
             self.ensure_settings()
         self.stack.set_visible_child_name(name)
+        if name == "hmi":
+            self.boot_hmi_now()
         self.focus_view()
         self.splash_over()
         self.pulse(name == "connecting")
@@ -814,19 +817,30 @@ class KioskShell(Gtk.Application):
                 self.waiting_for_hmi = False
                 if self.stack.get_visible_child_name() in ("splash", "connecting"):
                     self.show("hmi")
+            # Settings opened on purpose meanwhile: the HMI is ready behind it.
+            self.boot_hmi_now()
             # Settings loads now, behind it, after a head start for the HMI's scripts.
             GLib.timeout_add_seconds(3, self.ensure_settings)
-            if not self.boot_reported:
-                # For Settings' boot timing.
-                self.boot_reported = True
-                threading.Thread(target=self.report_hmi_shown, daemon=True).start()
+
+    def boot_hmi_now(self):
+        """Settings' boot timing: the HMI on screen, once per boot -- when the
+        splash or "Connecting…" gives way to it (show), or when it has loaded
+        behind Settings opened on purpose. Timed here, on the same clock as
+        the journal (CLOCK_MONOTONIC): kioskd may handle the report later."""
+        if not self.boot_reported:
+            self.boot_reported = True
+            threading.Thread(target=self.report_hmi_shown, args=(time.monotonic(),), daemon=True).start()
 
     @staticmethod
-    def report_hmi_shown(configured=True):
-        try:
-            api_post("/api/boot/hmi", {} if configured else {"unconfigured": True}, timeout=5)
-        except (OSError, ValueError) as e:
-            log("boot timing:", e)
+    def report_hmi_shown(at):
+        """`at`: CLOCK_MONOTONIC seconds; None: no HMI address at boot."""
+        for _ in range(5):
+            try:
+                api_post("/api/boot/hmi", {"unconfigured": True} if at is None else {"at": at}, timeout=10)
+                return
+            except (OSError, ValueError) as e:
+                log("boot timing:", e)
+                GLib.usleep(3_000_000)
 
     def on_hmi_create(self, view, action):
         uri = action.get_request().get_uri()

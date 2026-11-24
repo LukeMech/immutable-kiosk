@@ -1555,7 +1555,7 @@ def changelog():
 
 # ---------------------------------------------------------------- boot timing
 
-# CLOCK_MONOTONIC time of the first HMI page load (POST /api/boot/hmi).
+# CLOCK_MONOTONIC time the HMI first showed (POST /api/boot/hmi, timed by kiosk-shell).
 HMI_SHOWN = {"at": None, "unconfigured": False}
 BOOT_COUNTER = "/usr/libexec/immutable-kiosk/boot-counter"
 BOOT_FALLBACK_NOTE = STATE_DIR / "boot-fallback.json"
@@ -3343,7 +3343,12 @@ def r_boot_hmi(body, q):
         if body.get("unconfigured"):
             HMI_SHOWN["unconfigured"] = True
         else:
-            HMI_SHOWN["at"] = time.monotonic()
+            # kiosk-shell's own time of it: this request may come later.
+            # Without one (an older kiosk-shell), now.
+            now = time.monotonic()
+            at = body.get("at")
+            ok = isinstance(at, (int, float)) and not isinstance(at, bool) and 0 < at <= now
+            HMI_SHOWN["at"] = float(at) if ok else now
         EVENTS.emit("boot")  # the boot card's last point
     return {"hmi_shown": HMI_SHOWN["at"], "hmi_unconfigured": HMI_SHOWN["unconfigured"]}
 

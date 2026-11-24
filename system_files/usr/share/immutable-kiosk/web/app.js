@@ -1495,7 +1495,9 @@ function initEvents() {
         net: vis(net), power: vis(refreshDevice), clock: vis(refreshDevice), device: vis(refreshDevice),
         splash: vis(() => { if (currentTab === "screen" || currentTab === "system") loadSplash(); }),
         config: vis(config),
-        boot: vis(() => { if (currentTab === "system") loadBoot(); }),
+        // Also behind the HMI: System is preloaded (initSettings), and the
+        // HMI's time comes in after that. kioskd has the boot cached by then.
+        boot: () => { if (bootLoaded) loadBoot(); },
         system: vis(system),
         job: () => jobTick?.(),
         hmi: () => loadHmiState(),
@@ -1517,6 +1519,9 @@ async function initSettings() {
     refreshDevice();
     initEvents();
     showTab("hmi");
+    // Loaded behind the HMI now, so System opens filled in (the boot journal
+    // and the changelog take seconds); opening it refreshes them.
+    loadSystem();
 }
 
 /* ======================================================= INSTALLER */
