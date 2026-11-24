@@ -84,7 +84,6 @@ CSS = b"""
 window, stack { background: #10151c; }
 window.splashing, window.splashing stack, window.splashing .splash { background: transparent; }
 .hotcorner { background: transparent; }
-.hotcorner.armed { background: radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%); }
 .connecting { background: #000; }
 .connecting progressbar trough, .connecting progressbar progress { min-height: 8px; border-radius: 4px; border: 0; }
 .connecting label { font-size: 20px; }
@@ -439,16 +438,11 @@ class KioskShell(Gtk.Application):
             d = json.loads(SPLASH_DATA.read_text())
         except (OSError, ValueError):
             d = {}
-        rgb = lambda c, dflt: "#%02x%02x%02x" % tuple(c) if c else dflt  # noqa: E731
-        accents = d.get("accents", {})
-        fill = accents.get(self.cfg.get("accent")) or accents.get(d.get("default_accent"))
-        css = Gtk.CssProvider()
-        css.load_from_data((
-            f".connecting progressbar trough {{ background: {rgb(d.get('track'), '#2a3542')}; }}\n"
-            f".connecting progressbar progress {{ background: {rgb(fill, '#2f81f7')}; }}\n"
-            f".connecting label {{ color: {rgb(d.get('text'), '#e6edf3')}; }}\n").encode())
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
+        self.splash_data = d
+        self.colours = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), self.colours,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        self.apply_colours()
         bar = d.get("bar", {})
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=bar.get("gap", 16),
                       halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
@@ -462,6 +456,21 @@ class KioskShell(Gtk.Application):
         box.set_hexpand(True)
         page.append(box)
         return page
+
+    def apply_colours(self):
+        """The accent (Settings' Display tab, kiosk-splash's colours): the
+        connecting screen's bar and the Settings corner's glow."""
+        d = self.splash_data
+        rgb = lambda c, dflt: "#%02x%02x%02x" % tuple(c) if c else dflt  # noqa: E731
+        accents = d.get("accents", {})
+        fill = accents.get(self.cfg.get("accent")) or accents.get(d.get("default_accent"))
+        glow = "rgba(%d,%d,%d,0.6)" % tuple(fill[:3]) if fill else "rgba(47,129,247,0.6)"
+        self.colours.load_from_data((
+            f".connecting progressbar trough {{ background: {rgb(d.get('track'), '#2a3542')}; }}\n"
+            f".connecting progressbar progress {{ background: {rgb(fill, '#2f81f7')}; }}\n"
+            f".connecting label {{ color: {rgb(d.get('text'), '#e6edf3')}; }}\n"
+            f".hotcorner.armed {{ background: radial-gradient(circle, {glow} 0%, transparent 70%); }}\n"
+            ).encode())
 
     def pulse(self, on):
         """The connecting screen's moving segment, only while it shows."""
@@ -661,6 +670,7 @@ class KioskShell(Gtk.Application):
             log("reload config:", e)
             return
         apply_output(self.cfg)
+        self.apply_colours()  # the accent may have changed
         if self.hmi:
             self.apply_hmi_config()
         self.apply_scale()
