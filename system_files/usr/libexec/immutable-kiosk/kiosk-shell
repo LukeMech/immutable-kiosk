@@ -490,30 +490,8 @@ class KioskShell(Gtk.Application):
         def finish():
             self.win.remove_css_class("splashing")
             end_splash()
-            GLib.timeout_add(1000, self.ensure_active)
             return GLib.SOURCE_REMOVE
         GLib.timeout_add(self.stack.get_transition_duration() + 150, finish)
-
-    def ensure_active(self):
-        """The window must be cage's focused one once the splash is gone:
-        touches only reached the kiosk after a first tap anywhere (that tap
-        is what focuses a window in cage). cage focuses a window when it
-        maps, so one that isn't active is mapped again, once."""
-        if not self.win.is_active() and not getattr(self, "remapped", False):
-            self.remapped = True
-            log("window not active after the splash, mapping it again")
-            self.win.set_visible(False)
-            self.win.present()
-            GLib.timeout_add(300, self.focus_view)
-        return GLib.SOURCE_REMOVE
-
-    def focus_view(self):
-        """Keyboard focus to the page on screen: WebKit treats a page
-        without it as in the background until it's tapped."""
-        child = self.stack.get_visible_child()
-        if WebKit and isinstance(child, WebKit.WebView):
-            child.grab_focus()
-        return GLib.SOURCE_REMOVE
 
     def wait_for_config(self):
         # kioskd starts first, but may be slow on eMMC.
@@ -603,7 +581,6 @@ class KioskShell(Gtk.Application):
         self.stack.set_visible_child_name(name)
         if name == "hmi":
             self.boot_hmi_now()
-        self.focus_view()
         self.splash_over()
         self.pulse(name == "connecting")
         if self.hmi:
