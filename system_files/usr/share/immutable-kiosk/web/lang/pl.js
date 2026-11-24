@@ -180,7 +180,7 @@ window.I18N_LANGS.pl = function (tr) {
             "Skalowanie powiększa wszystko: HMI, ustawienia i klawiaturę. Powiększenie HMI (zakładka HMI) mnoży się przez tę wartość.",
         "Default": "Domyślna",
         "Opening Settings from the HMI": "Wejście do ustawień z HMI",
-        "Hold the chosen screen corner for 2 s.": "Przytrzymaj wybrany róg ekranu przez 2 s.",
+        "Hold the chosen screen corner for about 1 s.": "Przytrzymaj ok. 1 s wybrany róg ekranu.",
         "↖ Top left": "↖ Lewy górny",
         "↗ Top right": "↗ Prawy górny",
         "↙ Bottom left": "↙ Lewy dolny",

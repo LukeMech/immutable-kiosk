@@ -9,7 +9,7 @@ Two WebKit views in a stack:
 Until then "connecting" shows ("Connecting…", drawn here as kiosk-splash
 draws its bar), from the moment WebKit has loaded; an HMI that stops
 answering or fails to load on screen gives way to it too (there is no
-error page). The Settings corner, held 2 s, opens Settings from it, and
+error page). The Settings corner, held ~1 s, opens Settings from it, and
 then nothing switches by itself.
 
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
@@ -84,10 +84,7 @@ CSS = b"""
 window, stack { background: #10151c; }
 window.splashing, window.splashing stack, window.splashing .splash { background: transparent; }
 .hotcorner { background: transparent; }
-.hotcorner.armed { background: radial-gradient(circle farthest-side at 100% 0%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
-.hotcorner.armed.top-left { background: radial-gradient(circle farthest-side at 0% 0%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
-.hotcorner.armed.bottom-left { background: radial-gradient(circle farthest-side at 0% 100%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
-.hotcorner.armed.bottom-right { background: radial-gradient(circle farthest-side at 100% 100%, rgba(255,255,255,0.35), rgba(255,255,255,0)); }
+.hotcorner.armed { background: radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%); }
 .connecting { background: #000; }
 .connecting progressbar trough, .connecting progressbar progress { min-height: 8px; border-radius: 4px; border: 0; }
 .connecting label { font-size: 20px; }
@@ -95,8 +92,6 @@ window.splashing, window.splashing stack, window.splashing .splash { background:
 
 # The connecting screen's bar: kiosk-splash's colours and size (splash-bar.json).
 SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
-
-HOTCORNER_HOLD_MS = 2000  # the Settings corner's hold
 
 CORNERS = {
     "top-left": (Gtk.Align.START, Gtk.Align.START),
@@ -559,94 +554,17 @@ class KioskShell(Gtk.Application):
         return view
 
     def make_hotcorner(self):
-        """The Settings corner: a hold of 2 s anywhere in a square from the
-        screen's very corner (hotcorner_size). Watched on the whole window
-        before the page sees it (capture phase): a tap there still reaches
-        the HMI below, only the hold is taken from it. The box only shows
-        that the hold has started.
-
-        Raw events and a timer of its own, not a GtkGestureLongPress: that
-        gesture still started its timer for a touch refused outside the
-        corner, never saw that touch end, and opened Settings 2 s after any
-        tap on the HMI."""
-        box = Gtk.Box(can_target=False)
+        box = Gtk.Box(width_request=72, height_request=72)
         box.add_css_class("hotcorner")
-        T = Gdk.EventType
-        hold = {"on": False, "timer": 0, "fired": False}
-
-        def disarm():
-            if hold["timer"]:
-                GLib.source_remove(hold["timer"])
-            hold.update(on=False, timer=0)
-            box.remove_css_class("armed")
-
-        # Only tracks the touch, never refuses one: claimed when the hold
-        # fires, so the page gets its touch cancelled, not released (a click).
-        claim = Gtk.GestureDrag(touch_only=False)
-        claim.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        self.win.add_controller(claim)
-
-        def fire():
-            hold["timer"] = 0
-            box.remove_css_class("armed")
-            if box.get_visible():
-                hold["fired"] = True  # the rest of this touch goes nowhere
-                if claim.is_active():
-                    claim.set_state(Gtk.EventSequenceState.CLAIMED)
-                self.open_settings()
-            return GLib.SOURCE_REMOVE
-
-        def on_event(_c, ev):
-            t = ev.get_event_type()
-            if t in (T.TOUCH_BEGIN, T.BUTTON_PRESS):
-                if hold["on"]:
-                    if not hold["fired"]:
-                        disarm()  # a second finger: not a hold
-                    return False
-                ok, x, y = ev.get_position()
-                if (ok and box.get_visible() and self.in_hotcorner(x, y)
-                        and (t == T.TOUCH_BEGIN or ev.get_button() == 1)):
-                    size = self.hotcorner_size()
-                    box.set_size_request(size, size)
-                    box.add_css_class("armed")
-                    hold.update(on=True, fired=False,
-                                timer=GLib.timeout_add(HOTCORNER_HOLD_MS, fire))
-                return False
-            # One finger at a time (a second one disarms above), so any
-            # move or release is the held one's.
-            if not hold["on"]:
-                return False
-            if t in (T.TOUCH_UPDATE, T.MOTION_NOTIFY):
-                if hold["fired"]:
-                    return True
-                ok, x, y = ev.get_position()
-                if not (ok and self.in_hotcorner(x, y)):
-                    disarm()  # moved out of the corner
-                return False
-            if t in (T.TOUCH_END, T.TOUCH_CANCEL, T.BUTTON_RELEASE):
-                fired = hold["fired"]
-                disarm()
-                hold["fired"] = False
-                return fired
-            return False
-
-        watch = Gtk.EventControllerLegacy()
-        watch.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        watch.connect("event", on_event)
-        self.win.add_controller(watch)
+        press = Gtk.GestureLongPress(touch_only=False)
+        # ~1 s, GTK's maximum (larger factors are rejected).
+        press.set_delay_factor(2.0)
+        press.connect("begin", lambda *a: box.add_css_class("armed"))
+        press.connect("end", lambda *a: box.remove_css_class("armed"))
+        press.connect("cancelled", lambda *a: box.remove_css_class("armed"))
+        press.connect("pressed", lambda *a: self.open_settings())
+        box.add_controller(press)
         return box
-
-    def hotcorner_size(self):
-        """A fifth of the screen's shorter side (160 px at 1280x800), at least 120."""
-        return max(120, round(min(self.win.get_width(), self.win.get_height()) * 0.2))
-
-    def in_hotcorner(self, x, y):
-        size, w, h = self.hotcorner_size(), self.win.get_width(), self.win.get_height()
-        corner = self.cfg.get("settings_corner", "top-right")
-        if corner not in CORNERS:
-            corner = "top-right"
-        top, left = corner.startswith("top"), corner.endswith("left")
-        return (x <= size if left else x >= w - size) and (y <= size if top else y >= h - size)
 
     # -- switching
     def ensure_settings(self):
@@ -710,9 +628,6 @@ class KioskShell(Gtk.Application):
         if corner not in CORNERS:
             corner = "top-right"
         h, v = CORNERS[corner]
-        for c in CORNERS:
-            self.hotcorner.remove_css_class(c)
-        self.hotcorner.add_css_class(corner)  # the glow spreads from that corner
         self.overlay.remove_overlay(self.hotcorner)
         self.hotcorner.set_halign(h)
         self.hotcorner.set_valign(v)
