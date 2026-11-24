@@ -43,7 +43,6 @@ window.I18N_LANGS.pl = function (tr) {
         "Behavior": "Zachowanie",
         "Accept the HMI server's certificate (self-signed)": "Akceptuj certyfikat serwera HMI (self-signed)",
         "On-screen keyboard in the HMI too": "Klawiatura ekranowa także w HMI",
-        "Retry connecting every (s)": "Ponowna próba połączenia co (s)",
         "Save": "Zapisz",
         "HMI zoom": "Powiększenie HMI",
         "The HMI page only. Everything at once: Display → Scaling.":

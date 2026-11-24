@@ -92,6 +92,8 @@ window.splashing, window.splashing stack, window.splashing .splash { background:
 # The connecting screen's bar: kiosk-splash's colours and size (splash-bar.json).
 SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
 
+RETRY_S = 3  # an HMI that can't be reached or loaded: tried again after (as kioskd's check)
+
 CORNERS = {
     "top-left": (Gtk.Align.START, Gtk.Align.START),
     "top-right": (Gtk.Align.END, Gtk.Align.START),
@@ -523,7 +525,7 @@ class KioskShell(Gtk.Application):
                 GLib.usleep(500_000)
         log("kioskd unreachable, starting with defaults")
         return {"mode": "kiosk", "hmi_url": "", "rotation_effective": "landscape",
-                "osk_in_hmi": True, "accept_self_signed": True, "zoom": 1.0, "retry_seconds": 10}
+                "osk_in_hmi": True, "accept_self_signed": True, "zoom": 1.0}
 
     def common_view_setup(self, view):
         s = view.get_settings()
@@ -737,16 +739,14 @@ class KioskShell(Gtk.Application):
 
     def schedule_retry(self):
         self.cancel_retry()
-        secs = int(self.cfg.get("retry_seconds", 10))
-        if self.waiting_for_hmi:
-            secs = min(secs, 5)  # the connecting screen shows meanwhile: retry often
+        # With Settings open, kioskd's check (on_hmi_state) loads the HMI as
+        # soon as it answers; this retries a page that failed to load.
 
         def fire():
             self.retry_source = None
             self.load_hmi()
             return GLib.SOURCE_REMOVE
-        self.retry_source = GLib.timeout_add_seconds(secs, fire)
-        return secs
+        self.retry_source = GLib.timeout_add_seconds(RETRY_S, fire)
 
     def t(self, pl, en):
         """kiosk-shell's own texts in Settings' language (English by default)."""

@@ -65,8 +65,6 @@ DEFAULT_CONFIG = {
     "zoom": 1.0,
     # Whole-screen scale (wlr-randr --scale), 1.0-2.0.
     "scale": 1.0,
-    # Seconds between reload attempts while the HMI can't be reached.
-    "retry_seconds": 10,
     # Corner of the hidden "hold ~2 s for Settings" spot.
     "settings_corner": "top-right",
     "accent": "blue",
@@ -354,8 +352,6 @@ def save_config(update):
         if update["settings_corner"] not in CORNERS:
             raise ApiError("Invalid screen corner")
         cfg["settings_corner"] = update["settings_corner"]
-    if "retry_seconds" in update:
-        cfg["retry_seconds"] = max(3, min(300, int(update["retry_seconds"])))
     if "brightness" in update:
         try:
             b = int(update["brightness"])
@@ -380,7 +376,7 @@ def write_config(cfg):
 # Settings' tabs: what each one's reset puts back to the defaults (every
 # DEFAULT_CONFIG key is in one of them: reset_everything is all of them).
 RESET_KEYS = {
-    "hmi": ("hmi", "osk_in_hmi", "accept_self_signed", "zoom", "retry_seconds"),
+    "hmi": ("hmi", "osk_in_hmi", "accept_self_signed", "zoom"),
     "screen": ("rotation", "scale", "settings_corner", "accent", "brightness"),
     "system": ("language", "releases_repo"),
 }
@@ -961,13 +957,39 @@ def nm_signal_wanted(line):
     return not line.startswith("/org/freedesktop/NetworkManager/AccessPoint/")
 
 
+def net_fingerprint():
+    """The IPv4 network as the HMI sees it: each routed interface's address
+    and the default gateways (/proc and an ioctl: cheap enough for every
+    NetworkManager signal)."""
+    ifaces, gateways = set(), set()
+    try:
+        for line in Path("/proc/net/route").read_text().splitlines()[1:]:
+            f = line.split()
+            if len(f) < 8:
+                continue
+            ifaces.add(f[0])
+            if f[1] == "00000000" and f[7] == "00000000":
+                gateways.add((f[0], socket.inet_ntoa(struct.pack("<I", int(f[2], 16)))))
+    except (OSError, ValueError):
+        pass
+    return tuple(sorted((i, ipv4_address(i)) for i in ifaces)), tuple(sorted(gateways))
+
+
+_net_fp = {"fp": None}
+
+
 def nm_changed():
     for cache in (WIFI, NET_BRIEF, NETWORK):
         cache.invalidate()
+    fp = net_fingerprint()
+    if fp != _net_fp["fp"]:
+        _net_fp["fp"] = fp
+        hmi_unknown()  # another network: no HMI until it's tested again
     HMI_WAKE.set()  # the HMI may have come or gone with the network
 
 
 def start_watchers():
+    _net_fp["fp"] = net_fingerprint()
     net = Debounce("net", 1.0)
     threading.Thread(target=watch_lines, daemon=True, name="nm", args=(
         ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager",
@@ -2424,6 +2446,19 @@ def r_config_set(body, q):
 HMI_STATE = {"url": "", "ok": None, "message": "", "checked": None}
 HMI_WAKE = threading.Event()
 HMI_EVERY_S = 3
+HMI_LOCK = threading.Lock()
+_hmi_gen = [0]  # bumped by hmi_unknown: a check started before it is dropped
+
+
+def hmi_unknown():
+    """The network changed: "not known" (Back to HMI greyed out, "Checking
+    the connection…") until hmi_watch has tested the HMI on the new one."""
+    with HMI_LOCK:
+        _hmi_gen[0] += 1
+        if HMI_STATE["ok"] is None:
+            return
+        HMI_STATE.update(ok=None, message="", checked=time.time())
+    EVENTS.emit("hmi")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -2469,14 +2504,21 @@ def hmi_watch():
     failed = 0
     while True:
         url = hmi_url(load_config()["hmi"])
+        gen = _hmi_gen[0]
         ok, message = hmi_probe(url) if url else (None, "")
-        failed = failed + 1 if ok is False and url == HMI_STATE["url"] else 0
-        if failed == 1 and HMI_STATE["ok"]:
+        with HMI_LOCK:
+            if gen != _hmi_gen[0]:
+                failed = 0
+                continue  # the network changed meanwhile: tested again on the new one
+            failed = failed + 1 if ok is False and url == HMI_STATE["url"] else 0
+            again = failed == 1 and HMI_STATE["ok"]
+            if not again:
+                changed = (url, ok) != (HMI_STATE["url"], HMI_STATE["ok"])
+                HMI_STATE.update(url=url, ok=ok, message=message, checked=time.time())
+        if again:
             HMI_WAKE.wait(1)  # once more, soon, before saying so
             HMI_WAKE.clear()
             continue
-        changed = (url, ok) != (HMI_STATE["url"], HMI_STATE["ok"])
-        HMI_STATE.update(url=url, ok=ok, message=message, checked=time.time())
         if changed:
             EVENTS.emit("hmi")
         HMI_WAKE.wait(HMI_EVERY_S)

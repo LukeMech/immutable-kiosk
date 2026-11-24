@@ -201,7 +201,6 @@ async function loadHmi() {
     });
     $("opt-cert").checked = cfg.accept_self_signed;
     $("opt-osk").checked = cfg.osk_in_hmi;
-    $("opt-retry").value = cfg.retry_seconds;
     $("zoom-val").textContent = Math.round(cfg.zoom * 100) + "%";
     renderHmiUrl();
     loadHmiState();
@@ -240,13 +239,11 @@ function initHmi() {
     const saveOpts = () => api("/config", {
         accept_self_signed: $("opt-cert").checked,
         osk_in_hmi: $("opt-osk").checked,
-        retry_seconds: Number($("opt-retry").value) || 10,
     }).then(c => {
         cfg = c;
-        $("opt-retry").value = cfg.retry_seconds;
         shell("config-changed");
     }).catch(e => toast(e.message, true));
-    ["opt-cert", "opt-osk", "opt-retry"].forEach(id => $(id).addEventListener("change", saveOpts));
+    ["opt-cert", "opt-osk"].forEach(id => $(id).addEventListener("change", saveOpts));
 }
 
 /* ---------- Wi-Fi */
