@@ -49,7 +49,8 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
   screen in the kiosk the moment it's asked for; Plymouth's follows.
 - **On-screen keyboard** ([`osk.js`](system_files/usr/share/immutable-kiosk/web/osk.js)):
   Polish letters via the `ąę` key, numeric pad for number/IP fields, shadow
-  DOM. Used by Settings and injected into the HMI page (switchable), so
+  DOM. `Fn` adds a row for terminals and editors: Esc, Tab, Ctrl, Alt,
+  Home, arrows, End (Ctrl+C in a web console, Tab completion). Used by Settings and injected into the HMI page (switchable), so
   TwinCAT HMI's login can be typed too.
 - Destructive actions (reboot, rollback, install, forget network) are
   **hold-to-confirm** buttons, not dialogs.
