@@ -20,7 +20,9 @@ Over the HMI (and "Connecting…"), a small update card in the corner across
 from the Settings corner follows kioskd's updates (/api/update): a version
 found and downloading, the download and install's progress, then "ready to
 restart" with a hold-to-restart button. Each can be hidden; tapping the
-card opens Settings → System.
+card opens Settings → System. The same card, over any view and ahead of
+the update, counts down kioskd's auto shutdown (the charger unplugged,
+/api/power/auto), with Cancel.
 """
 
 import errno
@@ -308,6 +310,12 @@ class KioskShell(Gtk.Application):
         self.upd_poll = None
         self.upd_pulse = None
         self.upd_timers = set()  # failed cards' keys with their auto-hide pending
+        # kioskd's auto shutdown countdown (/api/power/auto): its end on this
+        # process's clock, the second tick, what the card shows now.
+        self.power = {"state": "idle"}
+        self.power_until = None
+        self.power_tick = None
+        self.card_kind = "update"
 
     # -- setup
     def do_activate(self):
@@ -411,6 +419,7 @@ class KioskShell(Gtk.Application):
         GLib.timeout_add_seconds(30, self.reveal)
         threading.Thread(target=self.listen_events, daemon=True).start()
         self.fetch_update()
+        self.fetch_power()
 
     def start_hmi(self):
         if self.hmi and not self.hmi_started:
@@ -434,6 +443,8 @@ class KioskShell(Gtk.Application):
                             GLib.idle_add(self.on_net_change)
                         if "job" in topics or "system" in topics:
                             GLib.idle_add(self.fetch_update)
+                        if "power" in topics:
+                            GLib.idle_add(self.fetch_power)
                         if "hmi" in topics:
                             try:
                                 st = api_get("/api/hmi/state")
@@ -628,7 +639,8 @@ class KioskShell(Gtk.Application):
         texts.append(top)
         texts.append(self.upd_sub)
         self.upd_hide = Gtk.Button(valign=Gtk.Align.CENTER)
-        self.upd_hide.connect("clicked", lambda _b: self.hide_update())
+        self.upd_hide.connect("clicked", lambda _b: self.cancel_power() if self.card_kind == "power"
+                              else self.hide_update())
         head.append(texts)
         head.append(self.upd_hide)
         self.upd_bar = Gtk.ProgressBar(pulse_step=0.05)
@@ -740,11 +752,22 @@ class KioskShell(Gtk.Application):
         return "failed:" + n.get("id", "")
 
     def render_update(self):
+        """The card: the auto shutdown countdown over any view; otherwise
+        the update, over the HMI only."""
         if not self.hmi:
             return
+        view = self.stack.get_visible_child_name()
+        if self.power.get("state") == "counting" and view != "splash":
+            self.card_kind = "power"
+            self.fill_power()
+            self.update_pulse(False)
+            self.upd_card.set_visible(True)
+            self.upd_card.set_reveal_child(True)
+            return
+        self.card_kind = "update"
         n = self.upd
         phase = n.get("phase", "idle")
-        on_hmi = self.stack.get_visible_child_name() in ("hmi", "connecting")
+        on_hmi = view in ("hmi", "connecting")
         want = phase != "idle" and on_hmi and self.update_key(n) not in self.upd_hidden
         if want:
             self.fill_update(n)
@@ -794,6 +817,68 @@ class KioskShell(Gtk.Application):
         self.upd_later.set_label(self.t("Ukryj", "Hide"))
         if not getattr(self, "restarting", False):
             self.upd_restart_label.set_label(self.t("Przytrzymaj: restart", "Hold: restart"))
+
+    def fetch_power(self):
+        """kioskd's auto shutdown countdown, in the background."""
+        if not self.hmi:
+            return GLib.SOURCE_REMOVE
+
+        def work():
+            try:
+                n = api_get("/api/power/auto", timeout=5)
+            except (OSError, ValueError):
+                n = None
+            GLib.idle_add(self.on_power, n)
+        threading.Thread(target=work, daemon=True).start()
+        return GLib.SOURCE_REMOVE
+
+    def on_power(self, n):
+        if isinstance(n, dict):
+            self.power = n
+            counting = n.get("state") == "counting"
+            self.power_until = time.monotonic() + float(n.get("left") or 0) if counting else None
+            if counting and not self.power_tick:
+                self.power_tick = GLib.timeout_add(1000, self.on_power_tick)
+            self.render_update()
+        return GLib.SOURCE_REMOVE
+
+    def on_power_tick(self):
+        if self.power.get("state") != "counting":
+            self.power_tick = None
+            return GLib.SOURCE_REMOVE
+        self.render_update()
+        return GLib.SOURCE_CONTINUE
+
+    def fill_power(self):
+        n = self.power
+        left = max(0, round((self.power_until or 0) - time.monotonic()))
+        total = max(1, float(n.get("total") or 1))
+        clock = f"{left // 60}:{left % 60:02d}"
+        self.upd_title.set_label(self.t("Brak zasilania", "No power"))
+        if n.get("action") == "poweroff":
+            sub = self.t(f"Tablet wyłączy się za {clock}", f"The tablet powers off in {clock}")
+        else:
+            sub = self.t(f"Tablet uśpi się za {clock}", f"The tablet goes to sleep in {clock}")
+        self.upd_sub.set_label(sub)
+        self.upd_pct.set_visible(False)
+        self.upd_bar.set_visible(True)
+        self.upd_bar.set_fraction(max(0.0, min(1.0, left / total)))
+        self.upd_hide.set_label(self.t("Anuluj", "Cancel"))
+        self.upd_hide.set_visible(True)
+        self.upd_actions.set_visible(False)
+
+    def cancel_power(self):
+        """Cancel: no auto shutdown until the charger has been back (kioskd)."""
+        self.power = {"state": "idle"}
+        self.render_update()
+
+        def work():
+            try:
+                api_post("/api/power/auto/cancel", {}, timeout=5)
+            except (OSError, ValueError) as e:
+                log("auto shutdown cancel:", e)
+            GLib.idle_add(self.fetch_power)
+        threading.Thread(target=work, daemon=True).start()
 
     def update_pulse(self, on):
         """The bar's moving segment while a version is found, before bytes come."""

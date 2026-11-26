@@ -222,6 +222,19 @@
           <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
           <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
         </div>
+        <div class="sep">
+          <label class="switch"><input type="checkbox" id="opt-auto-off"><span>Auto shutdown without power</span></label>
+          <div id="ao-opts" hidden>
+            <p class="hint">When the charger has been unplugged for:</p>
+            <div class="stepper">
+              <button class="btn" id="ao-minus">−</button>
+              <span id="ao-val">2 min</span>
+              <button class="btn" id="ao-plus">+</button>
+            </div>
+            <div class="seg" id="ao-action"><button data-v="suspend">Sleep</button><button data-v="poweroff">Power off</button></div>
+            <p class="hint" id="ao-hint"></p>
+          </div>
+        </div>
       </div>
       <div class="card">
         <h2>System</h2>

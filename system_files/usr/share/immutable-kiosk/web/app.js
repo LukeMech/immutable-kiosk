@@ -1174,6 +1174,7 @@ async function loadSystem() {
     try { sys = await api("/system"); }
     catch (e) { sys = { available: false, error: e.message }; }
     if (cfg) $("opt-auto-upd").checked = cfg.auto_update !== false;
+    renderAutoOff();
     renderSysInfo();
     renderUpdate();
     followSysJob();
@@ -1377,12 +1378,40 @@ async function loadBoot() {
     $("boot-failed").hidden = !problems.length;
 }
 
+// Auto shutdown (Power card): the charger unplugged this long -> sleep or
+// power off (kioskd); kiosk-shell shows the countdown with Cancel.
+const AO_STEPS = [30, 60, 120, 180, 300, 600, 900, 1800, 3600];
+const fmtDelay = s => s < 60 ? `${s} s` : `${Math.round(s / 60)} min`;
+function renderAutoOff() {
+    if (!cfg) return;
+    const on = !!cfg.auto_shutdown, action = cfg.auto_shutdown_action || "suspend";
+    $("opt-auto-off").checked = on;
+    $("ao-opts").hidden = !on;
+    $("ao-val").textContent = fmtDelay(cfg.auto_shutdown_delay || 120);
+    seg($("ao-action"), action);
+    $("ao-hint").textContent = _(action === "poweroff"
+        ? "Powers off completely; the power button starts it again."
+        : "Goes to sleep and wakes up when the power comes back (or with the power button).");
+}
+// Not saveCfg: kiosk-shell has nothing to reload.
+const saveAutoOff = part => api("/config", part).then(c => { cfg = c; renderAutoOff(); })
+    .catch(e => { toast(e.message, true); renderAutoOff(); });
+
 function initSystem() {
     setInterval(() => { if (settingsVisible && currentTab === "system") loadUsage(); }, 2000);
     holdButton($("peaks-clear"), () => api("/usage/peaks/clear", {}).then(loadUsage).catch(e => toast(e.message, true)));
     // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
+    $("opt-auto-off").addEventListener("change", e => saveAutoOff({ auto_shutdown: e.target.checked }));
+    const aoStep = dir => {
+        const cur = cfg.auto_shutdown_delay || 120;
+        const next = dir > 0 ? AO_STEPS.find(v => v > cur) : [...AO_STEPS].reverse().find(v => v < cur);
+        if (next) saveAutoOff({ auto_shutdown_delay: next });
+    };
+    $("ao-minus").addEventListener("click", () => aoStep(-1));
+    $("ao-plus").addEventListener("click", () => aoStep(1));
+    seg($("ao-action"), cfg.auto_shutdown_action || "suspend", v => saveAutoOff({ auto_shutdown_action: v }));
     // kioskd checks hourly and stages new versions; kiosk-shell's card offers the restart.
     $("opt-auto-upd").addEventListener("change", e => saveCfg({ auto_update: e.target.checked })
         .then(c => { e.target.checked = c.auto_update !== false; })
@@ -1499,6 +1528,7 @@ function initEvents() {
     const config = () => api("/config").then(c => {
         cfg = c;
         $("opt-auto-upd").checked = c.auto_update !== false;
+        renderAutoOff();
         if (currentTab === "screen") loadScreen();
     }).catch(() => {});
     const system = () => { if (currentTab === "system") loadSystem(); };

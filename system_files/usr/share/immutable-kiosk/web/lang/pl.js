@@ -191,6 +191,16 @@ window.I18N_LANGS.pl = function (tr) {
         "Hold: restart now": "Przytrzymaj: uruchom ponownie teraz",
         "Check for updates": "Sprawdź aktualizacje",
         "Automatic updates": "Automatyczne aktualizacje",
+        "Auto shutdown without power": "Automatyczne wyłączanie bez zasilania",
+        "When the charger has been unplugged for:": "Gdy ładowarka jest odłączona przez:",
+        "Sleep": "Uśpij",
+        "Power off": "Wyłącz",
+        "Powers off completely; the power button starts it again.":
+            "Wyłącza się całkowicie; włączysz go przyciskiem zasilania.",
+        "Goes to sleep and wakes up when the power comes back (or with the power button).":
+            "Usypia się i budzi, gdy wróci zasilanie (albo przyciskiem zasilania).",
+        "The delay must be a number of seconds": "Czas musi być liczbą sekund",
+        "Delay: {min}-{max} s": "Czas: {min}-{max} s",
         "New versions download and install in the background. They start after a restart, when you choose it.":
             "Nowe wersje pobierają się i instalują w tle. Włączają się po restarcie, kiedy go wybierzesz.",
         "none": "brak",

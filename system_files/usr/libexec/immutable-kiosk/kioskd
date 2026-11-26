@@ -77,6 +77,11 @@ DEFAULT_CONFIG = {
     # New versions downloaded and staged in the background (auto_update_loop);
     # they start at the next restart, which kiosk-shell's corner card offers.
     "auto_update": True,
+    # The charger unplugged (the machine's power off) this many seconds:
+    # "suspend" (sleep; the charger coming back wakes it) or "poweroff".
+    "auto_shutdown": False,
+    "auto_shutdown_delay": 120,
+    "auto_shutdown_action": "suspend",
 }
 
 ACCENTS = ("blue", "teal", "green", "purple", "pink", "orange", "graphite")
@@ -88,6 +93,9 @@ BRIGHTNESS_MIN = 5
 BACKLIGHT_DIR = Path("/sys/class/backlight")
 
 CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+
+AUTO_OFF_ACTIONS = ("suspend", "poweroff")
+AUTO_OFF_DELAY = (10, 3600)  # s
 
 
 # ---------------------------------------------------------------- helpers
@@ -321,9 +329,21 @@ def save_config(update):
         if r is not None and r not in ROTATIONS:
             raise ApiError("Invalid orientation")
         cfg["rotation"] = r
-    for key in ("osk_in_hmi", "accept_self_signed", "auto_update"):
+    for key in ("osk_in_hmi", "accept_self_signed", "auto_update", "auto_shutdown"):
         if key in update:
             cfg[key] = bool(update[key])
+    if "auto_shutdown_delay" in update:
+        try:
+            d = int(update["auto_shutdown_delay"])
+        except (TypeError, ValueError):
+            raise ApiError("The delay must be a number of seconds")
+        if not AUTO_OFF_DELAY[0] <= d <= AUTO_OFF_DELAY[1]:
+            raise ApiError(Msg("Delay: {min}-{max} s", min=AUTO_OFF_DELAY[0], max=AUTO_OFF_DELAY[1]))
+        cfg["auto_shutdown_delay"] = d
+    if "auto_shutdown_action" in update:
+        if update["auto_shutdown_action"] not in AUTO_OFF_ACTIONS:
+            raise ApiError("Unknown action")
+        cfg["auto_shutdown_action"] = update["auto_shutdown_action"]
     if "zoom" in update:
         z = float(update["zoom"])
         if not 0.5 <= z <= 3.0:
@@ -381,7 +401,8 @@ def write_config(cfg):
 RESET_KEYS = {
     "hmi": ("hmi", "osk_in_hmi", "accept_self_signed", "zoom"),
     "screen": ("rotation", "scale", "settings_corner", "accent", "brightness"),
-    "system": ("language", "releases_repo", "auto_update"),
+    "system": ("language", "releases_repo", "auto_update",
+               "auto_shutdown", "auto_shutdown_delay", "auto_shutdown_action"),
 }
 RESET_PARTS = ("hmi", "network", "screen", "system")
 
@@ -921,8 +942,10 @@ def watch_lines(cmd, debounce, name, wanted=None, on_line=None):
 def watch_power():
     """Charger changes come from udev; battery % is also polled every 30 s."""
     poke = Debounce("power", 0.5)
+    # Each udev line also wakes auto_off_loop: the charger's state at once.
     threading.Thread(target=watch_lines, daemon=True, name="udev-power", args=(
-        ["udevadm", "monitor", "--udev", "--subsystem-match=power_supply"], poke, "power")).start()
+        ["udevadm", "monitor", "--udev", "--subsystem-match=power_supply"], poke, "power",
+        None, AUTO_OFF_WAKE.set)).start()
     last = None
     while True:
         try:
@@ -1546,7 +1569,7 @@ def auto_update_loop():
 
 
 # Of the whole bar in kiosk-shell's card: the download, then the install.
-DOWNLOAD_SHARE = 0.6
+DOWNLOAD_SHARE = 0.3
 
 
 def update_notice():
@@ -1902,6 +1925,107 @@ def power_state():
     elif ac is None and status == "Discharging":
         ac = False
     return {"ac_online": ac, "battery": battery, "battery_status": status}
+
+
+# ---- Auto shutdown: with "auto_shutdown" on, the charger unplugged for
+# "auto_shutdown_delay" s (the machine the tablet is built into lost its
+# power) puts the tablet to sleep -- woken by the charger coming back, as
+# far as the hardware wakes on it, or by the power button -- or powers it
+# off. kiosk-shell shows the countdown with Cancel (/api/power/auto), which
+# holds until the charger is back.
+
+AUTO_OFF_AFTER_WAKE_S = 30  # woken on battery (power button, a stray wakeup): sleeps again after
+AUTO_OFF_EVERY_S = 5        # the charger's state polled, besides udev's events
+AUTO_OFF = {"deadline": None, "total": None, "cancelled": False, "woke": False}
+AUTO_OFF_LOCK = threading.Lock()
+AUTO_OFF_WAKE = threading.Event()
+
+
+def auto_off_notice():
+    with AUTO_OFF_LOCK:
+        deadline = AUTO_OFF["deadline"]
+        if deadline is None:
+            return {"state": "idle"}
+        return {"state": "counting", "left": max(0.0, deadline - time.monotonic()),
+                "total": AUTO_OFF["total"],
+                "action": load_config().get("auto_shutdown_action", "suspend")}
+
+
+def enable_power_wakeup():
+    """Before sleeping: wakeup on for the chargers', the battery's devices
+    and their parents (the PMIC, the ACPI AC adapter) -- whatever of them
+    can wake the system on this hardware."""
+    seen = set()
+    for ps in Path("/sys/class/power_supply").glob("*"):
+        try:
+            dev = (ps / "device").resolve()
+        except OSError:
+            continue
+        for d in (ps.resolve(), dev, dev.parent, dev.parent.parent):
+            w = d / "power" / "wakeup"
+            if w in seen:
+                continue
+            seen.add(w)
+            try:
+                if w.read_text().strip() == "disabled":
+                    w.write_text("enabled")
+            except OSError:
+                pass
+
+
+def auto_off_act(action):
+    print(f"kioskd: auto shutdown: {action}, the charger has been unplugged", flush=True)
+    if action == "poweroff":
+        power_off("poweroff")
+        return
+    enable_power_wakeup()
+    # Returns once the system has woken up again.
+    p = subprocess.run(["systemctl", "suspend"], capture_output=True, text=True, timeout=None)
+    if p.returncode != 0:
+        print(f"kioskd: suspend: {cmd_error(p, 'systemctl')}", flush=True)
+
+
+def auto_off_step(cfg, ac, now):
+    """One look at the charger: the action due now, or None. Changes AUTO_OFF;
+    True as the second value when kiosk-shell's countdown changed."""
+    with AUTO_OFF_LOCK:
+        was = AUTO_OFF["deadline"]
+        if ac is not False:
+            # Charger back (or not known): no countdown; Cancel ends with it.
+            AUTO_OFF.update(deadline=None, cancelled=False, woke=False)
+        elif not cfg.get("auto_shutdown") or AUTO_OFF["cancelled"]:
+            AUTO_OFF["deadline"] = None
+        elif AUTO_OFF["deadline"] is None:
+            total = int(cfg.get("auto_shutdown_delay") or 120)
+            if AUTO_OFF["woke"]:
+                total = min(total, AUTO_OFF_AFTER_WAKE_S)
+            AUTO_OFF.update(deadline=now + total, total=total)
+        elif now >= AUTO_OFF["deadline"]:
+            action = cfg.get("auto_shutdown_action", "suspend")
+            if action not in AUTO_OFF_ACTIONS:
+                action = "suspend"
+            AUTO_OFF.update(deadline=None, woke=action == "suspend")
+            return action, True
+        return None, AUTO_OFF["deadline"] != was
+
+
+def auto_off_loop():
+    while True:
+        AUTO_OFF_WAKE.wait(AUTO_OFF_EVERY_S)
+        AUTO_OFF_WAKE.clear()
+        try:
+            ac = power_state()["ac_online"]
+        except Exception:  # noqa: BLE001 -- sysfs oddities: not known
+            ac = None
+        action, changed = auto_off_step(load_config(), ac, time.monotonic())
+        if changed:
+            EVENTS.emit("power")
+        if action:
+            try:
+                auto_off_act(action)
+            except Exception as e:  # noqa: BLE001 -- the loop must survive anything
+                print(f"kioskd: auto shutdown: {e!r}", flush=True)
+            AUTO_OFF_WAKE.set()  # woken up: look at the charger at once
 
 
 def boot_medium():
@@ -2543,6 +2667,8 @@ def r_config_set(body, q):
         HMI_WAKE.set()
     if body.get("auto_update") is True:
         AUTO_WAKE.set()  # turned on: the first check now (auto_update_loop)
+    if any(k.startswith("auto_shutdown") for k in body):
+        AUTO_OFF_WAKE.set()
     def look(what):
         set_splash_look(what)
         set_grub_splash()
@@ -3643,6 +3769,19 @@ def r_power(body, q):
     return {"ok": True}
 
 
+def r_power_auto(body, q):
+    return auto_off_notice()
+
+
+def r_power_auto_cancel(body, q):
+    """Cancel on kiosk-shell's countdown: no auto shutdown until the charger
+    has been back."""
+    with AUTO_OFF_LOCK:
+        AUTO_OFF.update(cancelled=True, deadline=None)
+    EVENTS.emit("power")
+    return {"ok": True}
+
+
 def r_job(body, q):
     return {"job": CURRENT_JOB.as_dict() if CURRENT_JOB else None}
 
@@ -3702,6 +3841,8 @@ ROUTES = {
     ("POST", "/api/system/channel"): r_system_channel,
     ("POST", "/api/system/rollback"): r_system_rollback,
     ("POST", "/api/power"): r_power,
+    ("GET", "/api/power/auto"): r_power_auto,
+    ("POST", "/api/power/auto/cancel"): r_power_auto_cancel,
     ("POST", "/api/settings/reset"): r_settings_reset,
     ("GET", "/api/job"): r_job,
     ("GET", "/api/update"): r_update,
@@ -3732,6 +3873,7 @@ def main():
         threading.Thread(target=usage_loop, daemon=True).start()
         threading.Thread(target=hmi_watch, daemon=True).start()
         threading.Thread(target=auto_update_loop, daemon=True, name="auto-update").start()
+        threading.Thread(target=auto_off_loop, daemon=True, name="auto-off").start()
     srv.serve_forever()
 
 

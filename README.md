@@ -53,7 +53,13 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
   TwinCAT HMI's login can be typed too.
 - Destructive actions (reboot, rollback, install, forget network) are
   **hold-to-confirm** buttons, not dialogs.
-- No suspend, power key ignored (long press still forces off), Fedora's
+- **Auto shutdown without power** (System → Power, off by default): the
+  charger unplugged for a set time (2 min by default; 30 s – 60 min) puts
+  the tablet to sleep -- it wakes when the charger is back, as far as the
+  hardware wakes on it, or with the power button -- or powers it off. The
+  same corner card counts down over any screen, with *Cancel* (until the
+  charger has been back). Woken on battery, it sleeps again after 30 s.
+- Never sleeps otherwise (suspend only for the above), power key ignored (long press still forces off), Fedora's
   auto-update-and-reboot timer disabled: kioskd downloads updates itself
   and never restarts on its own (see Updates).
 
