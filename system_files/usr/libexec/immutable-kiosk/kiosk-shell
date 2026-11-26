@@ -706,10 +706,20 @@ class KioskShell(Gtk.Application):
             held.update(t0=None, tick=None)
             bar.set_fraction(0)
 
-        g = Gtk.GestureClick()
-        g.connect("pressed", press)
-        g.connect("released", release)
-        g.connect("stopped", release)
+        def moved(gesture, dx, dy):
+            ok, x, y = gesture.get_start_point()
+            x, y = x + dx, y + dy
+            if ok and not (0 <= x < box.get_width() and 0 <= y < box.get_height()):
+                release()  # slid off the button: let go (Settings' pointerleave)
+
+        # As Settings' holdButton (pointerdown, then pointerup / pointerleave /
+        # pointercancel). A drag, not a click: GestureClick "stops" a held
+        # touch after the double-click time or a few pixels of finger jitter,
+        # and then never reports the release -- the bar stopped after ~1 s.
+        g = Gtk.GestureDrag()
+        g.connect("drag-begin", press)
+        g.connect("drag-update", moved)
+        g.connect("drag-end", release)
         g.connect("cancel", release)
         box.add_controller(g)
         return box, label
