@@ -224,9 +224,28 @@
         }
     }
 
+    // A key event as a real keyboard sends it. keyCode/which/charCode can't
+    // be set through the constructor (WebKit leaves them 0), and pages that
+    // read them -- xterm.js terminals (TwinCAT/BSD's web console), older
+    // frameworks -- saw no key at all: defined on the event instead.
+    function keyEvent(el, type, key, code) {
+        const ev = new KeyboardEvent(type, { key, code: key, bubbles: true, cancelable: true, composed: true });
+        for (const prop of ["keyCode", "which"]) Object.defineProperty(ev, prop, { get: () => code });
+        Object.defineProperty(ev, "charCode", { get: () => (type === "keypress" ? code : 0) });
+        return el.dispatchEvent(ev);  // false: the page handled the key (preventDefault)
+    }
+
+    // Backspace and Enter go out as real keys: keydown first. A page that
+    // handles one itself (a terminal sends it on, an editor acts on it)
+    // cancels the keydown, and then the key's usual effect is left out.
     function backspace() {
         const el = target || document.activeElement;
         if (!el) return;
+        if (keyEvent(el, "keydown", "Backspace", 8)) deleteBack(el);
+        keyEvent(el, "keyup", "Backspace", 8);
+    }
+
+    function deleteBack(el) {
         if (document.execCommand && document.execCommand("delete", false)) return;
         if ("value" in el) {
             let s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? el.value.length;
@@ -239,16 +258,15 @@
     function enter() {
         const el = target;
         if (!el) return;
-        if (el.tagName === "TEXTAREA" || el.isContentEditable) {
-            insert("\n");
-            return;
-        }
-        const init = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
-        const notCancelled = el.dispatchEvent(new KeyboardEvent("keydown", init));
-        el.dispatchEvent(new KeyboardEvent("keypress", init));
-        el.dispatchEvent(new KeyboardEvent("keyup", init));
+        const multiline = el.tagName === "TEXTAREA" || el.isContentEditable;
+        const pressed = keyEvent(el, "keydown", "Enter", 13) && keyEvent(el, "keypress", "Enter", 13);
+        // A line break unless the page took the key (a terminal's hidden
+        // textarea, a chat box sending on Enter); the keyboard stays open.
+        if (multiline && pressed) insert("\n");
+        keyEvent(el, "keyup", "Enter", 13);
+        if (multiline) return;
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        if (notCancelled && el.form) {
+        if (pressed && el.form) {
             if (el.form.requestSubmit) el.form.requestSubmit(); else el.form.submit();
         }
         el.blur();
