@@ -1,12 +1,12 @@
-/* Polish dictionary for i18n.js. EXACT: whole trimmed strings. PATTERNS:
- * anchored regexes, first match wins; replacement is a string ($1...) or a
- * function that can call `tr` on values that are English themselves.
+/* Polish dictionary for i18n.js. EXACT: whole trimmed strings, and
+ * templates ("Connected to {name}") of text with values: a string with the
+ * same {names}, or a function of the values.
  * New language: a file like this plus a <script> before i18n.js in index.html.
  */
 window.I18N_LANGS = window.I18N_LANGS || {};
 window.I18N_LANGS.pl = function (tr) {
     "use strict";
-    const PL = { EXACT: {}, PATTERNS: [] };
+    const PL = { EXACT: {} };
 
     Object.assign(PL.EXACT, {
         // ---- release notes: headings and table headers
@@ -35,24 +35,20 @@ window.I18N_LANGS.pl = function (tr) {
         "HMI address": "Adres wizualizacji",
         "Loading…": "Wczytywanie…",
         "Server": "Serwer",
-        "Beckhoff TwinCAT HMI (TF2000): HTTPS on port 1020 or HTTP on 1010.":
-            "Beckhoff TwinCAT HMI (TF2000): HTTPS na porcie 1020 albo HTTP na 1010.",
+        "Leave the port empty for the default (443 / 80).": "Puste pole portu = domyślny (443 / 80).",
         "HMI server IP address or name": "Adres IP lub nazwa serwera HMI",
         "e.g. 192.168.1.50": "np. 192.168.1.50",
         "Path": "Ścieżka",
         "Test connection": "Sprawdź połączenie",
-        "Save and open HMI": "Zapisz i otwórz HMI",
         "Behavior": "Zachowanie",
         "Accept the HMI server's certificate (self-signed)": "Akceptuj certyfikat serwera HMI (self-signed)",
         "On-screen keyboard in the HMI too": "Klawiatura ekranowa także w HMI",
-        "Retry connecting every (s)": "Ponowna próba połączenia co (s)",
         "Save": "Zapisz",
         "HMI zoom": "Powiększenie HMI",
         "The HMI page only. Everything at once: Display → Scaling.":
             "Tylko strona wizualizacji. Wszystko naraz: Ekran → Skalowanie ekranu.",
         "No HMI address": "Brak adresu HMI",
         "Enter the HMI server's address to show the HMI.": "Podaj adres serwera HMI, żeby wyświetlić wizualizację.",
-        "Not saved — “Save and open HMI”": "Niezapisane — „Zapisz i otwórz HMI”",
         "Testing connection…": "Sprawdzanie połączenia…",
         "Saved HMI address": "Zapisany adres wizualizacji",
         "Saved": "Zapisano",
@@ -84,6 +80,19 @@ window.I18N_LANGS.pl = function (tr) {
         "Saved — connects with the remembered password.": "Zapisana — połączy się z zapamiętanym hasłem.",
         "Other password": "Inne hasło",
         "This can take up to a minute.": "To może potrwać do minuty.",
+        "Wi-Fi turns on first. This can take up to a minute.": "Najpierw włączy się Wi-Fi. To może potrwać do minuty.",
+        // kioskd: nmcli's errors in plain words (NM_ERRORS)
+        "Wrong password": "Błędne hasło",
+        "The password must be 8 to 63 characters (or 64 hex digits)":
+            "Hasło musi mieć od 8 do 63 znaków (albo 64 cyfry szesnastkowe)",
+        "The network is out of range": "Sieć jest poza zasięgiem",
+        "No IP address: the network's DHCP server didn't answer":
+            "Brak adresu IP: serwer DHCP sieci nie odpowiedział",
+        "The connection timed out": "Przekroczono czas łączenia",
+        "No cable connected": "Kabel nie jest podłączony",
+        "The network service isn't running": "Usługa sieciowa nie działa",
+        "No network adapter found": "Nie znaleziono karty sieciowej",
+        "Couldn't connect": "Nie udało się połączyć",
         "No saved networks.": "Brak zapisanych sieci.",
         "active": "aktywna",
         "Forget": "Zapomnij",
@@ -108,8 +117,35 @@ window.I18N_LANGS.pl = function (tr) {
         "Automatic (DHCP)": "Automatycznie (DHCP)",
         "Static address": "Statyczny adres",
         "Mask (prefix)": "Maska (prefiks)",
-        "Apply": "Zastosuj",
-        "Applied. Reconnecting…": "Zastosowano. Połączenie jest odnawiane…",
+        "Not connected · these settings are used on its next connection":
+            "Niepołączone · te ustawienia zadziałają przy następnym połączeniu",
+        "Saving…": "Zapisywanie…",
+        "Checking the connection…": "Sprawdzanie połączenia…",
+        "The address isn't known on this network": "Ten adres nie jest znany w tej sieci",
+        "The server doesn't answer": "Serwer nie odpowiada",
+        "The server refuses the connection (wrong port, or the HMI isn't running)":
+            "Serwer odrzuca połączenie (zły port albo HMI nie działa)",
+        "No route to the server: is the kiosk on its network?": "Brak drogi do serwera: czy kiosk jest w jego sieci?",
+        "The server doesn't answer properly": "Serwer nie odpowiada poprawnie",
+        "The HMI isn't answering": "HMI nie odpowiada",
+        "Settings saved": "Ustawienia zapisane",
+        "Applied to the connection.": "Zastosowane w połączeniu.",
+        "Used on the next connection to this network.": "Zadziałają przy następnym połączeniu z tą siecią.",
+        "Couldn't save the settings": "Nie udało się zapisać ustawień",
+        // ---- Resets (each tab)
+        "Reset": "Ustawienia domyślne",
+        "The HMI's address, behavior and zoom go back to the defaults.":
+            "Adres HMI, zachowanie i powiększenie wracają do ustawień domyślnych.",
+        "Hold: reset HMI settings": "Przytrzymaj: zresetuj ustawienia HMI",
+        "Forgets every saved Wi-Fi network and IP setting. A cable gets its address by DHCP again.":
+            "Zapomina wszystkie zapisane sieci Wi-Fi i ustawienia IP. Kabel znów dostanie adres z DHCP.",
+        "Hold: reset network settings": "Przytrzymaj: zresetuj ustawienia sieci",
+        "Brightness, accent color, orientation, scaling and the Settings corner go back to the defaults.":
+            "Jasność, kolor akcentu, orientacja, skalowanie i róg Ustawień wracają do ustawień domyślnych.",
+        "Hold: reset display settings": "Przytrzymaj: zresetuj ustawienia ekranu",
+        "Resetting…": "Resetowanie…",
+        "Back to the defaults": "Przywrócono ustawienia domyślne",
+        "Couldn't reset": "Nie udało się zresetować",
 
         // ---- Display tab
         "Brightness": "Jasność",
@@ -148,21 +184,20 @@ window.I18N_LANGS.pl = function (tr) {
         "↗ Top right": "↗ Prawy górny",
         "↙ Bottom left": "↙ Lewy dolny",
         "↘ Bottom right": "↘ Prawy dolny",
-        "↖ top left": "↖ lewy górny",
-        "↗ top right": "↗ prawy górny",
-        "↙ bottom left": "↙ lewy dolny",
-        "↘ bottom right": "↘ prawy dolny",
 
         // ---- System tab: system, update, channel, custom image
         "Updates": "Aktualizacja",
         "Update": "Aktualizuj",
         "Hold: restart now": "Przytrzymaj: uruchom ponownie teraz",
         "Check for updates": "Sprawdź aktualizacje",
-        "Update channel": "Kanał aktualizacji",
+        "none": "brak",
         "Stable": "Stabilny",
         "Testing (dev)": "Testowy (dev)",
-        "Stable: tested releases. Testing: every change right away.": "Stabilny: sprawdzone wydania. Testowy: każda zmiana od razu.",
-        "Custom image: pick a channel to get updates again.": "Własny obraz: wybierz kanał, by wrócić do aktualizacji.",
+        "Stable: tested releases. Testing: every change right away. Hold a channel to switch to it.":
+            "Stabilny: sprawdzone wydania. Testowy: każda zmiana od razu. Przytrzymaj kanał, by na niego przejść.",
+        "Custom image: hold a channel to get updates again.": "Własny obraz: przytrzymaj kanał, by wrócić do aktualizacji.",
+        "Stable: tested releases, may be older than this one. Hold it to switch.":
+            "Stabilny: sprawdzone wydania, może być starszy od tej wersji. Przytrzymaj, by przejść.",
         "Custom system image": "Własny obraz systemu",
         "Only images signed with the ghcr.io/lukemech key.": "Tylko obrazy podpisane kluczem ghcr.io/lukemech.",
         "Image": "Obraz",
@@ -212,6 +247,25 @@ window.I18N_LANGS.pl = function (tr) {
         "Manufacturer": "Producent",
         "Processor": "Procesor",
         "Memory": "Pamięć",
+        "Usage": "Wykorzystanie",
+        "Temperature": "Temperatura",
+        "{cores} cores": v => `${v.cores} ${v.cores === 1 ? "rdzeń"
+            : [2, 3, 4].includes(v.cores % 10) && ![12, 13, 14].includes(v.cores % 100) ? "rdzenie" : "rdzeni"}`,
+        "average {pct}% (last minute)": "średnio {pct}% (minuta)",
+        "Usage details": "Szczegóły wykorzystania",
+        "High usage ({at}% / {at} °C and up)": "Wysokie obciążenie (od {at}% / {at} °C)",
+        "None so far.": "Jak dotąd brak.",
+        "Hold: clear the list": "Przytrzymaj: wyczyść listę",
+        "{n} s": "{n} s",
+        "{n} min": "{n} min",
+        "going on, {d}": "trwa, {d}",
+        "Most: {list}": "Najwięcej: {list}",
+        "Then: processor {cpu}% · {temp} °C · memory {mem}% · swap {swap}%":
+            "Wtedy: procesor {cpu}% · {temp} °C · pamięć {mem}% · swap {swap}%",
+        "highest {t} °C": "najwyżej {t} °C",
+        "{free} free": "{free} wolne",
+        "{packed} MB in memory": "{packed} MB w pamięci",
+        "Update channel and image": "Kanał aktualizacji i obraz systemu",
         "Boot time": "Czas uruchamiania",
         "Boot details": "Szczegóły startu",
         "System details": "Szczegóły systemu",
@@ -220,16 +274,14 @@ window.I18N_LANGS.pl = function (tr) {
         "Loading boot time…": "Wczytywanie czasu uruchamiania…",
         "Reading this boot's journal": "Czytam dziennik tego startu",
         "No boot data": "Brak danych o starcie",
+        "No HMI address at boot: HMI time not measured":
+            "Brak adresu HMI przy starcie: czas do HMI nie jest mierzony",
         "The HMI hasn't shown yet (no address, or the server isn't answering)":
             "HMI jeszcze się nie wyświetliło (brak adresu albo serwer nie odpowiada)",
         "Still booting": "Start jeszcze trwa",
         "Kernel": "Jądro",
         "Services": "Usługi",
         "HMI visible": "HMI widoczne",
-        "Connecting to HMI…": "Łączenie z HMI…",
-        "Waiting for network…": "Czekam na sieć…",
-        "The kiosk switches to the HMI once there's a network and the HMI answers":
-            "Kiosk przełączy się na HMI, gdy będzie sieć i HMI odpowie",
 
         // ---- System tab: recovery, power
         "Recovery": "Odzyskiwanie",
@@ -370,135 +422,135 @@ window.I18N_LANGS.pl = function (tr) {
         "PID 1: SELinux policy": "PID 1: polityka SELinux",
         "PID 1: generators": "PID 1: generatory",
         "PID 1: loading units": "PID 1: wczytanie jednostek",
-        "What the boot waited for: file systems mounted (local-fs)":
-            "Na co czekał start: do zamontowania systemów plików (local-fs)",
-        "What the boot waited for: the kiosk starting (cage)": "Na co czekał start: do startu kiosku (cage)",
-        // kiosk-shell / kiosk-splash milestones
-        "kiosk-shell: GTK ready": "kiosk-shell: GTK gotowy",
-        "kiosk-shell: config and rotation": "kiosk-shell: konfiguracja i obrót",
-        "kiosk-shell: window sent": "kiosk-shell: okno wysłane",
-        "kiosk-shell: splash (window's first frame)": "kiosk-shell: ekran startowy (pierwsza klatka okna)",
-        "kiosk-shell: WebKit loaded": "kiosk-shell: WebKit wczytany",
-        "kiosk-shell: first page": "kiosk-shell: pierwsza strona",
-        "kiosk-splash: end": "kiosk-splash: koniec",
     });
 
-    // Values inside sentences that are themselves translated.
+    // ---- Templates: text with {values} (i18n.t), the page's and kioskd's
+    // (Msg). A string keeps the {names}; a function gets the values as they
+    // are, for values that need a word of their own (channel names).
     const CHANNEL = { stable: "stabilny", testing: "testowy", custom: "własny" };
     const ch = n => CHANNEL[n] || n;
-    const ago = a => a === "just now" ? "przed chwilą"
-        : a.replace(/^(\d+) min ago$/, "$1 min temu").replace(/^at (.+)$/, "o $1");
-    const POWER = { "charger connected": "ładowarka podłączona", "on battery": "na baterii" };
-    const powerPart = p => POWER[p] || p.replace(/^battery (\d+)%/, "bateria $1%")
-        .replace(" (charging)", " (ładowanie)").replace(" (full)", " (naładowana)")
-        .replace(" (not charging)", " (nie ładuje)");
-    const BATT = "battery \\d+%(?: \\((?:charging|full|not charging)\\))?";
-    // kioskd writes "1.5 MB/s"; Polish has a decimal comma.
-    const comma = s => s.replace(/(\d)\.(\d+)(?= MB\/s)/g, "$1,$2");
+    // kioskd writes "1.5"; Polish has a decimal comma.
+    const comma = s => String(s).replace(".", ",");
+    const ROTATION = { portrait: "pion", landscape: "poziom" };
 
-    PL.PATTERNS.push(
-        // ---- A failed job's title (installer): before "Installing to (.+)"
-        [/^(.+): failed$/, (m, t) => `${tr(t)}: błąd`],
-        // ---- HMI: a test result and the "not saved" note in one line
-        [/^(.+) · Not saved — “Save and open HMI”$/, (m, a) => `${tr(a)} · Niezapisane — „Zapisz i otwórz HMI”`],
-        [/^Can't connect to (.+?) \((.*)\)$/, "Brak połączenia z $1 ($2)"],
-        [/^Port (\d+) on (.+) answers \((\d+) ms\)$/, "Port $1 na $2 odpowiada ($3 ms)"],
+    Object.assign(PL.EXACT, {
+        // ---- Values that are words
+        "charger connected": "ładowarka podłączona",
+        "on battery": "na baterii",
+        "battery {pct}%": "bateria {pct}%",
+        "battery {pct}% (charging)": "bateria {pct}% (ładowanie)",
+        "battery {pct}% (full)": "bateria {pct}% (naładowana)",
+        "battery {pct}% (not charging)": "bateria {pct}% (nie ładuje)",
+        "{n} min ago": "{n} min temu",
+        "at {time}": "o {time}",
+        "{title}…": "{title}…",
+        "{title}: failed": "{title}: błąd",
+        // System errors inside kioskd's messages (English: LC_MESSAGES)
+        "Connection refused": "Połączenie odrzucone",
+        "No route to host": "Brak trasy do hosta",
+        "Network is unreachable": "Sieć jest nieosiągalna",
+        "Name or service not known": "Nieznana nazwa hosta",
+        "Temporary failure in name resolution": "Nie można teraz rozwiązać nazwy",
+        "timed out": "przekroczono czas",
+
+        // ---- HMI check (kioskd hmi_watch)
+        "The HMI answers ({ms} ms)": "HMI odpowiada ({ms} ms)",
+        "The server answers {status}: the HMI behind it isn't running":
+            "Serwer odpowiada błędem {status}: wizualizacja za nim nie działa",
 
         // ---- Wi-Fi
-        [/^secured · (.+) · (\d+)%$/, "zabezpieczona · $1 · $2%"],
-        [/^open · (\d+)%$/, "otwarta · $1%"],
-        [/^(.+) · signal (\d+)%$/, "$1 · sygnał $2%"],
-        [/^signal (\d+)%$/, "sygnał $1%"],
-        [/^Connecting to (.+)…$/, "Łączenie z $1…"],
-        [/^Disconnecting from (.+)…$/, "Rozłączanie z $1…"],
-        [/^Connected to (.+)$/, "Połączono z $1"],
-        [/^Couldn't connect to (.+)$/, "Nie udało się połączyć z $1"],
-        [/^Removed (.+)$/, "Usunięto $1"],
+        "secured · {security} · {signal}%": "zabezpieczona · {security} · {signal}%",
+        "open · {signal}%": "otwarta · {signal}%",
+        "{name} · signal {signal}%": "{name} · sygnał {signal}%",
+        "signal {signal}%": "sygnał {signal}%",
+        "Connecting to {name}…": "Łączenie z {name}…",
+        "Disconnecting from {name}…": "Rozłączanie z {name}…",
+        "Connected to {name}": "Połączono z {name}",
+        "Couldn't connect to {name}": "Nie udało się połączyć z {name}",
+        "Removed {name}": "Usunięto {name}",
+        "Network “{ssid}” not found": "Nie znaleziono sieci „{ssid}”",
+        "Couldn't connect: {reason}": "Nie udało się połączyć: {reason}",
 
         // ---- IP
-        [/^IP address · (.+)$/, "Adres IP · $1"],
-        [/^(.+) · static address$/, "$1 · adres statyczny"],
-        [/^(.+) · DHCP address$/, "$1 · adres z DHCP"],
+        "IP address · {kind}": "Adres IP · {kind}",
+        "{addresses} · static address": "{addresses} · adres statyczny",
+        "{addresses} · DHCP address": "{addresses} · adres z DHCP",
+        "Static address · {address}": "Statyczny adres · {address}",
+        "IP settings: tap the network under Saved networks.": "Ustawienia IP: dotknij sieci w Zapisanych sieciach.",
+        "Invalid DNS server: {dns}": "Niepoprawny serwer DNS: {dns}",
 
         // ---- Display
-        [/^Saving orientation (.*) to the boot settings\. Don't restart the tablet until it's done\.$/,
-            "Zapisywanie orientacji $1 w ustawieniach startu. Nie uruchamiaj tabletu ponownie, dopóki to trwa."],
-        [/^From the next start, the boot animation uses this orientation \((.*)\)\.$/,
-            "Od następnego uruchomienia animacja startowa będzie w tej orientacji ($1)."],
-        [/^Now: (.+?)( \(this device's default\))?$/,
-            (m, v, d) => `Teraz: ${({ portrait: "pion", landscape: "poziom" })[v] || v}${d ? " (domyślna dla tego urządzenia)" : ""}`],
-        [/^Emergency: holding the opposite corner \((.+?)\) for (\d+)\s?s — in the HMI or Settings — opens System → Recovery\.$/,
-            (m, c, s) => `Awaryjnie: przytrzymanie przez ${s} s przeciwległego rogu (${tr(c)}) — w HMI i w ustawieniach — otwiera System → Odzyskiwanie.`],
+        "Saving orientation {o} to the boot settings. Don't restart the tablet until it's done.":
+            "Zapisywanie orientacji {o} w ustawieniach startu. Nie uruchamiaj tabletu ponownie, dopóki to trwa.",
+        "From the next start, the boot animation uses this orientation ({o}).":
+            "Od następnego uruchomienia animacja startowa będzie w tej orientacji ({o}).",
+        "Now: {rotation}": v => `Teraz: ${ROTATION[v.rotation] || v.rotation}`,
+        "Now: {rotation} (this device's default)":
+            v => `Teraz: ${ROTATION[v.rotation] || v.rotation} (domyślna dla tego urządzenia)`,
+        "Brightness: {min}-100%": "Jasność: {min}-100%",
 
         // ---- System: update, channel
-        [/^Downloads the (\S+) channel and switches to it after a restart\.( It may be older\.)?$/,
-            (m, c, o) => `Pobierze kanał ${ch(c)}, włączy go po restarcie.${o ? " Może być starszy." : ""}`],
-        [/^After a restart: (\S+) channel\.$/, (m, c) => `Po restarcie: kanał ${ch(c)}.`],
-        [/^Hold: switch to the (\S+) channel$/, (m, c) => `Przytrzymaj: przejdź na kanał ${ch(c)}`],
-        [/^Switching to the (\S+) channel(…?)$/, (m, c, e) => `Przejście na kanał ${ch(c)}${e}`],
-        [/^The system is already on the (\S+) channel$/, (m, c) => `System już jest na kanale ${ch(c)}`],
-        [/^Switching image to (.+?)(…?)$/, "Zmiana obrazu na $1$2"],
-        [/^Update available: (.+)$/, "Dostępna aktualizacja: $1"],
-        [/^Version (.+) is waiting for a restart$/, "Wersja $1 czeka na restart"],
-        [/^Now running (.+)$/, "Teraz działa $1"],
-        [/^(.+?)( \(testing\))? · checked (.+)$/, (m, v, t, a) => `${v}${t ? " (testowa)" : ""} · sprawdzono ${ago(a)}`],
-        [/^(\d+) min ago$/, "$1 min temu"],
-        [/^Going back to (.+)$/, "Wraca do $1"],
-        [/^(.+) is set as the default; (.+) runs until the restart\.$/, "$1 jest ustawiona jako domyślna; do restartu działa $2."],
-        [/^Went back to the previous version \((.+)\)\.$/, "Wrócono do poprzedniej ($1)."],
-        [/^Went back to (.+) \((.+)\)\.$/, "Wrócono do $1 ($2)."],
-        [/^Previous version: (.+)$/, "Poprzednia wersja: $1"],
-        [/^Goes back by itself after (\d+) failed starts\. Shortcut: (\d+)\s?s in the (.+?) corner\. Manually: Shift at boot\.$/,
-            (m, n, s, c) => `Sama wraca po ${n} nieudanych startach. Skrót: ${s} s w rogu ${tr(c)}. Ręcznie: Shift przy starcie.`],
-        [/^Changelog from (.+)$/, "Lista zmian z $1"],
-        [/^Host name: (.+?)\. The router will see it on its next connection\.$/,
-            "Nazwa hosta: $1. Router zobaczy ją przy następnym połączeniu."],
-        [/^Time zone: (.+)$/, "Strefa czasowa: $1"],
+        "After a restart: {channel} channel.": v => `Po restarcie: kanał ${ch(v.channel)}.`,
+        "Switching to the {channel} channel": v => `Przejście na kanał ${ch(v.channel)}`,
+        "The system is already on the {channel} channel": v => `System już jest na kanale ${ch(v.channel)}`,
+        "Switching image to {image}": "Zmiana obrazu na {image}",
+        "Update available: {version}": "Dostępna aktualizacja: {version}",
+        "Version {version} is waiting for a restart": "Wersja {version} czeka na restart",
+        "Version {version}": "Wersja {version}",
+        "Now running {version}": "Teraz działa {version}",
+        "Now running {version}.": "Teraz działa {version}.",
+        "{version} · checked {ago}": "{version} · sprawdzono {ago}",
+        "{version} (testing) · checked {ago}": "{version} (testowa) · sprawdzono {ago}",
+        "Going back to {version}": "Wraca do {version}",
+        "{rollback} is set as the default; {booted} runs until the restart.":
+            "{rollback} jest ustawiona jako domyślna; do restartu działa {booted}.",
+        "Went back to the previous version ({time}).": "Wrócono do poprzedniej ({time}).",
+        "Went back to {version} ({time}).": "Wrócono do {version} ({time}).",
+        "Previous version: {version}": "Poprzednia wersja: {version}",
+        "Goes back by itself after {n} failed starts. Manually: Shift at boot.":
+            "Sama wraca po {n} nieudanych startach. Ręcznie: Shift przy starcie.",
+        "Changelog from {repo}": "Lista zmian z {repo}",
+        "Host name: {name}. The router will see it on its next connection.":
+            "Nazwa hosta: {name}. Router zobaczy ją przy następnym połączeniu.",
+        "Time zone: {zone}": "Strefa czasowa: {zone}",
 
         // ---- Boot time
-        [/^HMI after (.+) from power-on$/, "HMI po $1 od włączenia"],
-        [/^system ready after (.+), (.+) of it before the kernel started \(UEFI \+ GRUB\)$/,
-            "system gotowy po $1, z tego $2 przed startem jądra (UEFI + GRUB)"],
-        [/^System ready after (.+)$/, "System gotowy po $1"],
-        [/^What the boot waited for: (.+)$/, "Na co czekał start: $1"],
-        [/^Failed to start: (.+)$/, "Nie uruchomiły się: $1"],
-        [/^No boot timeline \(journalctl: (.+)\)$/, "Brak przebiegu startu (journalctl: $1)"],
-        [/^Kiosk: cage restarted \(start #(\d+)\)$/, "Kiosk: cage uruchomiony ponownie ($1.)"],
-        [/^kiosk-splash: first frame \((.+)\)$/, "kiosk-splash: pierwsza klatka ($1)"],
-        [/^(.+): the HMI isn't answering yet, the kiosk will switch to it by itself$/,
-            "$1: HMI jeszcze nie odpowiada, kiosk przełączy się na nie samo"],
-
-        // ---- Power (battery tooltip)
-        [new RegExp(`^(?:charger connected|on battery|${BATT})(?: · ${BATT})?$`),
-            s => s.split(" · ").map(powerPart).join(" · ")],
+        "HMI after {time} from power-on": "HMI po {time} od włączenia",
+        "system ready after {ready}, {before} of it before the kernel started (UEFI + GRUB)":
+            "system gotowy po {ready}, z tego {before} przed startem jądra (UEFI + GRUB)",
+        "System ready after {time}": "System gotowy po {time}",
+        "What the boot waited for: {title}": "Na co czekał start: {title}",
+        "file systems mounted (local-fs)": "do zamontowania systemów plików (local-fs)",
+        "the kiosk starting (cage)": "do startu kiosku (cage)",
+        "Failed to start: {units}": "Nie uruchomiły się: {units}",
+        "No boot timeline (journalctl: {error})": "Brak przebiegu startu (journalctl: {error})",
+        "Kiosk: cage restarted (start #{n})": "Kiosk: cage uruchomiony ponownie ({n}.)",
 
         // ---- Installer
-        [/^(.+) · (installation drive|too small|internal|external)$/, (m, a, b) => `${a} · ${tr(b)}`],
-        [/^The tablet is on battery( \(\d+%\))?\. Plug in the charger before installing\.$/,
-            "Tablet działa na baterii$1. Podłącz ładowarkę przed instalacją."],
-        [/^Installing to (.+)$/, "Instalacja na $1"],
-        [/^Wrote (\d+) B instead of (\d+) B$/, "Zapisano $1 B zamiast $2 B"],
+        "The tablet is on battery. Plug in the charger before installing.":
+            "Tablet działa na baterii. Podłącz ładowarkę przed instalacją.",
+        "The tablet is on battery ({pct}%). Plug in the charger before installing.":
+            "Tablet działa na baterii ({pct}%). Podłącz ładowarkę przed instalacją.",
+        "Installing to {disk}": "Instalacja na {disk}",
+        "Wrote {written} B instead of {size} B": "Zapisano {written} B zamiast {size} B",
 
         // ---- kioskd: job steps' details
-        [/^New version: (.+)$/, "Nowa wersja: $1"],
-        [/^After a restart the system runs image (.+)$/, "Po restarcie system uruchomi obraz $1"],
-        [/^([\d.]+) MB · average ([\d.]+) MB\/s$/, (m, a, b) => comma(`${a} MB · średnio ${b} MB/s`)],
-        [/^([\d.]+) MB was already on disk$/, "$1 MB było już na dysku"],
-        [/^(.+) · about (.+) left$/, (m, a, b) => `${comma(a)} · zostało około ${b}`],
+        "New version: {version}": "Nowa wersja: {version}",
+        "After a restart the system runs image {image}": "Po restarcie system uruchomi obraz {image}",
+        "{done} / {total} MB": "{done} / {total} MB",
+        "{done} / {total} MB · {rate} MB/s · about {eta} left":
+            v => `${v.done} / ${v.total} MB · ${comma(v.rate)} MB/s · zostało około ${v.eta}`,
+        "{total} MB": "{total} MB",
+        "{total} MB · average {rate} MB/s": v => `${v.total} MB · średnio ${comma(v.rate)} MB/s`,
+        "{mb} MB was already on disk": "{mb} MB było już na dysku",
 
         // ---- kioskd: errors with values
-        [/^Already running: (.+)$/, (m, t) => `Trwa już: ${tr(t)}`],
-        [/^(.+): timed out \((\d+)\s?s\)$/, "$1: przekroczono czas ($2 s)"],
-        [/^program not found: (.+)$/, "brak programu $1"],
-        [/^(.+) exited with code (-?\d+)$/, "$1 zakończył się kodem $2"],
-        [/^Brightness: (\d+)-100%$/, "Jasność: $1-100%"],
-        [/^Invalid DNS server: (.+)$/, "Niepoprawny serwer DNS: $1"],
-        [/^Internal error: (.+)$/, "Błąd wewnętrzny: $1"],
-
-        // ---- Most general last
-        [/^Version (.+)$/, "Wersja $1"],
-        [/^at (\d{1,2}:\d{2})$/, "o $1"],
-    );
+        "Already running: {title}": "Trwa już: {title}",
+        "{program}: timed out ({secs} s)": "{program}: przekroczono czas ({secs} s)",
+        "program not found: {program}": "brak programu {program}",
+        "{program} exited with code {code}": "{program} zakończył się kodem {code}",
+        "Internal error: {error}": "Błąd wewnętrzny: {error}",
+    });
 
     return PL;
 };

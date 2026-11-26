@@ -32,6 +32,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit, parse_qs
 
+# Commands' messages in English, whatever the system locale (Settings'
+# language): cmd_error() rewords them, and the page translates that.
+for _v in ("LC_ALL", "LANGUAGE"):
+    os.environ.pop(_v, None)
+os.environ["LC_MESSAGES"] = "C.UTF-8"
+
 LISTEN = ("127.0.0.1", 8088)
 ALLOWED_HOSTS = {"127.0.0.1:8088", "localhost:8088"}
 WEB_ROOT = Path("/usr/share/immutable-kiosk/web")
@@ -46,8 +52,8 @@ LIVE_MOUNT = Path("/run/initramfs/live")
 ROTATIONS = ("portrait", "landscape", "normal", "90", "180", "270")
 
 DEFAULT_CONFIG = {
-    # TwinCAT HMI Server (TF2000) listens on 1010 (HTTP) / 1020 (HTTPS) by default.
-    "hmi": {"scheme": "https", "host": "", "port": 1020, "path": "/"},
+    # Port None: the scheme's default (443 / 80).
+    "hmi": {"scheme": "https", "host": "", "port": None, "path": "/"},
     # None = model default (default_rotation()).
     "rotation": None,
     # "WxH" or "WxH@R" (wlr-randr --mode); None = panel's preferred mode.
@@ -59,8 +65,6 @@ DEFAULT_CONFIG = {
     "zoom": 1.0,
     # Whole-screen scale (wlr-randr --scale), 1.0-2.0.
     "scale": 1.0,
-    # Seconds between reload attempts while the HMI can't be reached.
-    "retry_seconds": 10,
     # Corner of the hidden "hold ~2 s for Settings" spot.
     "settings_corner": "top-right",
     "accent": "blue",
@@ -85,18 +89,90 @@ CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 
 # ---------------------------------------------------------------- helpers
 
+class Msg(str):
+    """English text for Settings with values in it, which keeps what it was
+    made from: Msg("Invalid DNS server: {dns}", dns=d). The page translates
+    the template and fills in the values (i18n.js): send_json lists every
+    Msg in an answer under "_i18n". Values: str or numbers, or Msg."""
+
+    def __new__(cls, template, **values):
+        self = super().__new__(cls, template.format(**values))
+        self.template, self.values = template, values
+        return self
+
+
+def i18n_of(obj, out):
+    """Every Msg in obj (and in Msg values) -> out[text] = [template, values]."""
+    if isinstance(obj, Msg):
+        out[str(obj)] = [obj.template, obj.values]
+        for v in obj.values.values():
+            i18n_of(v, out)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            i18n_of(v, out)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            i18n_of(v, out)
+    return out
+
+
+def text_of(e):
+    """An exception's message, a Msg if it was raised with one."""
+    a = e.args[0] if e.args else None
+    return a if isinstance(a, Msg) else str(e)
+
+
 def run(cmd, check=True, timeout=60, **kw):
     """Run a command, return stdout (str). Raises ApiError with stderr on failure."""
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
     except subprocess.TimeoutExpired:
-        raise ApiError(f"{cmd[0]}: timed out ({timeout} s)")
+        raise ApiError(Msg("{program}: timed out ({secs} s)", program=cmd[0], secs=timeout))
     except FileNotFoundError:
-        raise ApiError(f"program not found: {cmd[0]}")
+        raise ApiError(Msg("program not found: {program}", program=cmd[0]))
     if check and p.returncode != 0:
-        msg = (p.stderr or p.stdout).strip() or f"{cmd[0]} exited with code {p.returncode}"
-        raise ApiError(msg)
+        raise ApiError(cmd_error(p, cmd[0]))
     return p.stdout
+
+
+# What nmcli says when a connection fails (English: LC_MESSAGES above) ->
+# Settings' wording (translated by the page). First match wins.
+NM_ERRORS = [
+    (r"secrets were required|802\.1x supplicant|no secrets", "Wrong password"),
+    (r"wireless-security\.psk.*invalid|psk: property is invalid",
+     "The password must be 8 to 63 characters (or 64 hex digits)"),
+    (r"no network with ssid ['\"]?(?P<ssid>.+?)['\"]? found", "Network “{ssid}” not found"),
+    (r"wi-?fi network could not be found|ssid not found", "The network is out of range"),
+    (r"ip configuration could not be reserved|dhcp", "No IP address: the network's DHCP server didn't answer"),
+    (r"timeout expired|timed out", "The connection timed out"),
+    (r"carrier", "No cable connected"),
+    (r"networkmanager is not running", "The network service isn't running"),
+    (r"device ['\"]?.+?['\"]? not found|no wi-?fi device", "No network adapter found"),
+    (r"radio.*disabled|rfkill|wi-?fi is disabled", "Wi-Fi is off"),
+]
+
+
+def cmd_error(p, name):
+    """A failed command's message as Settings shows it: never its raw hints
+    (nmcli's "Hint: use 'journalctl -xe ...'", systemctl's "See
+    'systemctl status ...' and 'journalctl -xeu ...'"); nmcli's errors in
+    plain words (NM_ERRORS), others' without "Error: "."""
+    lines = [l.strip() for l in (p.stderr or p.stdout).splitlines()]
+    lines = [l for l in lines if l and "journalctl" not in l and "systemctl status" not in l
+             and not l.lower().startswith(("hint:", "see "))]
+    text = " ".join(lines)
+    if name == "nmcli":
+        for rx, msg in NM_ERRORS:
+            m = re.search(rx, text, re.I)
+            if m:
+                return Msg(msg, **m.groupdict())
+        if text:
+            # "Error: Connection activation failed: <reason>." -> "<reason>"
+            text = re.sub(r"^(error:\s*)?(connection activation failed:\s*)?(\(\d+\)\s*)?", "", text, flags=re.I)
+            return Msg("Couldn't connect: {reason}", reason=text.rstrip("."))
+        return "Couldn't connect"
+    text = re.sub(r"^error:\s*", "", "\n".join(lines), flags=re.I)
+    return text or Msg("{program} exited with code {code}", program=name, code=p.returncode)
 
 
 class ApiError(Exception):
@@ -209,6 +285,19 @@ def hmi_url(h):
     return f"{scheme}://{host}{port_part}{path}"
 
 
+def parse_port(port):
+    """A port number, or None (empty): the scheme's default, 80 or 443."""
+    if port is None or str(port).strip() == "":
+        return None
+    try:
+        port = int(str(port).strip())
+    except ValueError:
+        raise ApiError("Port must be a number")
+    if not 1 <= port <= 65535:
+        raise ApiError("Port must be 1-65535")
+    return port
+
+
 def save_config(update):
     cfg = load_config()
     if "hmi" in update:
@@ -221,13 +310,7 @@ def save_config(update):
         host = str(h.get("host", cfg["hmi"]["host"])).strip()
         if host and not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", host):
             raise ApiError("Invalid IP address / host name")
-        port = h.get("port", cfg["hmi"]["port"])
-        try:
-            port = int(port)
-        except (TypeError, ValueError):
-            raise ApiError("Port must be a number")
-        if not 1 <= port <= 65535:
-            raise ApiError("Port must be 1-65535")
+        port = parse_port(h.get("port", cfg["hmi"]["port"]))
         path = str(h.get("path", cfg["hmi"]["path"])).strip() or "/"
         cfg["hmi"] = {"scheme": scheme, "host": host, "port": port, "path": path}
     if "rotation" in update:
@@ -269,23 +352,35 @@ def save_config(update):
         if update["settings_corner"] not in CORNERS:
             raise ApiError("Invalid screen corner")
         cfg["settings_corner"] = update["settings_corner"]
-    if "retry_seconds" in update:
-        cfg["retry_seconds"] = max(3, min(300, int(update["retry_seconds"])))
     if "brightness" in update:
         try:
             b = int(update["brightness"])
         except (TypeError, ValueError):
             raise ApiError("Brightness must be a number")
         if not BRIGHTNESS_MIN <= b <= 100:
-            raise ApiError(f"Brightness: {BRIGHTNESS_MIN}-100%")
+            raise ApiError(Msg("Brightness: {min}-100%", min=BRIGHTNESS_MIN))
         brightness_set(b)
         cfg["brightness"] = b
+    write_config(cfg)
+    return effective_config()
+
+
+def write_config(cfg):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2))
     os.chmod(tmp, 0o644)
     tmp.replace(CONFIG_FILE)
-    return effective_config()
+
+
+# Settings' tabs: what each one's reset puts back to the defaults (every
+# DEFAULT_CONFIG key is in one of them: reset_everything is all of them).
+RESET_KEYS = {
+    "hmi": ("hmi", "osk_in_hmi", "accept_self_signed", "zoom"),
+    "screen": ("rotation", "scale", "settings_corner", "accent", "brightness"),
+    "system": ("language", "releases_repo"),
+}
+RESET_PARTS = ("hmi", "network", "screen", "system")
 
 
 # ---------------------------------------------------------------- nmcli
@@ -546,32 +641,82 @@ def wifi_device(rows=None):
     return None
 
 
-def wifi_connect(ssid, password, hidden):
+def wifi_radio_on():
+    """Connect with the radio off: on first, then the adapter up and a fresh
+    scan (a saved profile only connects to a network in the scan list)."""
+    if run(["nmcli", "radio", "wifi"], check=False).strip() == "enabled":
+        return
+    run(["nmcli", "radio", "wifi", "on"])
+    for _ in range(30):
+        dev = wifi_device()
+        if dev and not dev["state"].startswith("unavailable"):
+            break
+        time.sleep(0.5)
+    run(["nmcli", "dev", "wifi", "list", "--rescan", "yes"], check=False, timeout=45)
+
+
+def wifi_connect(ssid, password, hidden, ipv4=None, security=""):
+    """ipv4: {method, address, ...} (ipv4_args) for the profile, e.g. a
+    static address for a network whose DHCP server doesn't answer; None =
+    the saved profile's, or DHCP for a new one. security: the scan's
+    (WPA2, WPA3...)."""
     if not ssid:
         raise ApiError("Enter the network name")
+    ip = ipv4_args(ipv4) if ipv4 else None
+    wifi_radio_on()
     existing = [s for s in saved_wifi() if s["ssid"] == ssid]
     if existing and not password:
+        if ip:
+            run(["nmcli", "con", "mod", existing[0]["uuid"]] + ip)
         run(["nmcli", "con", "up", existing[0]["uuid"]], timeout=60)
         return
     # New password = new profile, or the stale one would be tried first.
     for s in existing:
         run(["nmcli", "con", "delete", s["uuid"]], check=False)
     # Password is briefly on nmcli's argv; only root and kiosk users exist.
-    cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+    if not ip:
+        cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+        if password:
+            cmd += ["password", password]
+        if hidden:
+            cmd += ["hidden", "yes"]
+        run(cmd, timeout=90)
+        return
+    # `nmcli dev wifi connect` only does DHCP: the profile made by hand, then up.
+    cmd = ["nmcli", "con", "add", "type", "wifi", "con-name", ssid, "ssid", ssid]
     if password:
-        cmd += ["password", password]
+        sae = "WPA3" in security and "WPA2" not in security
+        cmd += ["wifi-sec.key-mgmt", "sae" if sae else "wpa-psk", "wifi-sec.psk", password]
     if hidden:
-        cmd += ["hidden", "yes"]
-    run(cmd, timeout=90)
+        cmd += ["802-11-wireless.hidden", "yes"]
+    m = re.search(r"\(([0-9a-fA-F-]{36})\)", run(cmd + ip))
+    if not m:
+        raise ApiError("Couldn't connect")
+    try:
+        run(["nmcli", "con", "up", m.group(1)], timeout=90)
+    except ApiError:
+        # Not kept: a wrong password would be tried again next time.
+        run(["nmcli", "con", "delete", m.group(1)], check=False)
+        raise
+
+
+NET_TYPES = ("802-11-wireless", "802-3-ethernet")
 
 
 def network_state():
+    """Connections that are up (or coming up), then saved Wi-Fi/Ethernet ones
+    that aren't: their IP settings can be set before they connect (a
+    network without DHCP)."""
     conns = []
-    active = [r for r in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show", "--active"])
-              if r[2] != "loopback" and r[3] != "lo"]
+    rows = [r for r in nm_rows(["-f", "NAME,UUID,TYPE,DEVICE", "con", "show"])
+            if r[2] != "loopback" and r[3] != "lo"]
+    up = [r for r in rows if r[3] not in ("", "--")]
+    active = up + [r for r in rows if r[3] in ("", "--") and r[2] in NET_TYPES]
     # Every connection's profile and live IPv4 at once (see parallel()).
-    reads = parallel(*[lambda u=uuid, f=fields: nm_kv(["-f", f, "con", "show", u])
-                       for _, uuid, _, _ in active
+    # (A connection that isn't up has no live IP4.)
+    reads = parallel(*[(lambda u=uuid, f=fields: nm_kv(["-f", f, "con", "show", u]))
+                       if fields != "IP4" or dev not in ("", "--") else dict
+                       for _, uuid, _, dev in active
                        for fields in ("ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "IP4")])
     for i, (name, uuid, ctype, dev) in enumerate(active):
         cfg, live = reads[2 * i], reads[2 * i + 1]
@@ -587,7 +732,8 @@ def network_state():
             "name": name,
             "uuid": uuid,
             "type": "wifi" if ctype == "802-11-wireless" else ("ethernet" if ctype == "802-3-ethernet" else ctype),
-            "device": dev,
+            "device": dev if dev not in ("", "--") else "",
+            "active": dev not in ("", "--"),
             "method": cfg.get("ipv4.method", "auto"),
             "address": first.split("/")[0] if first else "",
             "prefix": int(first.split("/")[1]) if "/" in first else 24,
@@ -605,10 +751,9 @@ def network_state():
 NETWORK = Coalesce(network_state, 3.0)
 
 
-def network_set(body):
-    uuid = body.get("uuid") or ""
-    if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
-        raise ApiError("No connection to change")
+def ipv4_args(body):
+    """nmcli ipv4.* arguments for {method: auto|manual, address, prefix,
+    gateway, dns: [...]}."""
     method = body.get("method")
     if method == "auto":
         args = ["ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", ""]
@@ -636,15 +781,67 @@ def network_set(body):
             try:
                 dns.append(str(ipaddress.IPv4Address(d)))
             except ValueError:
-                raise ApiError(f"Invalid DNS server: {d}")
+                raise ApiError(Msg("Invalid DNS server: {dns}", dns=d))
         args = ["ipv4.method", "manual", "ipv4.addresses", f"{addr}/{prefix}",
                 "ipv4.gateway", gw, "ipv4.dns", " ".join(dns)]
     else:
         raise ApiError("Mode must be auto or manual")
-    run(["nmcli", "con", "mod", uuid] + args)
-    # Re-activation drops the link briefly: run in background, the page polls.
-    threading.Thread(target=run, args=(["nmcli", "con", "up", uuid],),
-                     kwargs={"check": False, "timeout": 60}, daemon=True).start()
+    return args
+
+
+def network_set(body):
+    """The connection's IPv4 settings. One that is up gets them in place
+    (`nmcli dev reapply`: the Wi-Fi stays associated); one coming up (e.g.
+    waiting for DHCP) is brought up again with them (reconnect); a saved
+    one that isn't uses them on its next connection."""
+    uuid = body.get("uuid") or ""
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", uuid):
+        raise ApiError("No connection to change")
+    run(["nmcli", "con", "mod", uuid] + ipv4_args(body))
+    try:
+        g = nm_kv(["-f", "GENERAL.STATE,GENERAL.DEVICES", "con", "show", uuid])
+    except ApiError:
+        return
+    state, dev = g.get("GENERAL.STATE", ""), g.get("GENERAL.DEVICES", "")
+    if not state:
+        return
+    if state == "activated" and dev:
+        try:
+            run(["nmcli", "dev", "reapply", dev], timeout=30)
+            return
+        except ApiError as e:
+            print(f"kioskd: reapply {dev}: {e}", flush=True)  # then a reconnect
+    reconnect(uuid)
+
+
+_reconnects = {"lock": threading.Lock(), "running": set(), "again": set()}
+
+
+def reconnect(uuid):
+    """`nmcli con up` in the background, one per connection at a time: a
+    save while one runs makes one more after it. (Each restarts the Wi-Fi
+    association; a save per field left started them on top of each other,
+    and the network took very long or never came up.)"""
+    r = _reconnects
+    with r["lock"]:
+        if uuid in r["running"]:
+            r["again"].add(uuid)
+            return
+        r["running"].add(uuid)
+
+    def work():
+        while True:
+            try:
+                run(["nmcli", "con", "up", uuid], check=False, timeout=90)
+            except ApiError as e:
+                print(f"kioskd: reconnect: {e}", flush=True)
+            with r["lock"]:
+                if uuid in r["again"]:
+                    r["again"].discard(uuid)
+                    continue
+                r["running"].discard(uuid)
+                return
+    threading.Thread(target=work, daemon=True).start()
 
 
 # ---------------------------------------------------------------- events
@@ -760,12 +957,39 @@ def nm_signal_wanted(line):
     return not line.startswith("/org/freedesktop/NetworkManager/AccessPoint/")
 
 
+def net_fingerprint():
+    """The IPv4 network as the HMI sees it: each routed interface's address
+    and the default gateways (/proc and an ioctl: cheap enough for every
+    NetworkManager signal)."""
+    ifaces, gateways = set(), set()
+    try:
+        for line in Path("/proc/net/route").read_text().splitlines()[1:]:
+            f = line.split()
+            if len(f) < 8:
+                continue
+            ifaces.add(f[0])
+            if f[1] == "00000000" and f[7] == "00000000":
+                gateways.add((f[0], socket.inet_ntoa(struct.pack("<I", int(f[2], 16)))))
+    except (OSError, ValueError):
+        pass
+    return tuple(sorted((i, ipv4_address(i)) for i in ifaces)), tuple(sorted(gateways))
+
+
+_net_fp = {"fp": None}
+
+
 def nm_changed():
     for cache in (WIFI, NET_BRIEF, NETWORK):
         cache.invalidate()
+    fp = net_fingerprint()
+    if fp != _net_fp["fp"]:
+        _net_fp["fp"] = fp
+        hmi_unknown()  # another network: no HMI until it's tested again
+    HMI_WAKE.set()  # the HMI may have come or gone with the network
 
 
 def start_watchers():
+    _net_fp["fp"] = net_fingerprint()
     net = Debounce("net", 1.0)
     threading.Thread(target=watch_lines, daemon=True, name="nm", args=(
         ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.NetworkManager"], net, "NetworkManager",
@@ -881,7 +1105,7 @@ def start_job(kind, title, target, steps=()):
     global CURRENT_JOB
     with JOB_LOCK:
         if CURRENT_JOB and CURRENT_JOB.state == "running":
-            raise ApiError(f"Already running: {CURRENT_JOB.title}", HTTPStatus.CONFLICT)
+            raise ApiError(Msg("Already running: {title}", title=CURRENT_JOB.title), HTTPStatus.CONFLICT)
         job = Job(kind, title, steps)
         CURRENT_JOB = job
     EVENTS.emit("job")
@@ -893,9 +1117,9 @@ def start_job(kind, title, target, steps=()):
             if job.state == "running":
                 job.state = "done"
         except Exception as e:  # noqa: BLE001 -- anything goes to the page
-            job.end_steps(error=str(e))
+            job.end_steps(error=text_of(e))
             job.state = "failed"
-            job.detail = str(e)
+            job.detail = text_of(e)
             job.add_log(f"ERROR: {e}")
         finally:
             job.finished = time.time()
@@ -944,7 +1168,9 @@ def run_bootc_with_progress(job, args):
     # Speed over a ~5 s window, plus ETA.
     samples = []
 
-    def speed_text(done, total):
+    def progress(done, total):
+        """"12 / 345 MB", with the speed and time left once known."""
+        mb = {"done": f"{done / 1e6:.0f}", "total": f"{total / 1e6:.0f}"}
         now = time.monotonic()
         if samples and done < samples[-1][1]:
             samples.clear()  # a new download task started from zero
@@ -953,11 +1179,12 @@ def run_bootc_with_progress(job, args):
             samples.pop(0)
         t0, b0 = samples[0]
         if now - t0 < 1 or done <= b0:
-            return ""
+            return Msg("{done} / {total} MB", **mb)
         rate = (done - b0) / (now - t0)
         left = (total - done) / rate
         eta = f"{left / 60:.0f} min" if left >= 90 else f"{max(1, left):.0f} s"
-        return f" · {decimal(rate / 1e6)} MB/s · about {eta} left"
+        return Msg("{done} / {total} MB · {rate} MB/s · about {eta} left", **mb,
+                   rate=decimal(rate / 1e6), eta=eta)
 
     def read_progress():
         with os.fdopen(r, "r") as f:
@@ -972,7 +1199,7 @@ def run_bootc_with_progress(job, args):
                 elif t == "ProgressBytes" and task == "pulling":
                     done, total = ev.get("bytes") or 0, ev.get("bytesTotal") or 0
                     if total and done < total:
-                        job.step("pull", f"{done / 1e6:.0f} / {total / 1e6:.0f} MB" + speed_text(done, total),
+                        job.step("pull", progress(done, total),
                                  done / total)
                     else:
                         # Download complete (or cached): summarize the pull step.
@@ -980,11 +1207,14 @@ def run_bootc_with_progress(job, args):
                             if any(st["key"] == "pull" for st in job.steps) else None
                         if pull and pull["state"] == "active" and total:
                             secs = time.time() - pull["started"]
-                            pull["detail"] = f"{total / 1e6:.0f} MB" + (
-                                f" · average {decimal(total / 1e6 / secs)} MB/s" if secs >= 1 else "")
+                            pull["detail"] = (
+                                Msg("{total} MB · average {rate} MB/s", total=f"{total / 1e6:.0f}",
+                                    rate=decimal(total / 1e6 / secs))
+                                if secs >= 1 else Msg("{total} MB", total=f"{total / 1e6:.0f}"))
                         cached = ev.get("bytesCached") or 0
                         job.step("local", "Writing the image to disk" if total else
-                                 (f"{cached / 1e6:.0f} MB was already on disk" if cached else "Writing the image to disk"))
+                                 (Msg("{mb} MB was already on disk", mb=f"{cached / 1e6:.0f}") if cached
+                                  else "Writing the image to disk"))
                         job.pace("local", 0.0, LOCAL_EXPECT_S)
                 elif task in ("pulling", "importing"):
                     job.step("local", "Writing the image to disk")
@@ -1045,7 +1275,7 @@ def bootc_status():
     try:
         st = json.loads(run(["bootc", "status", "--format=json"], timeout=30))
     except (ApiError, ValueError) as e:
-        return {"available": False, "error": str(e), "checked": LAST_CHECK}
+        return {"available": False, "error": text_of(e), "checked": LAST_CHECK}
 
     def sha(version):
         m = VERSION_SHA.search(version or "")
@@ -1201,7 +1431,7 @@ def check_for_update(job):
         REMOTE["value"] = None
         out = run(["bootc", "upgrade", "--check"], timeout=180)
     except ApiError as e:
-        LAST_CHECK.update(time=time.time(), error=str(e))
+        LAST_CHECK.update(time=time.time(), error=text_of(e))
         raise
     LAST_CHECK.update(time=time.time(), error=None)
     for line in out.splitlines():
@@ -1223,7 +1453,8 @@ def job_upgrade(job):
         job.result = st
         return
     update = st["update"]
-    job.step("check", f"New version: {update.get('version') or update.get('digest', '')[7:19]}")
+    job.step("check", Msg("New version: {version}",
+                          version=update.get("version") or update.get("digest", "")[7:19]))
     run_bootc_with_progress(job, ["upgrade"])
     job.end_steps()
     job.fraction = 1
@@ -1324,8 +1555,8 @@ def changelog():
 
 # ---------------------------------------------------------------- boot timing
 
-# CLOCK_MONOTONIC time of the first HMI page load (POST /api/boot/hmi).
-HMI_SHOWN = {"at": None}
+# CLOCK_MONOTONIC time the HMI first showed (POST /api/boot/hmi, timed by kiosk-shell).
+HMI_SHOWN = {"at": None, "unconfigured": False}
 BOOT_COUNTER = "/usr/libexec/immutable-kiosk/boot-counter"
 BOOT_FALLBACK_NOTE = STATE_DIR / "boot-fallback.json"
 
@@ -1367,10 +1598,8 @@ def boot_journal():
     (systemd-analyze blame misses the initrd and is skewed by .device units)."""
     try:
         out = run(["journalctl", "-b", "-o", "json", "--no-pager",
-                   "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT,"
-                   "_SYSTEMD_UNIT,SYSLOG_IDENTIFIER",
-                   "_PID=1", "+", "_TRANSPORT=kernel", "+", f"_SYSTEMD_UNIT={CAGE_UNIT}",
-                   "+", "SYSLOG_IDENTIFIER=cage"], timeout=30)
+                   "--output-fields=MESSAGE,MESSAGE_ID,UNIT,_SOURCE_MONOTONIC_TIMESTAMP,_TRANSPORT",
+                   "_PID=1", "+", "_TRANSPORT=kernel"], timeout=30)
     except ApiError as e:
         return {"journal_error": str(e)}
     switch = None
@@ -1397,16 +1626,6 @@ def boot_journal():
                     seen.add(label)
                     marks.append({"t": t, "label": label})
             continue
-        # "<prog>: milestone: <label>" lines in cage's unit; first of each.
-        # (Matched by identifier too: the PAM session may move cage's processes
-        # out of the unit's cgroup.)
-        if (e.get("_SYSTEMD_UNIT") == CAGE_UNIT or e.get("SYSLOG_IDENTIFIER") == "cage") \
-                and e.get("UNIT") is None:
-            label = msg.partition("milestone: ")[2].strip()
-            if label and label not in seen:
-                seen.add(label)
-                marks.append({"t": t, "label": label})
-            continue
         if msg.startswith("Switching root") and switch is None:
             switch = t
             marks.append({"t": t, "label": "Switch to the system (switch-root)"})
@@ -1420,7 +1639,7 @@ def boot_journal():
             if unit == CAGE_UNIT:
                 cage_starts += 1
                 marks.append({"t": t, "label": "Kiosk: cage starts (plymouth goes away)" if cage_starts == 1
-                              else f"Kiosk: cage restarted (start #{cage_starts})"})
+                              else Msg("Kiosk: cage restarted (start #{n})", n=cage_starts)})
         elif mid == MSG_STARTED:
             t0 = starting.pop(unit, None)
             if t0 is not None and not unit.endswith((".device", ".target", ".slice", ".scope")):
@@ -1525,6 +1744,7 @@ def boot_timing():
         if out.get("total") and "journal_error" not in out:
             BOOT_CACHE["done"] = dict(out)
     out["hmi_shown"] = HMI_SHOWN["at"]
+    out["hmi_unconfigured"] = HMI_SHOWN["unconfigured"]
     out["uptime"] = time.monotonic()
     return out
 
@@ -1535,7 +1755,7 @@ def job_switch(image):
         job.end_steps()
         job.fraction = 1
         job.stage = "Done"
-        job.detail = f"After a restart the system runs image {image}"
+        job.detail = Msg("After a restart the system runs image {image}", image=image)
         job.result = bootc_status()
     return target
 
@@ -1626,6 +1846,11 @@ def installer_state():
 CHUNK = 4 * 1024 * 1024
 SYNC_EVERY = 64 * 1024 * 1024
 LOG_EVERY = 512 * 1024 * 1024  # a progress line in "Details" every 512 MiB
+# Read back after the write: every SAMPLE_EVERY-th chunk and the last one
+# (~32 x 4 MiB for a 4 GB image: a second or two), not the whole disk (~2
+# min). The stream's sha256 already proves the image itself; this catches
+# a write that didn't reach the disk.
+SAMPLE_EVERY = 32
 
 
 def _mmss(seconds):
@@ -1661,6 +1886,8 @@ def job_install(disk_path):
         next_log = LOG_EVERY
         digest = hashlib.sha256()
         written = 0
+        samples = []  # (offset, length, sha256) of the chunks read back after
+        last = b""
         t0 = time.time()
         dec = subprocess.Popen(["zstd", "-dc", payload["path"]], stdout=subprocess.PIPE)
         # O_EXCL on a block device: refuses if anything still has it mounted.
@@ -1672,6 +1899,9 @@ def job_install(disk_path):
                 if not buf:
                     break
                 digest.update(buf)
+                if (written // CHUNK) % SAMPLE_EVERY == 0:
+                    samples.append((written, len(buf), hashlib.sha256(buf).digest()))
+                last = buf
                 view = memoryview(buf)
                 while view:
                     n = os.write(fd, view)
@@ -1694,7 +1924,7 @@ def job_install(disk_path):
         if dec.wait() != 0:
             raise RuntimeError("The system image on the USB drive is damaged (decompression error)")
         if size and written != size:
-            raise RuntimeError(f"Wrote {written} B instead of {size} B")
+            raise RuntimeError(Msg("Wrote {written} B instead of {size} B", written=written, size=size))
         if expected and digest.hexdigest() != expected:
             raise RuntimeError("Image checksum mismatch -- the installation drive is damaged")
 
@@ -1704,30 +1934,21 @@ def job_install(disk_path):
         job.stage = "Verifying the write"
         job.add_log(job.stage)
         job.fraction = 0
+        if last and (not samples or samples[-1][0] != written - len(last)):
+            samples.append((written - len(last), len(last), hashlib.sha256(last).digest()))
         run(["blockdev", "--flushbufs", disk_path], check=False)
-        check = hashlib.sha256()
-        read = 0
         t0 = time.time()
-        next_log = LOG_EVERY
         fd = os.open(disk_path, os.O_RDONLY)
         try:
-            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-            while read < written:
-                buf = os.read(fd, min(CHUNK, written - read))
-                if not buf:
-                    break
-                check.update(buf)
-                read += len(buf)
-                if read % (64 * CHUNK) < CHUNK:
-                    _progress(job, read, written, t0)
-                if read >= next_log:
-                    job.add_log(f"  {job.detail}")
-                    next_log += LOG_EVERY
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)  # from the disk, not the cache
+            for i, (offset, length, want) in enumerate(samples):
+                if hashlib.sha256(os.pread(fd, length, offset)).digest() != want:
+                    job.add_log(f"  differs at {offset / 1e6:.0f} MB")
+                    raise RuntimeError("Verification failed: the data on the disk differs from the image. Try again.")
+                job.fraction = (i + 1) / len(samples)
         finally:
             os.close(fd)
-        if check.hexdigest() != digest.hexdigest():
-            raise RuntimeError("Verification failed: the data on the disk differs from the image. Try again.")
-        job.add_log(f"  read {read / 1e9:.2f} GB in {_mmss(time.time() - t0)}, data matches")
+        job.add_log(f"  {len(samples)} parts across the disk read back in {time.time() - t0:.1f} s, data matches")
 
         job.stage = "Finishing"
         job.add_log(job.stage)
@@ -1765,6 +1986,10 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- plumbing
     def send_json(self, obj, status=HTTPStatus.OK):
+        if isinstance(obj, dict):
+            texts = i18n_of(obj, {})
+            if texts:
+                obj = {**obj, "_i18n": texts}
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1838,9 +2063,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 raise ApiError("not found", HTTPStatus.NOT_FOUND)
         except ApiError as e:
-            self.send_json({"error": str(e)}, e.status)
+            self.send_json({"error": text_of(e)}, e.status)
         except Exception as e:  # noqa: BLE001
-            self.send_json({"error": f"Internal error: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.send_json({"error": Msg("Internal error: {error}", error=str(e))},
+                           HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_GET(self):
         self.dispatch("GET")
@@ -1876,6 +2102,27 @@ def current_timezone():
 
 
 LANGUAGES = ("pl", "en")
+# The system locale (/etc/locale.conf) follows Settings' language: dates,
+# number formats and GTK/WebKit's own strings (glibc-langpack-en/-pl,
+# 05-base.sh). Programs started afterwards pick it up.
+SYSTEM_LOCALES = {"en": "en_US.UTF-8", "pl": "pl_PL.UTF-8"}
+LOCALE_CONF = Path("/etc/locale.conf")
+
+
+def set_system_locale():
+    lang = SYSTEM_LOCALES.get(load_config().get("language"), SYSTEM_LOCALES["en"])
+    want = f"LANG={lang}\n"
+    try:
+        if LOCALE_CONF.read_text() == want:
+            return
+    except OSError:
+        pass
+    try:
+        tmp = LOCALE_CONF.with_name(".locale.conf.tmp")
+        tmp.write_text(want)
+        tmp.replace(LOCALE_CONF)
+    except OSError as e:
+        print(f"kioskd: system locale {lang}: {e}", flush=True)
 
 
 def cpu_model():
@@ -1888,14 +2135,238 @@ def cpu_model():
     return ""
 
 
-def memory_mb():
+def meminfo():
+    """/proc/meminfo in kB ({} if unreadable)."""
+    vals = {}
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemTotal:"):
-                return int(line.split()[1]) // 1024
+            k, _, v = line.partition(":")
+            if v.split():
+                vals[k] = int(v.split()[0])
     except (OSError, ValueError):
         pass
-    return None
+    return vals
+
+
+def memory_mb():
+    kb = meminfo().get("MemTotal")
+    return kb // 1024 if kb else None
+
+
+def zram_swap():
+    """The zram swap (immutable-kiosk-zram.service): {size_mb, packed_mb}, or
+    None. packed: what the swapped-out pages take in RAM, compressed."""
+    try:
+        if "/dev/zram0" not in Path("/proc/swaps").read_text():
+            return None
+        size = int(Path("/sys/block/zram0/disksize").read_text())
+        # mm_stat: orig_data_size compr_data_size mem_used_total ...
+        packed = int(Path("/sys/block/zram0/mm_stat").read_text().split()[2])
+        return {"size_mb": size // 2**20, "packed_mb": packed // 2**20}
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def cpu_temp():
+    """The processor's temperature (°C), the hottest reading: coretemp's
+    sensors, else CPU thermal zones (x86_pkg_temp, soc_dts* on Bay Trail),
+    else ACPI's. None if the device has none."""
+    def read(f):
+        try:
+            t = int(Path(f).read_text()) / 1000
+        except (OSError, ValueError):
+            return None
+        return t if 0 < t < 150 else None
+    for hw in Path("/sys/class/hwmon").glob("hwmon*"):
+        try:
+            if (hw / "name").read_text().strip() != "coretemp":
+                continue
+        except OSError:
+            continue
+        temps = [t for t in map(read, hw.glob("temp*_input")) if t is not None]
+        if temps:
+            return round(max(temps))
+    zones = {}
+    for z in Path("/sys/class/thermal").glob("thermal_zone*"):
+        try:
+            kind = (z / "type").read_text().strip()
+        except OSError:
+            continue
+        t = read(z / "temp")
+        if t is not None:
+            zones.setdefault(kind, []).append(t)
+    cpu = [t for k, ts in zones.items() for t in ts
+           if k == "x86_pkg_temp" or k.startswith(("soc_dts", "cpu", "TCPU", "B0D4"))]
+    other = zones.get("acpitz", [])
+    return round(max(cpu or other)) if cpu or other else None
+
+
+_cpu = {"sample": None, "busy": None, "at": 0.0}
+
+
+def cpu_busy():
+    """All cores' use (%) since the previous sample (taken at most every
+    second; the first one: since boot)."""
+    now = time.monotonic()
+    if _cpu["busy"] is not None and now - _cpu["at"] < 1:
+        return _cpu["busy"]
+    try:
+        f = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
+    except (OSError, ValueError, IndexError):
+        return None
+    total, idle = sum(f), f[3] + f[4]  # idle + iowait
+    prev = _cpu["sample"] or (0, 0)
+    dt = total - prev[0]
+    _cpu.update(sample=(total, idle), at=now,
+                busy=round(100 * (1 - (idle - prev[1]) / dt)) if dt > 0 else _cpu["busy"])
+    return _cpu["busy"]
+
+
+def usage_sample():
+    m = meminfo()
+    mb = lambda k: m.get(k, 0) // 1024  # noqa: E731
+    return {
+        "cpu": cpu_busy(),
+        "cores": os.cpu_count(),
+        "temp_c": cpu_temp(),
+        "mem": {"total_mb": mb("MemTotal"), "used_mb": mb("MemTotal") - mb("MemAvailable")},
+        "swap": {"total_mb": mb("SwapTotal"), "used_mb": mb("SwapTotal") - mb("SwapFree"), "zram": zram_swap()},
+    }
+
+
+# The last minute, every 2 s (usage_loop): the Usage tiles' columns are there
+# the moment System opens. A few /proc and /sys reads: nothing on the Atom.
+USAGE_EVERY_S, USAGE_KEEP = 2, 30
+USAGE = {"now": None, "history": []}
+
+
+def usage_loop():
+    pct = lambda a, b: round(100 * a / b) if b else 0  # noqa: E731
+    while True:
+        s = usage_sample()
+        USAGE["now"] = s
+        point = {
+            "cpu": s["cpu"], "temp_c": s["temp_c"],
+            "mem": pct(s["mem"]["used_mb"], s["mem"]["total_mb"]), "mem_mb": s["mem"]["used_mb"],
+            "swap": pct(s["swap"]["used_mb"], s["swap"]["total_mb"]), "swap_mb": s["swap"]["used_mb"],
+        }
+        USAGE["history"] = (USAGE["history"] + [point])[-USAGE_KEEP:]
+        try:
+            track_peaks(point)
+        except OSError as e:
+            print(f"kioskd: usage peaks: {e}", flush=True)
+        time.sleep(USAGE_EVERY_S)
+
+
+# ---- High usage: a measure at PEAK_AT or more (% or °C), from the first
+# sample there to the first below. Each one is kept (PEAKS_FILE, the last
+# PEAKS_KEEP) with its highest value, the other measures then, and what
+# used the most (top_cpu / top_mem); and goes to the journal when it ends.
+PEAK_AT = 85
+PEAKS_FILE = STATE_DIR / "usage-peaks.json"
+PEAKS_KEEP = 100
+PEAK_TOP = {"cpu": "cpu", "temp_c": "cpu", "mem": "VmRSS", "swap": "VmSwap"}
+PEAK_UNIT = {"cpu": "%", "temp_c": " °C", "mem": "%", "swap": "%"}
+_peaks = {"open": {}, "done": None}
+
+
+def proc_dirs():
+    return [d for d in Path("/proc").iterdir() if d.name.isdigit()]
+
+
+def top_cpu(window=0.5, n=3):
+    """The programs using the most processor over `window` s, in % of the
+    whole machine (all cores); a program's processes counted together."""
+    def times():
+        out = {}
+        for d in proc_dirs():
+            try:
+                st = (d / "stat").read_text()
+                f = st[st.rindex(")") + 2:].split()
+                out[d.name] = (st[st.index("(") + 1:st.rindex(")")], int(f[11]) + int(f[12]))  # utime + stime
+            except (OSError, ValueError, IndexError):
+                pass
+        return out
+    a = times()
+    time.sleep(window)
+    b = times()
+    per = {}
+    for pid, (name, t) in b.items():
+        if pid in a:
+            per[name] = per.get(name, 0) + t - a[pid][1]
+    whole = window * os.sysconf("SC_CLK_TCK") * (os.cpu_count() or 1)
+    best = sorted(per.items(), key=lambda kv: -kv[1])[:n]
+    return [{"name": k, "pct": round(100 * v / whole)} for k, v in best if v > 0]
+
+
+def top_mem(field="VmRSS", n=3):
+    """The programs holding the most memory (VmRSS) or swap (VmSwap), in MB."""
+    per = {}
+    for d in proc_dirs():
+        try:
+            name, kb = None, 0
+            for line in (d / "status").read_text().splitlines():
+                if line.startswith("Name:"):
+                    name = line.split(None, 1)[1] if len(line.split()) > 1 else "?"
+                elif line.startswith(field + ":"):
+                    kb = int(line.split()[1])
+            if name and kb:
+                per[name] = per.get(name, 0) + kb
+        except (OSError, ValueError, IndexError):
+            pass
+    best = sorted(per.items(), key=lambda kv: -kv[1])[:n]
+    return [{"name": k, "mb": round(v / 1024)} for k, v in best if v >= 1024]
+
+
+def peaks_done():
+    if _peaks["done"] is None:
+        try:
+            _peaks["done"] = json.loads(PEAKS_FILE.read_text())[-PEAKS_KEEP:]
+        except (OSError, ValueError):
+            _peaks["done"] = []
+    return _peaks["done"]
+
+
+def track_peaks(point):
+    now = time.time()
+    for key in PEAK_TOP:
+        v, ev = point.get(key), _peaks["open"].get(key)
+        if v is not None and v >= PEAK_AT:
+            if ev is None or v > ev["peak"]:
+                top = top_cpu() if PEAK_TOP[key] == "cpu" else top_mem(PEAK_TOP[key])
+                if ev is None:
+                    ev = _peaks["open"][key] = {"what": key, "start": now}
+                ev.update(peak=v, mb=point.get(f"{key}_mb"), top=top,
+                          then={k: point.get(k) for k in ("cpu", "temp_c", "mem", "swap")})
+        elif ev is not None:
+            del _peaks["open"][key]
+            ev["seconds"] = max(USAGE_EVERY_S, round(now - ev["start"]))
+            done = peaks_done()
+            done.append(ev)
+            del done[:-PEAKS_KEEP]
+            PEAKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = PEAKS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(done))
+            tmp.replace(PEAKS_FILE)
+            tops = ", ".join(f"{t['name']} {t['pct']}%" if "pct" in t else f"{t['name']} {t['mb']} MB"
+                             for t in ev["top"])
+            print(f"kioskd: high usage: {key} {ev['peak']}{PEAK_UNIT[key]} for {ev['seconds']} s"
+                  + (f" ({tops})" if tops else ""), flush=True)
+
+
+def r_usage(body, q):
+    """Settings > System > Usage: now, the last minute (oldest first) and the
+    high-usage events (newest first, one still going included)."""
+    now = time.time()
+    going = [{**ev, "seconds": round(now - ev["start"]), "going": True} for ev in _peaks["open"].values()]
+    return {**(USAGE["now"] or usage_sample()), "history": USAGE["history"], "every_s": USAGE_EVERY_S,
+            "peak_at": PEAK_AT, "peaks": sorted(going, key=lambda e: -e["start"]) + peaks_done()[::-1]}
+
+
+def r_usage_peaks_clear(body, q):
+    _peaks["done"] = []
+    PEAKS_FILE.unlink(missing_ok=True)
+    return {"ok": True}
 
 
 # Component versions for Settings > System; fixed per image, read once.
@@ -1954,31 +2425,108 @@ def r_config_get(body, q):
 def r_config_set(body, q):
     cfg = save_config(body)
     EVENTS.emit("config")
+    if "hmi" in body:
+        HMI_WAKE.set()
     def look(what):
         set_splash_look(what)
         set_grub_splash()
     for what in ("accent", "language"):
         if what in body:
             threading.Thread(target=look, args=(what,), daemon=True).start()
+    if "language" in body:
+        set_system_locale()
     return cfg
 
 
-def r_hmi_test(body, q):
-    """Can the HMI server's port be reached at all? (TCP connect, 3 s.)"""
-    host = str(body.get("host", "")).strip().strip("[]")
+# ---- Is the HMI there? Checked in the background (hmi_watch): Settings shows
+# it and greys out "Back to HMI" while it isn't. The same test as
+# kiosk-shell's before it loads the HMI: an HTTP(S) answer from the server
+# (any certificate: only whether it's there), a gateway error (502-504: the
+# proxy is up, the HMI behind it isn't) counting as none.
+HMI_STATE = {"url": "", "ok": None, "message": "", "checked": None}
+HMI_WAKE = threading.Event()
+HMI_EVERY_S = 3
+HMI_LOCK = threading.Lock()
+_hmi_gen = [0]  # bumped by hmi_unknown: a check started before it is dropped
+
+
+def hmi_unknown():
+    """The network changed: "not known" (Back to HMI greyed out, "Checking
+    the connection…") until hmi_watch has tested the HMI on the new one."""
+    with HMI_LOCK:
+        _hmi_gen[0] += 1
+        if HMI_STATE["ok"] is None:
+            return
+        HMI_STATE.update(ok=None, message="", checked=time.time())
+    EVENTS.emit("hmi")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):
+        return None  # a redirect (e.g. to the login page) is an answer too
+
+
+def hmi_probe(url):
+    """(ok, message) for the HMI at url."""
+    import http.client
+    import ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect,
+                                         urllib.request.HTTPSHandler(context=ctx))
+    t0 = time.monotonic()
     try:
-        port = int(body.get("port"))
-    except (TypeError, ValueError):
-        raise ApiError("Port must be a number")
-    if not host:
-        raise ApiError("Enter the HMI address")
-    t0 = time.time()
-    try:
-        with socket.create_connection((host, port), timeout=3):
-            pass
-    except OSError as e:
-        return {"ok": False, "message": f"Can't connect to {host}:{port} ({e.strerror or e})"}
-    return {"ok": True, "message": f"Port {port} on {host} answers ({(time.time() - t0) * 1000:.0f} ms)"}
+        with opener.open(urllib.request.Request(url, headers={"Cache-Control": "no-cache"}), timeout=5) as r:
+            status = r.status
+    except urllib.error.HTTPError as e:
+        status = e.code
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        err = e.reason if isinstance(e, urllib.error.URLError) and isinstance(e.reason, BaseException) else e
+        if isinstance(err, socket.gaierror):
+            return False, "The address isn't known on this network"
+        if isinstance(err, (socket.timeout, TimeoutError)):
+            return False, "The server doesn't answer"
+        if isinstance(err, ConnectionRefusedError):
+            return False, "The server refuses the connection (wrong port, or the HMI isn't running)"
+        if isinstance(err, OSError) and err.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN):
+            return False, "No route to the server: is the kiosk on its network?"
+        return False, "The server doesn't answer properly"
+    if status in (502, 503, 504):
+        return False, Msg("The server answers {status}: the HMI behind it isn't running", status=status)
+    return True, Msg("The HMI answers ({ms} ms)", ms=round((time.monotonic() - t0) * 1000))
+
+
+def hmi_watch():
+    """Every HMI_EVERY_S, and at once after a change of address or network
+    (HMI_WAKE). "Not answering" only after two failed checks in a row: a
+    blip doesn't take the kiosk out of the HMI (kiosk-shell on_hmi_state)."""
+    failed = 0
+    while True:
+        url = hmi_url(load_config()["hmi"])
+        gen = _hmi_gen[0]
+        ok, message = hmi_probe(url) if url else (None, "")
+        with HMI_LOCK:
+            if gen != _hmi_gen[0]:
+                failed = 0
+                continue  # the network changed meanwhile: tested again on the new one
+            failed = failed + 1 if ok is False and url == HMI_STATE["url"] else 0
+            again = failed == 1 and HMI_STATE["ok"]
+            if not again:
+                changed = (url, ok) != (HMI_STATE["url"], HMI_STATE["ok"])
+                HMI_STATE.update(url=url, ok=ok, message=message, checked=time.time())
+        if again:
+            HMI_WAKE.wait(1)  # once more, soon, before saying so
+            HMI_WAKE.clear()
+            continue
+        if changed:
+            EVENTS.emit("hmi")
+        HMI_WAKE.wait(HMI_EVERY_S)
+        HMI_WAKE.clear()
+
+
+def r_hmi_state(body, q):
+    return HMI_STATE
 
 
 def r_wifi(body, q):
@@ -1999,7 +2547,9 @@ def wifi_changed():
 
 
 def r_wifi_connect(body, q):
-    wifi_connect(str(body.get("ssid", "")), str(body.get("password", "")), bool(body.get("hidden")))
+    ipv4 = body.get("ipv4")
+    wifi_connect(str(body.get("ssid", "")), str(body.get("password", "")), bool(body.get("hidden")),
+                 ipv4 if isinstance(ipv4, dict) else None, str(body.get("security", "")))
     return wifi_changed()
 
 
@@ -2116,12 +2666,10 @@ def set_splash_orientation(output, transform):
                                        capture_output=True, timeout=60)
                     if p.returncode != 0:
                         raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
-            print(f"kioskd: boot splash orientation: {want} (was {', '.join(sorted(present)) or 'unset'})",
-                  flush=True)
             splash_state(state="done")
         except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot splash orientation {want}: {e}", flush=True)
-            splash_state(state="failed", error=str(e))
+            splash_state(state="failed", error=text_of(e))
 
 
 SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
@@ -2255,12 +2803,10 @@ def set_splash_look(what=""):
                 if p.returncode != 0:
                     raise ApiError(p.stderr.decode(errors="replace").strip() or f"write-boot: {p.returncode}")
             cleanup_overlays()
-            print(f"kioskd: boot screen look: accent {accent}, language {cfg.get('language')} "
-                  f"({len(etc_new) + len(stale)} in {overrides}, {len(boot)} on /boot)", flush=True)
             splash_state(look={"state": "done", "what": what, "error": None})
         except (ApiError, OSError, subprocess.TimeoutExpired) as e:
             print(f"kioskd: boot screen look: {e}", flush=True)
-            splash_state(look={"state": "failed", "what": what, "error": str(e)})
+            splash_state(look={"state": "failed", "what": what, "error": text_of(e)})
 
 
 # ---------------------------------------------------------------- GRUB's boot screen
@@ -2627,13 +3173,11 @@ def set_grub_splash(output=None, transform=None):
 
 def write_grub_splash(key, w, h, transform, accent, lang):
     """`kioskd --grub-splash`: draw and write the files (set_grub_splash)."""
-    t0 = time.monotonic()
     d = json.loads(SPLASH_DATA.read_text())
     files = grub_splash_files(w, h, transform, d, accent, lang, key)
     if files is None:
         print(f"the frame doesn't fit {w}x{h}")
         return 1
-    written = []
     # The font first: console.cfg only uses it when it's there.
     for path, data in ((GRUB_FONT, files[1]), (GRUB_CONSOLE_CFG, files[0].encode())):
         try:
@@ -2645,9 +3189,6 @@ def write_grub_splash(key, w, h, transform, accent, lang):
         if p.returncode != 0:
             print(p.stderr.decode(errors="replace").strip() or f"write-boot {path}: {p.returncode}")
             return 1
-        written.append(path.name)
-    print(f"{w}x{h} turned {transform}, accent {accent}, language {lang}: "
-          f"{', '.join(written) or 'unchanged'} ({time.monotonic() - t0:.1f} s)")
     return 0
 
 
@@ -2704,7 +3245,7 @@ def power_off(action):
                     os.kill(pid, 9)
             except (OSError, ValueError):
                 pass
-        raise ApiError((p.stderr or p.stdout).strip() or f"systemctl {action}: {p.returncode}")
+        raise ApiError(cmd_error(p, "systemctl"))
 
 
 def touchscreens():
@@ -2758,8 +3299,6 @@ def r_touch_set(body, q):
         for dev in devices:
             run(["udevadm", "trigger", f"--action={action}", dev], check=False, timeout=10)
         run(["udevadm", "settle", "--timeout=5"], check=False, timeout=10)
-    print(f"kioskd: touch matrix for transform {transform}: {matrix}, "
-          f"{len(devices)} touchscreen(s) re-added", flush=True)
     return {"changed": True, "restart": False}
 
 
@@ -2799,10 +3338,19 @@ def r_boot(body, q):
 
 
 def r_boot_hmi(body, q):
-    if HMI_SHOWN["at"] is None:
-        HMI_SHOWN["at"] = time.monotonic()
+    # {"unconfigured": true}: no HMI address at boot, nothing to time.
+    if HMI_SHOWN["at"] is None and not HMI_SHOWN["unconfigured"]:
+        if body.get("unconfigured"):
+            HMI_SHOWN["unconfigured"] = True
+        else:
+            # kiosk-shell's own time of it: this request may come later.
+            # Without one (an older kiosk-shell), now.
+            now = time.monotonic()
+            at = body.get("at")
+            ok = isinstance(at, (int, float)) and not isinstance(at, bool) and 0 < at <= now
+            HMI_SHOWN["at"] = float(at) if ok else now
         EVENTS.emit("boot")  # the boot card's last point
-    return {"hmi_shown": HMI_SHOWN["at"]}
+    return {"hmi_shown": HMI_SHOWN["at"], "hmi_unconfigured": HMI_SHOWN["unconfigured"]}
 
 
 def r_boot_ok(body, q):
@@ -2831,7 +3379,8 @@ def r_system_switch(body, q):
         image = image[len("docker://"):]
     if not IMAGE_REF.match(image):
         raise ApiError("Invalid image name (e.g. ghcr.io/lukemech/immutable-kiosk-x86:latest)")
-    return start_job("switch", f"Switching image to {image}", job_switch(image), BOOTC_STEPS).as_dict()
+    return start_job("switch", Msg("Switching image to {image}", image=image), job_switch(image),
+                     BOOTC_STEPS).as_dict()
 
 
 def r_system_channel(body, q):
@@ -2848,8 +3397,8 @@ def r_system_channel(body, q):
     repo, _ = split_image(current)
     image = f"{repo}:{CHANNELS[channel]['tag']}"
     if image == current:
-        raise ApiError(f"The system is already on the {CHANNELS[channel]['name']} channel")
-    return start_job("switch", f"Switching to the {CHANNELS[channel]['name']} channel",
+        raise ApiError(Msg("The system is already on the {channel} channel", channel=CHANNELS[channel]["name"]))
+    return start_job("switch", Msg("Switching to the {channel} channel", channel=CHANNELS[channel]["name"]),
                      job_switch(image), BOOTC_STEPS).as_dict()
 
 
@@ -2887,17 +3436,60 @@ def r_system_rollback(body, q):
 DEFAULT_TIMEZONE = "Europe/Warsaw"  # the image's (build_files/05-base.sh)
 
 
+def forget_networks():
+    """Every saved connection (Wi-Fi networks, IP settings) deleted; Wi-Fi on.
+    NetworkManager makes a fresh DHCP one for a plugged-in cable by itself."""
+    out = run(["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=20)
+    for line in out.splitlines():
+        uuid, _, kind = line.partition(":")
+        if uuid and kind != "loopback":
+            run(["nmcli", "connection", "delete", uuid], check=False, timeout=30)
+    run(["nmcli", "radio", "wifi", "on"], check=False)
+
+
+def reset_part(part):
+    """One Settings tab back to the defaults: "network" forgets every
+    connection; the others reset their RESET_KEYS, and their side effects:
+    screen the backlight (full) and the boot screen's color, system the
+    language (system locale, boot screen), host name and time zone."""
+    if part == "network":
+        forget_networks()
+        nm_changed()
+        return
+    cfg = load_config()
+    for k in RESET_KEYS[part]:
+        cfg[k] = json.loads(json.dumps(DEFAULT_CONFIG[k]))
+    write_config(cfg)
+    HMI_WAKE.set()
+    if part == "screen":
+        try:
+            brightness_set(100)  # the default leaves the backlight alone: full
+        except (ApiError, OSError, ValueError):
+            pass
+    if part in ("screen", "system"):
+        what = "accent" if part == "screen" else "language"
+        threading.Thread(target=lambda: (set_splash_look(what), set_grub_splash()), daemon=True).start()
+    if part == "system":
+        set_system_locale()
+        run(["hostnamectl", "set-hostname", ""], check=False, timeout=20)
+        run(["timedatectl", "set-timezone", DEFAULT_TIMEZONE], check=False, timeout=20)
+        time.tzset()
+        EVENTS.emit("device")
+    EVENTS.emit("config")
+
+
 def reset_everything():
-    """Factory reset, then restart the kiosk: kioskd config, HMI browser data,
-    kiosk-shell cache, all NM connections, hostname and time zone.
+    """Factory reset: every tab's reset (reset_part), the HMI's browser data
+    (logins, cache) and kiosk-shell's cache, then the kiosk restarts.
     Runs in a thread after the reply (request comes from inside cage)."""
     import pwd
     import shutil
     time.sleep(1.0)
-    try:
-        CONFIG_FILE.unlink()
-    except FileNotFoundError:
-        pass
+    for part in RESET_PARTS:
+        try:
+            reset_part(part)
+        except (ApiError, OSError) as e:
+            print(f"kioskd: reset {part}: {e}", flush=True)
     try:
         home = Path(pwd.getpwnam("kiosk").pw_dir)
     except KeyError:
@@ -2905,27 +3497,19 @@ def reset_everything():
     if home:
         for d in (home / ".local/share/immutable-kiosk/hmi", home / ".cache/immutable-kiosk"):
             shutil.rmtree(d, ignore_errors=True)
-    try:
-        out = run(["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=20)
-        for line in out.splitlines():
-            uuid, _, kind = line.partition(":")
-            if uuid and kind != "loopback":
-                run(["nmcli", "connection", "delete", uuid], check=False, timeout=30)
-    except ApiError as e:
-        print(f"kioskd: reset: network: {e}", flush=True)
-    run(["hostnamectl", "set-hostname", ""], check=False, timeout=20)
-    run(["timedatectl", "set-timezone", DEFAULT_TIMEZONE], check=False, timeout=20)
-    time.tzset()
-    print("kioskd: everything reset to the defaults, restarting the kiosk", flush=True)
-    EVENTS.emit("config")
-    EVENTS.emit("device")
     subprocess.run(["systemctl", "restart", CAGE_UNIT])
 
 
 def r_settings_reset(body, q):
-    """Factory reset (see reset_everything)."""
-    threading.Thread(target=reset_everything, daemon=True).start()
-    return {"ok": True}
+    """part: a tab (RESET_PARTS, reset_part) or "all" (reset_everything)."""
+    part = body.get("part", "all")
+    if part == "all":
+        threading.Thread(target=reset_everything, daemon=True).start()
+        return {"ok": True}
+    if part not in RESET_PARTS:
+        raise ApiError("Nothing to reset")
+    reset_part(part)
+    return effective_config()
 
 
 def r_power(body, q):
@@ -2965,14 +3549,17 @@ def r_installer_start(body, q):
     payload = payload_info()
     if payload and payload.get("size") and disk["size"] < int(payload["size"]):
         raise ApiError("The disk is too small for the system")
-    return start_job("install", f"Installing to {disk['path']}", job_install(disk["path"])).as_dict()
+    return start_job("install", Msg("Installing to {disk}", disk=disk["path"]),
+                     job_install(disk["path"])).as_dict()
 
 
 ROUTES = {
     ("GET", "/api/info"): r_info,
+    ("GET", "/api/usage"): r_usage,
+    ("POST", "/api/usage/peaks/clear"): r_usage_peaks_clear,
     ("GET", "/api/config"): r_config_get,
     ("POST", "/api/config"): r_config_set,
-    ("POST", "/api/hmi/test"): r_hmi_test,
+    ("GET", "/api/hmi/state"): r_hmi_state,
     ("GET", "/api/wifi"): r_wifi,
     ("POST", "/api/wifi/connect"): r_wifi_connect,
     ("POST", "/api/wifi/forget"): r_wifi_forget,
@@ -3018,7 +3605,11 @@ def main():
             brightness_set(saved)
         except (ApiError, OSError, ValueError) as e:
             print(f"kioskd: brightness {saved}%: {e}", flush=True)
-    print(f"kioskd: listening on http://{LISTEN[0]}:{LISTEN[1]} (mode: {mode()})", flush=True)
+    # A language set before this version, or the image's default: in step.
+    if mode() != "installer":
+        set_system_locale()
+        threading.Thread(target=usage_loop, daemon=True).start()
+        threading.Thread(target=hmi_watch, daemon=True).start()
     srv.serve_forever()
 
 

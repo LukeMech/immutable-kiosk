@@ -103,12 +103,22 @@
         if (host && host.isConnected) return;
         host = document.createElement("kiosk-osk");
         root = host.attachShadow({ mode: "closed" });
-        const style = document.createElement("style");
-        style.textContent = CSS;
         kb = document.createElement("div");
         kb.className = "kb";
         kb.hidden = true;
-        root.append(style, kb);
+        root.append(kb);
+        // A constructed sheet, not a <style>: pages with a strict CSP
+        // (style-src without 'unsafe-inline', e.g. Authelia logins) block
+        // injected <style> elements, which left the keyboard unstyled.
+        try {
+            const sheet = new CSSStyleSheet();
+            sheet.replaceSync(CSS);
+            root.adoptedStyleSheets = [sheet];
+        } catch (_) {
+            const style = document.createElement("style");
+            style.textContent = CSS;
+            root.prepend(style);
+        }
         (document.body || document.documentElement).appendChild(host);
         // Keep focus in the field: nothing on the keyboard may take it.
         for (const ev of ["pointerdown", "mousedown", "touchstart"]) {

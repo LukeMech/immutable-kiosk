@@ -22,9 +22,9 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
                      ┌────────────────────────────────────────────────────┤
                      ▼                                                    ▼
              HMI view (WebKit)                              Settings view (WebKit)
-     https://<hmi-ip>:1020/  fullscreen        http://127.0.0.1:8088/  ◄── kioskd (root)
+     https://<hmi-ip>/  fullscreen             http://127.0.0.1:8088/  ◄── kioskd (root)
      hold a corner ~1 s ──────────────────────►  HMI · Network · Display · System
-     HMI unreachable → error page with ⚙        "← Back to HMI"
+     HMI unreachable → "Connecting…"            "← Back to HMI" (once it answers)
 ```
 
 - **kiosk-shell** ([`kiosk-shell`](system_files/usr/libexec/immutable-kiosk/kiosk-shell),
@@ -67,10 +67,13 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
    bootloader is Fedora's signed shim).
 4. The installer page lists the disks, internal eMMC preselected → hold
    **Hold for 3 s to install**. It streams the compressed disk image
-   onto the eMMC with a real progress bar (MB/s, time left), reads it back
-   to verify, then asks you to pull the stick and reboot.
+   onto the eMMC with a real progress bar (MB/s, time left), checks its
+   sha256 as it goes and reads parts of the disk back, then asks you to
+   pull the stick and reboot.
 5. First boot grows the root partition to the whole eMMC and opens Settings
-   (no HMI configured yet): Wi-Fi → HMI address → *Save and open HMI*.
+   (no HMI configured yet): Wi-Fi → HMI address (saved as you go) →
+   *← Back to HMI*. Every later start shows Settings until the HMI's server
+   answers, then switches to the HMI by itself.
 
 ## Updates
 

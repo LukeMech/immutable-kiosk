@@ -44,7 +44,7 @@
           </div>
         </div>
         <h3>Server</h3>
-        <p class="hint">Beckhoff TwinCAT HMI (TF2000): HTTPS on port 1020 or HTTP on 1010.</p>
+        <p class="hint">Leave the port empty for the default (443 / 80).</p>
         <div class="seg" id="hmi-scheme">
           <button data-v="https">HTTPS</button>
           <button data-v="http">HTTP</button>
@@ -60,23 +60,11 @@
             <input id="hmi-path" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/">
           </label>
         </div>
-        <div class="chips">
-          <button class="chip" data-preset="https:1020">TwinCAT HTTPS :1020</button>
-          <button class="chip" data-preset="http:1010">TwinCAT HTTP :1010</button>
-        </div>
-        <div class="actions">
-          <button class="btn" id="hmi-test">Test connection</button>
-          <button class="btn primary" id="hmi-save">Save and open HMI</button>
-        </div>
       </div>
       <div class="card">
         <h2>Behavior</h2>
         <label class="switch"><input type="checkbox" id="opt-cert"><span>Accept the HMI server's certificate (self-signed)</span></label>
         <label class="switch"><input type="checkbox" id="opt-osk"><span>On-screen keyboard in the HMI too</span></label>
-        <label>Retry connecting every (s)
-          <input id="opt-retry" type="text" inputmode="numeric">
-        </label>
-        <div class="actions"><button class="btn" id="opt-save">Save</button></div>
       </div>
       <div class="card">
         <h2>HMI zoom</h2>
@@ -86,6 +74,18 @@
           <span id="zoom-val">100%</span>
           <button class="btn" id="zoom-plus">+</button>
         </div>
+      </div>
+      <div class="card">
+        <h2>Reset</h2>
+        <p class="hint">The HMI's address, behavior and zoom go back to the defaults.</p>
+        <div class="status" id="rst-hmi-st" hidden>
+          <div class="status-icon" id="rst-hmi-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="rst-hmi-st-title"></div>
+            <div class="status-sub" id="rst-hmi-st-sub"></div>
+          </div>
+        </div>
+        <div class="actions"><button class="btn danger hold" data-hold="3000" id="rst-hmi">Hold: reset HMI settings</button></div>
       </div>
     </section>
 
@@ -121,6 +121,20 @@
         <label>Network name (SSID)<input id="hid-ssid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
         <label>Password<input id="hid-pass" type="password" autocomplete="off"></label>
         <div class="actions"><button class="btn primary" id="hid-connect">Connect</button></div>
+      </div>
+      <!-- Saved connections that aren't up: their IP settings (loadNet). -->
+      <div id="net-other"></div>
+      <div class="card">
+        <h2>Reset</h2>
+        <p class="hint">Forgets every saved Wi-Fi network and IP setting. A cable gets its address by DHCP again.</p>
+        <div class="status" id="rst-net-st" hidden>
+          <div class="status-icon" id="rst-net-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="rst-net-st-title"></div>
+            <div class="status-sub" id="rst-net-st-sub"></div>
+          </div>
+        </div>
+        <div class="actions"><button class="btn danger hold" data-hold="3000" id="rst-net">Hold: reset network settings</button></div>
       </div>
     </section>
 
@@ -185,12 +199,30 @@
           <button data-v="bottom-left">↙ Bottom left</button>
           <button data-v="bottom-right">↘ Bottom right</button>
         </div>
-        <p class="hint" id="corner-hint" style="margin:14px 0 0"></p>
+      </div>
+      <div class="card">
+        <h2>Reset</h2>
+        <p class="hint">Brightness, accent color, orientation, scaling and the Settings corner go back to the defaults.</p>
+        <div class="status" id="rst-screen-st" hidden>
+          <div class="status-icon" id="rst-screen-st-icon"></div>
+          <div class="status-text">
+            <div class="status-title" id="rst-screen-st-title"></div>
+            <div class="status-sub" id="rst-screen-st-sub"></div>
+          </div>
+        </div>
+        <div class="actions"><button class="btn danger hold" data-hold="3000" id="rst-screen">Hold: reset display settings</button></div>
       </div>
     </section>
 
     <!-- SYSTEM -->
     <section id="tab-system" class="tab" hidden>
+      <div class="card" id="power-card">
+        <h2>Power</h2>
+        <div class="actions col">
+          <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
+          <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
+        </div>
+      </div>
       <div class="card">
         <h2>System</h2>
         <dl class="kv" id="sys-info"></dl>
@@ -217,30 +249,18 @@
             </button>
           </div>
           <div class="notes" id="upd-notes" hidden></div>
-          <div class="chan">
-            <div class="chan-head">Update channel</div>
-            <div class="seg" id="chan">
-              <button data-v="stable">Stable</button>
-              <button data-v="dev">Testing (dev)</button>
-            </div>
-            <p class="hint" id="chan-hint"></p>
-            <button class="btn primary hold" data-hold="1500" id="chan-switch" hidden></button>
-          </div>
         </div>
-        <div class="sep">
-          <h3>Custom system image</h3>
-          <p class="hint">Only images signed with the ghcr.io/lukemech key.</p>
-          <label for="sys-image">Image</label>
-          <div class="inline">
-            <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
-            <button class="btn hold" data-hold="1500" id="sys-switch">Switch</button>
-          </div>
-          <label for="sys-repo">Changelog (GitHub: owner/name)</label>
-          <div class="inline">
-            <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
-            <button class="btn hold" data-hold="1500" id="sys-repo-save">Save</button>
-          </div>
-        </div>
+      </div>
+      <div class="card">
+        <h2>Usage</h2>
+        <!-- Tiles drawn by app.js (loadUsage). -->
+        <div class="tiles" id="usage"></div>
+        <details class="log fold" id="usage-more">
+          <summary>Usage details</summary>
+          <h3 id="peaks-head">High usage</h3>
+          <ul class="peaks" id="usage-peaks"></ul>
+          <div class="actions"><button class="btn hold" data-hold="1500" id="peaks-clear">Hold: clear the list</button></div>
+        </details>
       </div>
       <div class="card">
         <h2>Language and region</h2>
@@ -259,10 +279,7 @@
           </dd>
           <dt>Host name</dt>
           <dd>
-            <span class="inline">
-              <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
-              <button class="btn" id="host-save" disabled>Save</button>
-            </span>
+            <input id="host-name" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="immutable-kiosk">
           </dd>
         </dl>
         <!-- Boot screen language status (kioskd writes its files). -->
@@ -321,11 +338,23 @@
         </div>
         <p class="hint" id="rb-hint" style="margin:14px 0 0"></p>
       </div>
-      <div class="card" id="power-card">
-        <h2>Power</h2>
-        <div class="actions col">
-          <button class="btn hold" data-hold="1500" id="pw-reboot">Hold: restart</button>
-          <button class="btn danger hold" data-hold="1500" id="pw-off">Hold: power off</button>
+      <div class="card" id="chan-card">
+        <h2>Update channel and image</h2>
+        <div class="seg" id="chan">
+          <button class="hold" data-hold="1500" data-v="stable">Stable</button>
+          <button class="hold" data-hold="1500" data-v="dev">Testing (dev)</button>
+        </div>
+        <p class="hint" id="chan-hint"></p>
+        <div class="sep">
+          <h3>Custom system image</h3>
+          <p class="hint">Only images signed with the ghcr.io/lukemech key.</p>
+          <label for="sys-image">Image</label>
+          <div class="inline">
+            <input id="sys-image" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghcr.io/lukemech/immutable-kiosk-x86:latest">
+            <button class="btn hold" data-hold="1500" id="sys-switch">Switch</button>
+          </div>
+          <label for="sys-repo">Changelog (GitHub: owner/name)</label>
+          <input id="sys-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LukeMech/immutable-kiosk">
         </div>
       </div>
     </section>
@@ -368,7 +397,10 @@
         <div class="actions" id="inst-failed" hidden>
           <button class="btn big" id="inst-retry">Back</button>
         </div>
-        <details class="log"><summary>Details</summary><pre id="inst-log"></pre></details>
+        <details class="log fold">
+          <summary>Details</summary>
+          <pre id="inst-log"></pre>
+        </details>
       </div>
     </section>
   </main>

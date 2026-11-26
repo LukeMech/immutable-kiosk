@@ -172,13 +172,10 @@ def version(entry):
 def cmd_setup():
     """Every boot: our GRUB snippet and a grubenv GRUB can write to."""
     if not GRUB_DIR.is_dir():
-        log(f"{GRUB_DIR} missing -- not a bootupd install, nothing to do")
-        return 0
+        return 0  # not a bootupd install
     write_boot_file(CUSTOM_CFG, GRUB_CFG.encode("utf-8"))
     if not GRUBENV.exists():
         save_env()
-    env = read_env()
-    log(f"kiosk_tries={env.get('kiosk_tries', '')!r} kiosk_fallback={env.get('kiosk_fallback', '')!r}")
     return 0
 
 
@@ -190,9 +187,6 @@ def cmd_arm():
     staged, queued = st.get("staged"), bool(st.get("rollbackQueued"))
     if not staged and not queued:
         return 0
-    nxt = staged or st.get("rollback")
-    log(f"next boot is {version(nxt) or 'a new deployment'}"
-        f" ({'staged update' if staged else 'queued rollback'}): {TRIES} tries")
     save_env(kiosk_tries=str(TRIES), kiosk_fallback="")
     FALLBACK_NOTE.unlink(missing_ok=True)  # a new attempt
     return 0
@@ -202,8 +196,6 @@ def cmd_watchdog():
     tries = read_env().get("kiosk_tries", "")
     if tries == "":
         return 0
-    log(f"trial boot of a new version ({tries} tries left after this one): "
-        f"rebooting unless the kiosk is up within {WATCHDOG_S} s")
     deadline = time.monotonic() + WATCHDOG_S
     while time.monotonic() < deadline:
         if OK_FLAG.exists():

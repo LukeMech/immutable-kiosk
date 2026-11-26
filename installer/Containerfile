@@ -34,8 +34,11 @@ RUN dnf install -y \
 RUN mkdir -p /usr/lib/immutable-kiosk \
     && echo installer > /usr/lib/immutable-kiosk/mode
 
-# ISO volume label and boot menu (read by image-builder).
-COPY installer/iso.yaml /usr/lib/image-builder/bootc/iso.yaml
+# ISO volume label and boot menu (read by image-builder), with the image's
+# own kernel arguments in its main entry.
+RUN --mount=type=bind,source=installer,target=/ctx/installer \
+    python3 /ctx/installer/render-iso-yaml.py /ctx/installer/iso.yaml /usr/lib/image-builder/bootc/iso.yaml \
+    && ! grep -q '@KARGS@' /usr/lib/image-builder/bootc/iso.yaml
 
 # Initramfs that finds its root on the ISO: the variant's initramfs.sh (or
 # a stock one) plus dmsquash-live.

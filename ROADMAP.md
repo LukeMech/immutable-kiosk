@@ -18,6 +18,14 @@
       the `x86` variant) as an extra rotation option.
 - [ ] Boot splash (plymouth) instead of a black screen while cage starts.
 - [ ] Settings: time zone / NTP server (industrial networks often have their own).
+- [ ] **Installer: reset the settings only**, keeping the installed system and
+      its version: recovers a tablet that can't reach its HMI any more (a
+      wrong Wi-Fi network saved, another network's static address). Mount the
+      disk's root and clear kioskd's config, the HMI's browser data, saved
+      connections and the host name in every deployment. A first try
+      (1d09809, reverted) didn't work right on the device: find out why
+      (mounting the btrfs root, ostree's per-deployment /etc, SELinux labels
+      on what's left) before bringing it back.
 
 ## Later
 

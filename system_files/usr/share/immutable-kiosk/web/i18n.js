@@ -1,8 +1,13 @@
 /* i18n.js -- the page is written in English; other languages translate it
  * live from lang/<code>.js. A MutationObserver translates every text node and
- * placeholder / title / aria-label as it appears (kioskd's English messages
- * included): EXACT (whole trimmed strings), then PATTERNS (anchored regexes,
- * first match wins). Unlisted text stays English.
+ * placeholder / title / aria-label as it appears: EXACT (whole trimmed
+ * strings). Unlisted text stays English.
+ * Text with values comes from templates: i18n.t("Connected to {ssid}",
+ * {ssid}) in app.js; kioskd's own (Msg) arrive with each API answer as
+ * "_i18n" {English text: [template, values]}, which api() hands to
+ * i18n.learn, so the observer translates them like the page's own. A
+ * template's translation is EXACT[template]: the same {names}, or a function
+ * of the values.
  * The language comes from kioskd's config (app.js calls i18n.use) and is
  * cached in localStorage so the page doesn't flash English first. Each
  * node's English original is kept, so a change of language re-translates the
@@ -20,16 +25,30 @@
     let lang = "en";
     try { lang = localStorage.getItem("ik-lang") || "en"; } catch (_) { /* no storage */ }
 
+    // kioskd's texts with values: English text -> [template, values].
+    const LEARNED = new Map();
+
+    // A template filled in, in the page's language. Values are translated
+    // too when they're English text themselves (a job's title in an error);
+    // a function translation gets them as they are.
+    function t(template, values) {
+        const v = values || {};
+        const dict = DICTS[lang];
+        const out = dict ? dict.EXACT[template] : undefined;
+        if (typeof out === "function") return out(v);
+        return (out === undefined ? template : out).replace(/\{(\w+)\}/g, (m, k) =>
+            k in v ? (dict ? tr(String(v[k])) : String(v[k])) : m);
+    }
+
     function tr(text) {
         const dict = DICTS[lang];
         if (!dict || !text) return text;
         const s = text.trim();
         if (!s) return text;
         let out = dict.EXACT[s];
-        if (out === undefined) {
-            for (const [re, rep] of dict.PATTERNS) {
-                if (re.test(s)) { out = s.replace(re, rep); break; }
-            }
+        if (typeof out !== "string") {
+            const known = LEARNED.get(s);
+            out = known ? t(known[0], known[1]) : undefined;
         }
         return out === undefined ? text : text.replace(s, out);
     }
@@ -102,6 +121,19 @@
     window.i18n = {
         get lang() { return lang; },
         tr,
+        t,
+        // kioskd's "_i18n": its texts with values, as it built them.
+        learn(map) {
+            for (const [text, tv] of Object.entries(map || {})) {
+                LEARNED.delete(text);
+                LEARNED.set(text, tv);
+            }
+            // Progress texts change every second: keep the newest only.
+            for (const old of LEARNED.keys()) {
+                if (LEARNED.size <= 300) break;
+                LEARNED.delete(old);
+            }
+        },
         // kioskd's language: the page re-translated in place if it differs.
         // True if it changed (app.js then redraws what it formats itself).
         use(l) {
