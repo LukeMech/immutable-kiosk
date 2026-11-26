@@ -3,11 +3,13 @@
 #   - default-rotation.json (12-default-rotation.py): kioskd substring-matches
 #     dmi_product against DMI product_name; used until set in Settings.
 #     Unknown hardware gets [default]'s.
-#   - the panel-orientation kernel argument (20-panel-orientation.py).
+#   - the boot splash's rotation (20-panel-orientation.py): from rotation,
+#     on panel_connector, so the first boot already matches it.
 # name is for humans only.
 #
 # rotation: "portrait" | "landscape" (from the panel's native mode), or a
-# wlr-randr transform: "normal" | "90" | "180" | "270".
+# wlr-randr transform: "normal" | "90" | "180" | "270" -- a transform when
+# panel_connector is set (the panel's native mode isn't known at build time).
 
 [default]
 rotation = "landscape"
@@ -16,15 +18,9 @@ rotation = "landscape"
 name = "HP Pro Tablet 408 G1 (Intel Atom Z3736F, 32-bit UEFI)"
 variant = "x86"
 dmi_product = "HP Pro Tablet 408"
-# A portrait 800x1280 panel: "landscape" is transform "90". kioskd rewrites
-# the splash's panel_orientation from the transform at every start (90 =
-# left_side_up, 270 = right_side_up), so panel_orientation below only holds
-# until then and must agree with this.
-rotation = "landscape"
+# A portrait 800x1280 panel: "270" is landscape (as "90"), turned the other way.
+rotation = "270"
 # Firmware only boots EFI/BOOT/BOOTIA32.EFI (checked in build-media.yml).
 efi_ia32 = true
-# Splash/console orientation (video=<connector>:panel_orientation=...): a
-# portrait 800x1280 panel mounted sideways, top on the left. Values: normal,
-# upside_down, left_side_up, right_side_up.
+# The built-in panel's connector: the boot splash turns with rotation on it.
 panel_connector = "DSI-1"
-panel_orientation = "left_side_up"

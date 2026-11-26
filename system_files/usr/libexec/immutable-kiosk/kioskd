@@ -2859,7 +2859,8 @@ CAGE_UNIT = "immutable-kiosk-cage.service"
 # A Settings rotation rewrites it in the BLS entries' options lines; ostree
 # reads kargs back from there, so it survives bootc upgrade. (Not `ostree
 # admin kargs edit-in-place`: it only appends, and the kernel takes the
-# first video=<connector>.) HP 408: left_side_up is the kiosk's "90".
+# first video=<connector>.) The build sets it from devices.toml the same way
+# (20-panel-orientation.py); keep the two mappings alike.
 PANEL_ORIENTATIONS = {"normal": "normal", "90": "left_side_up",
                       "180": "upside_down", "270": "right_side_up"}
 BLS_ENTRIES = Path("/boot/loader/entries")
