@@ -9,9 +9,10 @@
       kioskd watches for a stick with `immutable-kiosk-*.oci.tar`, verifies its
       cosign signature, `bootc switch --transport oci-archive …`; release
       workflow publishes that archive. For sites without internet.
-- [ ] **Scheduled updates**: "download automatically, apply only on the
-      button" (a timer running `bootc upgrade` without `--apply`) and a
-      "new version ready" badge on the hot corner / Settings.
+- [x] **Automatic updates**: downloaded and staged in the background,
+      applied only by a restart from the update card over the HMI.
+- [ ] Automatic updates: a time window (e.g. only at night), and an
+      optional automatic restart in it.
 - [ ] **Brightness** slider (`/sys/class/backlight`) and **screen blanking**
       schedule (night off, wake on touch).
 - [ ] Auto-rotation from the accelerometer (`iio-sensor-proxy` is already in

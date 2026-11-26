@@ -190,6 +190,9 @@ window.I18N_LANGS.pl = function (tr) {
         "Update": "Aktualizuj",
         "Hold: restart now": "Przytrzymaj: uruchom ponownie teraz",
         "Check for updates": "Sprawdź aktualizacje",
+        "Automatic updates": "Automatyczne aktualizacje",
+        "New versions download and install in the background. They start after a restart, when you choose it.":
+            "Nowe wersje pobierają się i instalują w tle. Włączają się po restarcie, kiedy go wybierzesz.",
         "none": "brak",
         "Stable": "Stabilny",
         "Testing (dev)": "Testowy (dev)",
@@ -374,6 +377,7 @@ window.I18N_LANGS.pl = function (tr) {
         // ---- kioskd: jobs (titles, stages, steps, details)
         "Checking for updates": "Sprawdzanie aktualizacji",
         "System update": "Aktualizacja systemu",
+        "Automatic update": "Aktualizacja automatyczna",
         "Restoring the previous version": "Przywracanie poprzedniej wersji",
         "Download": "Pobieranie",
         "Preparing locally": "Przygotowanie lokalne",

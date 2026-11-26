@@ -146,6 +146,8 @@ window.kioskShown = () => {
     if (cfg && cfg.mode !== "installer") { showTab(currentTab); refreshDevice(); }
 };
 window.kioskHidden = () => { settingsVisible = false; };
+// kiosk-shell's update card tapped: Settings opens on System (kioskShown follows).
+window.kioskOpenTab = name => { currentTab = name; };
 
 /* ---------- HMI */
 let hmiDraft = null;
@@ -1171,6 +1173,7 @@ function renderPeaks(u) {
 async function loadSystem() {
     try { sys = await api("/system"); }
     catch (e) { sys = { available: false, error: e.message }; }
+    if (cfg) $("opt-auto-upd").checked = cfg.auto_update !== false;
     renderSysInfo();
     renderUpdate();
     followSysJob();
@@ -1380,6 +1383,10 @@ function initSystem() {
     // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
+    // kioskd checks hourly and stages new versions; kiosk-shell's card offers the restart.
+    $("opt-auto-upd").addEventListener("change", e => saveCfg({ auto_update: e.target.checked })
+        .then(c => { e.target.checked = c.auto_update !== false; })
+        .catch(err => { toast(err.message, true); e.target.checked = !e.target.checked; }));
     $("chan").querySelectorAll("button").forEach(b => holdButton(b, () =>
         api("/system/channel", { channel: b.dataset.v })
             .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
@@ -1489,7 +1496,11 @@ function initEvents() {
         currentTab === "net" ? Promise.all([loadWifi(false, true), loadNet(true)]) : null,
     ]).catch(() => {}));
     const net = () => { netLive(); };
-    const config = () => api("/config").then(c => { cfg = c; if (currentTab === "screen") loadScreen(); }).catch(() => {});
+    const config = () => api("/config").then(c => {
+        cfg = c;
+        $("opt-auto-upd").checked = c.auto_update !== false;
+        if (currentTab === "screen") loadScreen();
+    }).catch(() => {});
     const system = () => { if (currentTab === "system") loadSystem(); };
     listen({
         net: vis(net), power: vis(refreshDevice), clock: vis(refreshDevice), device: vis(refreshDevice),

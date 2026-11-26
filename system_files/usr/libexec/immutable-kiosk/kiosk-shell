@@ -15,12 +15,19 @@ then nothing switches by itself.
 Separate views, not an <iframe>: HMI servers often forbid framing, and the
 HMI never shares a JavaScript context with Settings. Settings talks back
 through the "kiosk" script message handler.
+
+Over the HMI (and "Connecting…"), a small update card in the corner across
+from the Settings corner follows kioskd's updates (/api/update): a version
+found and downloading, the download and install's progress, then "ready to
+restart" with a hold-to-restart button. Each can be hidden; tapping the
+card opens Settings → System.
 """
 
 import errno
 import http.client
 import json
 import os
+import re
 import signal
 import socket
 import ssl
@@ -70,7 +77,7 @@ import gi  # noqa: E402
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
 WebKit = None  # load_webkit()
 
@@ -88,12 +95,39 @@ window.splashing, window.splashing stack, window.splashing .splash { background:
 .connecting { background: #000; }
 .connecting progressbar trough, .connecting progressbar progress { min-height: 8px; border-radius: 4px; border: 0; }
 .connecting label { font-size: 20px; }
+
+.updcard { background: rgba(21, 27, 35, 0.96); border-radius: 16px; padding: 12px 14px 14px 16px;
+           margin: 16px; border: 1px solid rgba(255, 255, 255, 0.08);
+           box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5); }
+.updcard label { color: #e6edf3; }
+.updcard label.title { font-size: 17px; font-weight: 600; }
+.updcard label.sub, .updcard label.pct { font-size: 14px; color: #9aa7b4; }
+.updcard progressbar trough, .updcard progressbar progress { min-height: 6px; border-radius: 3px; border: 0; }
+.updcard progressbar trough { background: #2a3542; }
+.updcard button { background: #2a3542; background-image: none; color: #e6edf3; border: 0;
+                  box-shadow: none; border-radius: 10px; min-height: 40px; padding: 0 16px; }
+.updcard button label { font-size: 15px; font-weight: 600; }
+.updcard button:active { background: #3a4757; }
+.updcard .hold progressbar trough, .updcard .hold progressbar progress { min-height: 40px; border-radius: 10px; }
+.updcard .hold label { font-size: 15px; font-weight: 600; color: #fff; padding: 0 18px; }
 """
 
 # The connecting screen's bar: kiosk-splash's colours and size (splash-bar.json).
 SPLASH_DATA = Path("/usr/share/immutable-kiosk/splash-bar.json")
 
 RETRY_S = 3  # an HMI that can't be reached or loaded: tried again after (as kioskd's check)
+
+# The update card (kioskd's /api/update).
+UPDATE_HIDDEN = CACHE / "update-hidden.json"  # what was hidden, kept across restarts of the kiosk
+UPDATE_RUNNING = ("found", "download", "install")
+UPDATE_FAILED_S = 20  # a failed update's card hides by itself after this
+RESTART_HOLD_S = 1.5  # Settings' "Hold: restart now" (data-hold="1500")
+
+
+def version_label(v):
+    """As Settings' labelVersion: "v45.20261122.1-778b844" -> "v45.20261122.1"."""
+    m = re.match(r"^(v\d+\.\d{8}(?:\.\d+)?)-[0-9a-f]{7,}$", v or "")
+    return m.group(1) if m else (v or "")
 
 CORNERS = {
     "top-left": (Gtk.Align.START, Gtk.Align.START),
@@ -265,6 +299,15 @@ class KioskShell(Gtk.Application):
         # otherwise the connecting screen, until it is.
         self.hmi_ready = False
         self.hmi_loading = False  # load_hmi until the page finishes or fails
+        # The update card: kioskd's last /api/update, what was hidden (by
+        # update_key), a fetch in flight / wanted again, timers.
+        self.upd = {"phase": "idle"}
+        self.upd_hidden = []
+        self.upd_fetching = False
+        self.upd_again = False
+        self.upd_poll = None
+        self.upd_pulse = None
+        self.upd_timers = set()  # failed cards' keys with their auto-hide pending
 
     # -- setup
     def do_activate(self):
@@ -341,6 +384,9 @@ class KioskShell(Gtk.Application):
             self.stack.add_named(self.hmi, "hmi")
             self.hotcorner = self.make_hotcorner()
             self.overlay.add_overlay(self.hotcorner)
+            self.load_update_hidden()
+            self.upd_card = self.make_update_card()
+            self.overlay.add_overlay(self.upd_card)
             self.apply_hmi_config()
             if not self.cfg.get("hmi_url"):
                 # No address at boot: an HMI set up later says nothing about
@@ -364,6 +410,7 @@ class KioskShell(Gtk.Application):
             self.ensure_settings()
         GLib.timeout_add_seconds(30, self.reveal)
         threading.Thread(target=self.listen_events, daemon=True).start()
+        self.fetch_update()
 
     def start_hmi(self):
         if self.hmi and not self.hmi_started:
@@ -385,6 +432,8 @@ class KioskShell(Gtk.Application):
                         topics = json.loads(line[5:])
                         if "net" in topics:
                             GLib.idle_add(self.on_net_change)
+                        if "job" in topics or "system" in topics:
+                            GLib.idle_add(self.fetch_update)
                         if "hmi" in topics:
                             try:
                                 st = api_get("/api/hmi/state")
@@ -471,6 +520,9 @@ class KioskShell(Gtk.Application):
             f".connecting progressbar progress {{ background: {rgb(fill, '#2f81f7')}; }}\n"
             f".connecting label {{ color: {rgb(d.get('text'), '#e6edf3')}; }}\n"
             f".hotcorner.armed {{ background: radial-gradient(circle, {glow} 0%, transparent 70%); }}\n"
+            f".updcard progressbar progress {{ background: {rgb(fill, '#2f81f7')}; }}\n"
+            f".updcard .hold progressbar trough {{ background: {rgb(fill, '#2f81f7')}; }}\n"
+            ".updcard .hold progressbar progress { background: rgba(255, 255, 255, 0.3); }\n"
             ).encode())
 
     def pulse(self, on):
@@ -556,6 +608,246 @@ class KioskShell(Gtk.Application):
         box.add_controller(press)
         return box
 
+    # -- update card
+    def make_update_card(self):
+        """Title and a line under it, Hide on the right; the bar under them;
+        for "ready" the Hide / Hold: restart row instead."""
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=360)
+        card.add_css_class("updcard")
+        head = Gtk.Box(spacing=12)
+        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True, valign=Gtk.Align.CENTER)
+        top = Gtk.Box(spacing=8)
+        self.upd_title = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
+        self.upd_title.add_css_class("title")
+        self.upd_pct = Gtk.Label(xalign=1)
+        self.upd_pct.add_css_class("pct")
+        top.append(self.upd_title)
+        top.append(self.upd_pct)
+        self.upd_sub = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        self.upd_sub.add_css_class("sub")
+        texts.append(top)
+        texts.append(self.upd_sub)
+        self.upd_hide = Gtk.Button(valign=Gtk.Align.CENTER)
+        self.upd_hide.connect("clicked", lambda _b: self.hide_update())
+        head.append(texts)
+        head.append(self.upd_hide)
+        self.upd_bar = Gtk.ProgressBar(pulse_step=0.05)
+        self.upd_actions = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+        self.upd_later = Gtk.Button()
+        self.upd_later.connect("clicked", lambda _b: self.hide_update())
+        self.upd_restart, self.upd_restart_label = self.make_hold_button(RESTART_HOLD_S, self.restart_now)
+        self.upd_actions.append(self.upd_later)
+        self.upd_actions.append(self.upd_restart)
+        card.append(head)
+        card.append(self.upd_bar)
+        card.append(self.upd_actions)
+        # A tap on the card itself (its buttons claim theirs): Settings → System.
+        tap = Gtk.GestureClick()
+        tap.connect("released", lambda *a: self.open_update_settings())
+        card.add_controller(tap)
+        rev = Gtk.Revealer(child=card, reveal_child=False, visible=False,
+                           transition_type=Gtk.RevealerTransitionType.CROSSFADE, transition_duration=250)
+        # Gone once faded out: nothing left there to catch a touch.
+        rev.connect("notify::child-revealed", lambda r, _p: r.set_visible(r.get_reveal_child()))
+        return rev
+
+    def make_hold_button(self, seconds, on_done):
+        """A button held `seconds` to act, filling up meanwhile (Settings'
+        hold buttons): a bar under its label."""
+        bar = Gtk.ProgressBar(valign=Gtk.Align.CENTER)
+        label = Gtk.Label()
+        box = Gtk.Overlay(child=bar)
+        box.add_overlay(label)
+        box.set_measure_overlay(label, True)
+        box.add_css_class("hold")
+        held = {"t0": None, "tick": None}
+
+        def tick(widget, clock):
+            done = (clock.get_frame_time() / 1e6 - held["t0"]) / seconds
+            bar.set_fraction(min(1.0, done))
+            if done < 1:
+                return GLib.SOURCE_CONTINUE
+            held.update(t0=None, tick=None)
+            on_done()
+            return GLib.SOURCE_REMOVE
+
+        def press(gesture, *_a):
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)  # not the card's tap
+            clock = box.get_frame_clock()
+            if clock and held["tick"] is None:
+                held["t0"] = clock.get_frame_time() / 1e6
+                held["tick"] = box.add_tick_callback(tick)
+
+        def release(*_a):
+            if held["tick"] is not None:
+                box.remove_tick_callback(held["tick"])
+            held.update(t0=None, tick=None)
+            bar.set_fraction(0)
+
+        g = Gtk.GestureClick()
+        g.connect("pressed", press)
+        g.connect("released", release)
+        g.connect("stopped", release)
+        g.connect("cancel", release)
+        box.add_controller(g)
+        return box, label
+
+    def fetch_update(self):
+        """kioskd's /api/update, in the background; one at a time."""
+        if not self.hmi:
+            return GLib.SOURCE_REMOVE
+        if self.upd_fetching:
+            self.upd_again = True
+            return GLib.SOURCE_REMOVE
+        self.upd_fetching = True
+
+        def work():
+            try:
+                n = api_get("/api/update", timeout=5)
+            except (OSError, ValueError):
+                n = None
+            GLib.idle_add(self.on_update, n)
+        threading.Thread(target=work, daemon=True).start()
+        return GLib.SOURCE_REMOVE
+
+    def on_update(self, n):
+        self.upd_fetching = False
+        if isinstance(n, dict):
+            self.upd = n
+        if self.upd_again:
+            self.upd_again = False
+            self.fetch_update()
+        self.render_update()
+        # A running update on screen: its bar followed every second (the
+        # install's bar is time-paced, with no events of its own).
+        if self.upd_card.get_reveal_child() and self.upd.get("phase") in UPDATE_RUNNING and not self.upd_poll:
+            def poll():
+                self.upd_poll = None
+                self.fetch_update()
+                return GLib.SOURCE_REMOVE
+            self.upd_poll = GLib.timeout_add(1000, poll)
+        return GLib.SOURCE_REMOVE
+
+    @staticmethod
+    def update_key(n):
+        """What Hide hides: a version's download and install (every try of
+        it), a version's "ready", one failure."""
+        phase = n.get("phase")
+        if phase in UPDATE_RUNNING:
+            return "run:" + (n.get("digest") or n.get("id", ""))
+        if phase == "ready":
+            return "ready:" + n.get("digest", "")
+        return "failed:" + n.get("id", "")
+
+    def render_update(self):
+        if not self.hmi:
+            return
+        n = self.upd
+        phase = n.get("phase", "idle")
+        on_hmi = self.stack.get_visible_child_name() in ("hmi", "connecting")
+        want = phase != "idle" and on_hmi and self.update_key(n) not in self.upd_hidden
+        if want:
+            self.fill_update(n)
+            if phase == "failed":
+                key = self.update_key(n)
+                if key not in self.upd_timers:
+                    self.upd_timers.add(key)
+                    GLib.timeout_add_seconds(UPDATE_FAILED_S, lambda: (self.hide_update(key), GLib.SOURCE_REMOVE)[1])
+        self.update_pulse(want and phase == "found")
+        if want:
+            self.upd_card.set_visible(True)
+        self.upd_card.set_reveal_child(want)
+
+    def fill_update(self, n):
+        phase = n.get("phase")
+        version = version_label(n.get("version")) or self.t("nowa wersja", "a new version")
+        fraction = n.get("fraction")
+        pct = f"{fraction * 100:.0f}%" if isinstance(fraction, (int, float)) else ""
+        ready = phase == "ready"
+        if phase == "found":
+            title = self.t("Znaleziono aktualizację", "Update found")
+            sub = self.t(f"{version} · pobieranie…", f"{version} · downloading…")
+        elif phase == "download":
+            title = self.t("Pobieranie aktualizacji", "Downloading the update")
+            mb = n.get("mb") or {}
+            sub = f"{version} · {mb['done']} / {mb['total']} MB" if mb.get("done") and mb.get("total") else version
+        elif phase == "install":
+            title = self.t("Instalowanie aktualizacji", "Installing the update")
+            sub = self.t(f"{version} · kiosk działa normalnie", f"{version} · the kiosk keeps working")
+        elif ready:
+            title = self.t("Aktualizacja gotowa", "Update ready")
+            sub = self.t(f"{version} włączy się po restarcie", f"{version} starts after a restart")
+        else:  # failed
+            title = self.t("Aktualizacja nie powiodła się", "The update failed")
+            sub = (self.t("Kolejna próba później", "It will be tried again later") if n.get("background")
+                   else n.get("error") or "")
+        self.upd_title.set_label(title)
+        self.upd_sub.set_label(sub)
+        self.upd_pct.set_label(pct if phase in ("download", "install") else "")
+        self.upd_pct.set_visible(phase in ("download", "install"))
+        self.upd_bar.set_visible(phase in UPDATE_RUNNING)
+        if phase in ("download", "install"):
+            self.upd_bar.set_fraction(max(0.0, min(1.0, fraction or 0.0)))
+        self.upd_hide.set_label(self.t("Ukryj", "Hide"))
+        self.upd_hide.set_visible(not ready)
+        self.upd_actions.set_visible(ready)
+        self.upd_later.set_label(self.t("Ukryj", "Hide"))
+        if not getattr(self, "restarting", False):
+            self.upd_restart_label.set_label(self.t("Przytrzymaj: restart", "Hold: restart"))
+
+    def update_pulse(self, on):
+        """The bar's moving segment while a version is found, before bytes come."""
+        if on and not self.upd_pulse:
+            self.upd_pulse = GLib.timeout_add(80, lambda: (self.upd_bar.pulse(), True)[1])
+        elif not on and self.upd_pulse:
+            GLib.source_remove(self.upd_pulse)
+            self.upd_pulse = None
+
+    def load_update_hidden(self):
+        try:
+            hidden = json.loads(UPDATE_HIDDEN.read_text())
+            self.upd_hidden = [k for k in hidden if isinstance(k, str)][-20:]
+        except (OSError, ValueError, TypeError):
+            self.upd_hidden = []
+
+    def hide_update(self, key=None):
+        """Hide: this card, and the same one again (update_key)."""
+        key = key or self.update_key(self.upd)
+        if key not in self.upd_hidden:
+            self.upd_hidden = (self.upd_hidden + [key])[-20:]
+            try:
+                CACHE.mkdir(parents=True, exist_ok=True)
+                (CACHE / "update-hidden.tmp").write_text(json.dumps(self.upd_hidden))
+                (CACHE / "update-hidden.tmp").replace(UPDATE_HIDDEN)
+            except OSError as e:
+                log("update card:", e)
+        self.render_update()
+
+    def restart_now(self):
+        """Held through: kioskd restarts (its restart screen comes up at once)."""
+        self.restarting = True
+        self.upd_restart_label.set_label(self.t("Restartowanie…", "Restarting…"))
+
+        def work():
+            try:
+                api_post("/api/power", {"action": "reboot"}, timeout=10)
+            except (OSError, ValueError) as e:
+                log("restart:", e)
+                GLib.idle_add(self.restart_failed)
+        threading.Thread(target=work, daemon=True).start()
+
+    def restart_failed(self):
+        self.restarting = False
+        self.render_update()
+        return GLib.SOURCE_REMOVE
+
+    def open_update_settings(self):
+        """The card tapped: Settings on its System tab (kioskShown, run by
+        show, opens the tab app.js was told here)."""
+        self.settings.evaluate_javascript("window.kioskOpenTab && window.kioskOpenTab('system')", -1,
+                                          None, None, None, None, None)
+        self.open_settings()
+
     # -- switching
     def ensure_settings(self):
         if not self.settings_loaded:
@@ -585,6 +877,10 @@ class KioskShell(Gtk.Application):
         self.pulse(name == "connecting")
         if self.hmi:
             self.hotcorner.set_visible(name in ("hmi", "connecting"))
+            # The update card only over the HMI; it may have changed meanwhile.
+            self.render_update()
+            if name in ("hmi", "connecting"):
+                self.fetch_update()
         # Settings runs behind the HMI: it refreshes on events only while shown.
         if name == "settings":
             self.settings.evaluate_javascript("window.kioskShown && window.kioskShown()", -1,
@@ -613,8 +909,10 @@ class KioskShell(Gtk.Application):
             self.load_hmi()
 
     def place_corners(self):
-        """The Settings corner where configured. Re-added rather than
-        re-aligned: GTK doesn't move a placed overlay child."""
+        """The Settings corner where configured, the update card in the
+        other corner of the same edge (clear of the Settings corner's hold).
+        Re-added rather than re-aligned: GTK doesn't move a placed overlay
+        child."""
         corner = self.cfg.get("settings_corner", "top-right")
         if corner not in CORNERS:
             corner = "top-right"
@@ -623,6 +921,10 @@ class KioskShell(Gtk.Application):
         self.hotcorner.set_halign(h)
         self.hotcorner.set_valign(v)
         self.overlay.add_overlay(self.hotcorner)
+        self.overlay.remove_overlay(self.upd_card)
+        self.upd_card.set_halign(Gtk.Align.START if h == Gtk.Align.END else Gtk.Align.END)
+        self.upd_card.set_valign(v)
+        self.overlay.add_overlay(self.upd_card)
 
     def apply_scale(self):
         """Screen scaling is WebKit zoom; the HMI also gets its own zoom."""

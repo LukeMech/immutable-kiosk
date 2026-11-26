@@ -54,7 +54,8 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
 - Destructive actions (reboot, rollback, install, forget network) are
   **hold-to-confirm** buttons, not dialogs.
 - No suspend, power key ignored (long press still forces off), Fedora's
-  auto-update-and-reboot timer disabled: updates happen from Settings.
+  auto-update-and-reboot timer disabled: kioskd downloads updates itself
+  and never restarts on its own (see Updates).
 
 ## Installing
 
@@ -81,6 +82,15 @@ Settings → **System**: *Check for updates* / *Update* (`bootc upgrade`, the
 new image starts after a restart), the update channel -- *Stable* (`:latest`,
 releases) or *Testing* (`:dev`, every build of the `dev` branch) -- rollback
 to the previous image, and switching to any other image (`bootc switch`).
+
+**Automatic updates** (System → *Automatic updates*, on by default): kioskd
+checks the registry every hour once the boot is confirmed good and, when a
+new version is out, downloads and stages it in the background (`bootc
+upgrade` at the lowest CPU priority, never `--apply`). A small card over
+the HMI, in the corner across from the Settings corner, follows it: the
+version found and downloading, one progress bar for the download and the
+install, then *Update ready* with *Hold: restart*. Each card has *Hide*
+(hidden for that version); tapping the card opens Settings → System.
 The enforced signature policy (from immutable-sbc) only accepts
 `ghcr.io/lukemech/*` images signed with the repo's cosign key.
 
