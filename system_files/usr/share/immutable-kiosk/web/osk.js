@@ -4,6 +4,9 @@
  * Types with execCommand("insertText") so frameworks (TcHmi, React) see
  * real input events. Lives in a closed shadow root, isolated from page CSS.
  * "ąę" accents the next letter, like AltGr.
+ * Coloured by the accent (Settings → Display), --ik-accent: inherited from
+ * the Settings page; in the HMI kiosk-shell passes it in
+ * (window.__kioskOskAccent) and changes it live (__kioskOskSetAccent).
  */
 (() => {
     "use strict";
@@ -72,15 +75,23 @@
     }
     button.fn { background: #222b36; font-size: 19px; color: #b9c5d1; }
     button.on { background: var(--ik-accent, #2f81f7); color: #fff; }
-    button.lock { background: var(--ik-accent, #1f6feb); color: #fff; box-shadow: inset 0 -3px 0 #fff; }
+    button.lock { background: var(--ik-accent, #2f81f7); color: #fff; box-shadow: inset 0 -3px 0 #fff; }
     button.down { filter: brightness(1.45); }
-    button.enter { background: #238636; color: #fff; }
-    button sup { position: absolute; top: 4px; right: 7px; font-size: 13px; color: #8fb8ff; }
+    button.enter { background: var(--ik-accent, #2f81f7); color: #fff; }
+    button sup { position: absolute; top: 4px; right: 7px; font-size: 13px;
+        color: color-mix(in srgb, var(--ik-accent, #2f81f7) 45%, #fff); }
     `;
 
     let host = null, root = null, kb = null;
     let target = null, layout = "abc", shift = 0 /* 0 off, 1 once, 2 lock */, pl = false;
     let lastShiftTap = 0, hideTimer = null, repeatTimer = null;
+
+    // The accent from kiosk-shell, on the keyboard's own element: an inline
+    // style set from script, which a strict CSP allows.
+    function setAccent(hex) {
+        if (host && /^#[0-9a-f]{6}$/i.test(hex || "")) host.style.setProperty("--ik-accent", hex);
+    }
+    window.__kioskOskSetAccent = hex => { window.__kioskOskAccent = hex; setAccent(hex); };
 
     function editable(el) {
         if (!el || el.disabled || el.readOnly) return false;
@@ -120,6 +131,7 @@
             root.prepend(style);
         }
         (document.body || document.documentElement).appendChild(host);
+        setAccent(window.__kioskOskAccent);
         // Keep focus in the field: nothing on the keyboard may take it.
         for (const ev of ["pointerdown", "mousedown", "touchstart"]) {
             kb.addEventListener(ev, e => e.preventDefault(), { passive: false });

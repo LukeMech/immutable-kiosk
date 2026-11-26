@@ -536,6 +536,14 @@ class KioskShell(Gtk.Application):
             ".updcard .hold progressbar progress { background: rgba(255, 255, 255, 0.3); }\n"
             ).encode())
 
+    def accent_hex(self):
+        """The accent (Settings' Display tab) as #rrggbb: kiosk-splash's table
+        (splash-bar.json, the same colours as Settings' app.js ACCENTS)."""
+        d = getattr(self, "splash_data", {}) or {}
+        accents = d.get("accents", {})
+        fill = accents.get(self.cfg.get("accent")) or accents.get(d.get("default_accent"))
+        return "#%02x%02x%02x" % tuple(fill[:3]) if fill else "#2f81f7"
+
     def pulse(self, on):
         """The connecting screen's moving segment, only while it shows."""
         if on and not self.pulse_source:
@@ -982,10 +990,20 @@ class KioskShell(Gtk.Application):
         ucm = self.hmi.get_user_content_manager()
         ucm.remove_all_scripts()
         osk = bool(cfg.get("osk_in_hmi", True) and OSK_JS.exists())
+        accent = json.dumps(self.accent_hex())
         if osk:
+            # The accent first: osk.js colours itself with it (setAccent).
             ucm.add_script(WebKit.UserScript.new(
-                OSK_JS.read_text(), WebKit.UserContentInjectedFrames.ALL_FRAMES,
+                f"window.__kioskOskAccent = {accent};\n" + OSK_JS.read_text(),
+                WebKit.UserContentInjectedFrames.ALL_FRAMES,
                 WebKit.UserScriptInjectionTime.END, None, None))
+            # A new accent: the open page's keyboard recoloured at once (its
+            # main frame; other frames get it with their next load).
+            if self.hmi_started and getattr(self, "osk_accent", accent) != accent:
+                self.hmi.evaluate_javascript(
+                    f"window.__kioskOskSetAccent ? window.__kioskOskSetAccent({accent})"
+                    f" : (window.__kioskOskAccent = {accent})", -1, None, None, None, None, None)
+        self.osk_accent = accent
         # A user script only takes effect on the next page load: a changed
         # OSK option reloads the HMI, or the open page keeps the old one.
         osk_changed = getattr(self, "osk_loaded", osk) != osk
