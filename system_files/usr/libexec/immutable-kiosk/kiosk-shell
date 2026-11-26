@@ -613,7 +613,34 @@ class KioskShell(Gtk.Application):
         view.connect("web-process-terminated", lambda v, r: self.load_hmi())
         # target=_blank / window.open: stay in the same view, there are no other windows.
         view.connect("create", self.on_hmi_create)
+        view.connect("script-dialog", self.on_hmi_script_dialog)
+        view.connect("authenticate", lambda v, req: self.hmi_asks())
         return view
+
+    def on_hmi_script_dialog(self, view, dialog):
+        """The page's "Leave this page?" (beforeunload) always leaves: the
+        kiosk navigates on its own (a new address, a reload) while the HMI
+        may be hidden behind Settings or "Connecting…", where that question
+        would wait unseen and the new page never load. Other dialogs (alert,
+        confirm, prompt): WebKit's, the HMI shown for them (hmi_asks)."""
+        if dialog.get_dialog_type() == WebKit.ScriptDialogType.BEFORE_UNLOAD_CONFIRMATION:
+            dialog.confirm_set_confirmed(True)
+            return True
+        return self.hmi_asks()
+
+    def hmi_asks(self):
+        """The HMI asks something (an HTTP login, a dialog) before its page
+        has loaded: WebKit's dialog is drawn in the HMI's view, so the view
+        shows now -- behind "Connecting…" it would wait unseen and the page
+        never finish. Settings opened on purpose stays; Back to HMI shows it.
+        False: WebKit's own dialog."""
+        if not self.hmi_ready:
+            self.hmi_ready = True  # on screen and usable, if not yet loaded
+            if self.waiting_for_hmi:
+                self.waiting_for_hmi = False
+                if self.stack.get_visible_child_name() in ("splash", "connecting"):
+                    self.show("hmi")
+        return False
 
     def make_hotcorner(self):
         box = Gtk.Box(width_request=72, height_request=72)
