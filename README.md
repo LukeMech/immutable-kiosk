@@ -93,7 +93,8 @@ to the previous image, and switching to any other image (`bootc switch`).
 checks the registry every hour once the boot is confirmed good and, when a
 new version is out, downloads and stages it in the background (`bootc
 upgrade` at the lowest CPU priority, never `--apply`). A small card over
-the HMI, in the corner across from the Settings corner, follows it: the
+the HMI, in the Settings corner (still held over it; the card's buttons
+on its far side), follows it: the
 version found and downloading, one progress bar for the download and the
 install, then *Update ready* with *Hold: restart*. Each card has *Hide*
 (hidden for that version); tapping the card opens Settings → System.

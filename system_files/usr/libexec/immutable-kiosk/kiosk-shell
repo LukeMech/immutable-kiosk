@@ -16,8 +16,9 @@ Separate views, not an <iframe>: HMI servers often forbid framing, and the
 HMI never shares a JavaScript context with Settings. Settings talks back
 through the "kiosk" script message handler.
 
-Over the HMI (and "Connecting…"), a small update card in the corner across
-from the Settings corner follows kioskd's updates (/api/update): a version
+Over the HMI (and "Connecting…"), a small update card in the Settings
+corner (which stays above it, still held to open Settings; the card's
+buttons on its far side) follows kioskd's updates (/api/update): a version
 found and downloading, the download and install's progress, then "ready to
 restart" with a hold-to-restart button. Each can be hidden; tapping the
 card opens Settings → System. The same card, over any view and ahead of
@@ -650,7 +651,8 @@ class KioskShell(Gtk.Application):
         self.upd_hide.connect("clicked", lambda _b: self.cancel_power() if self.card_kind == "power"
                               else self.hide_update())
         head.append(texts)
-        head.append(self.upd_hide)
+        head.append(self.upd_hide)  # on the side away from the Settings corner: place_corners()
+        self.upd_head, self.upd_texts = head, texts
         self.upd_bar = Gtk.ProgressBar(pulse_step=0.05)
         self.upd_actions = Gtk.Box(spacing=8, halign=Gtk.Align.END)
         self.upd_later = Gtk.Button()
@@ -1012,22 +1014,27 @@ class KioskShell(Gtk.Application):
             self.load_hmi()
 
     def place_corners(self):
-        """The Settings corner where configured, the update card in the
-        other corner of the same edge (clear of the Settings corner's hold).
-        Re-added rather than re-aligned: GTK doesn't move a placed overlay
-        child."""
+        """The Settings corner where configured, the update card in the same
+        corner under it: the hold still works over the card (its text may sit
+        under the corner), and the card's buttons go to its side away from
+        the corner. Re-added rather than re-aligned: GTK doesn't move a
+        placed overlay child; the corner re-added last stays on top."""
         corner = self.cfg.get("settings_corner", "top-right")
         if corner not in CORNERS:
             corner = "top-right"
         h, v = CORNERS[corner]
         self.overlay.remove_overlay(self.hotcorner)
+        self.overlay.remove_overlay(self.upd_card)
+        self.upd_card.set_halign(h)
+        self.upd_card.set_valign(v)
+        right = h == Gtk.Align.END
+        # Hide / Cancel left of the text in a right corner, right of it in a left one.
+        self.upd_head.reorder_child_after(self.upd_hide, None if right else self.upd_texts)
+        self.upd_actions.set_halign(Gtk.Align.START if right else Gtk.Align.END)
+        self.overlay.add_overlay(self.upd_card)
         self.hotcorner.set_halign(h)
         self.hotcorner.set_valign(v)
         self.overlay.add_overlay(self.hotcorner)
-        self.overlay.remove_overlay(self.upd_card)
-        self.upd_card.set_halign(Gtk.Align.START if h == Gtk.Align.END else Gtk.Align.END)
-        self.upd_card.set_valign(v)
-        self.overlay.add_overlay(self.upd_card)
 
     def apply_scale(self):
         """Screen scaling is WebKit zoom; the HMI also gets its own zoom."""
