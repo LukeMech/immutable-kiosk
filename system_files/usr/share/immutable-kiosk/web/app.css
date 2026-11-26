@@ -248,6 +248,8 @@ div.inline { margin-top: 6px; }
 /* Spacing below button rows, sliders and steppers. */
 .seg + .hint, .stepper + .hint, .slider + .hint, .swatches + .hint,
 .seg + div > .hint:first-child { margin-top: 12px; }
+/* A button row under a stepper (auto shutdown: delay, then Sleep / Power off). */
+.stepper + .seg { margin-top: 16px; }
 /* A status line under controls (a save's result, a reset): 16px from them,
    as every such banner. .applied holds the network IP settings' result. */
 * + .status, .applied { margin-top: 16px; }
