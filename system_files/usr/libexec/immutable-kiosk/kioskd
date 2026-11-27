@@ -1973,16 +1973,20 @@ def enable_power_wakeup():
                 pass
 
 
+def suspend():
+    """Returns once the system has woken up again."""
+    enable_power_wakeup()
+    p = subprocess.run(["systemctl", "suspend"], capture_output=True, text=True, timeout=None)
+    if p.returncode != 0:
+        print(f"kioskd: suspend: {cmd_error(p, 'systemctl')}", flush=True)
+
+
 def auto_off_act(action):
     print(f"kioskd: auto shutdown: {action}, the charger has been unplugged", flush=True)
     if action == "poweroff":
         power_off("poweroff")
         return
-    enable_power_wakeup()
-    # Returns once the system has woken up again.
-    p = subprocess.run(["systemctl", "suspend"], capture_output=True, text=True, timeout=None)
-    if p.returncode != 0:
-        print(f"kioskd: suspend: {cmd_error(p, 'systemctl')}", flush=True)
+    suspend()
 
 
 def auto_off_step(cfg, ac, now):
@@ -3757,13 +3761,16 @@ def r_settings_reset(body, q):
 
 def r_power(body, q):
     action = body.get("action")
-    if action not in ("reboot", "poweroff"):
+    if action not in ("suspend", "reboot", "poweroff"):
         raise ApiError("Unknown action")
     # Reply first: the screen comes up meanwhile (no delay -- it covers the
     # page anyway).
     def act():
         try:
-            power_off(action)
+            if action == "suspend":
+                suspend()
+            else:
+                power_off(action)
         except (ApiError, OSError, subprocess.SubprocessError) as e:
             print(f"kioskd: {action}: {e}", flush=True)
     threading.Thread(target=act, daemon=True).start()

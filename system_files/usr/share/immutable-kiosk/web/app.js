@@ -1427,9 +1427,11 @@ function initSystem() {
     holdButton($("sys-rollback"), () => api("/system/rollback", {})
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
-    const power = action => () => api("/power", { action }).then(() => toast(action === "reboot" ? "Restarting…" : "Shutting down…"))
+    const POWER_TOASTS = { suspend: "Going to sleep…", reboot: "Restarting…", poweroff: "Shutting down…" };
+    const power = action => () => api("/power", { action }).then(() => toast(POWER_TOASTS[action]))
         .catch(e => toast(e.message, true));
     holdButton($("sys-reboot-now"), power("reboot"));
+    holdButton($("pw-sleep"), power("suspend"));
     holdButton($("pw-reboot"), power("reboot"));
     // kioskd restarts the kiosk a second later, as freshly installed.
     holdButton($("pw-reset"), () => api("/settings/reset", {})
