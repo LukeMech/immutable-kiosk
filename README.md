@@ -49,12 +49,20 @@ power on ─► GRUB (BOOTIA32.EFI) ─► Fedora ─► cage (Wayland, one app)
   screen in the kiosk the moment it's asked for; Plymouth's follows.
 - **On-screen keyboard** ([`osk.js`](system_files/usr/share/immutable-kiosk/web/osk.js)):
   Polish letters via the `ąę` key, numeric pad for number/IP fields, shadow
-  DOM. Used by Settings and injected into the HMI page (switchable), so
+  DOM. `Fn` adds a row for terminals and editors: Esc, Tab, Ctrl, Alt,
+  Home, arrows, End (Ctrl+C in a web console, Tab completion). Used by Settings and injected into the HMI page (switchable), so
   TwinCAT HMI's login can be typed too.
 - Destructive actions (reboot, rollback, install, forget network) are
   **hold-to-confirm** buttons, not dialogs.
-- No suspend, power key ignored (long press still forces off), Fedora's
-  auto-update-and-reboot timer disabled: updates happen from Settings.
+- **Auto shutdown without power** (System → Power, off by default): the
+  charger unplugged for a set time (2 min by default; 30 s – 60 min) puts
+  the tablet to sleep -- it wakes when the charger is back, as far as the
+  hardware wakes on it, or with the power button -- or powers it off. The
+  same corner card counts down over any screen, with *Cancel* (until the
+  charger has been back). Woken on battery, it sleeps again after 30 s.
+- Never sleeps otherwise (suspend only for the above), power key ignored (long press still forces off), Fedora's
+  auto-update-and-reboot timer disabled: kioskd downloads updates itself
+  and never restarts on its own (see Updates).
 
 ## Installing
 
@@ -81,6 +89,16 @@ Settings → **System**: *Check for updates* / *Update* (`bootc upgrade`, the
 new image starts after a restart), the update channel -- *Stable* (`:latest`,
 releases) or *Testing* (`:dev`, every build of the `dev` branch) -- rollback
 to the previous image, and switching to any other image (`bootc switch`).
+
+**Automatic updates** (System → *Automatic updates*, on by default): kioskd
+checks the registry every hour once the boot is confirmed good and, when a
+new version is out, downloads and stages it in the background (`bootc
+upgrade` at the lowest CPU priority, never `--apply`). A small card over
+the HMI, in the Settings corner (still held over it; the card's buttons
+on its far side), follows it: the
+version found and downloading, one progress bar for the download and the
+install, then *Update ready* with *Hold: restart*. Each card has *Hide*
+(hidden for that version); tapping the card opens Settings → System.
 The enforced signature policy (from immutable-sbc) only accepts
 `ghcr.io/lukemech/*` images signed with the repo's cosign key.
 
@@ -97,6 +115,10 @@ CI: [build.yml](.github/workflows/build.yml) builds, rechunks, pushes and signs
 `ghcr.io/lukemech/immutable-kiosk-<variant>` and publishes a release
 (`v<fedora>.<date>`); [build-media.yml](.github/workflows/build-media.yml) then
 builds the installer ISO per device and attaches it (the raw disk image is only its payload, not a release asset).
+A pull request publishes `:pr-<number>` and keeps its ISOs as run artifacts
+(7 days), and so does a hand-started run on another branch (`:test-<branch>`).
+The installed system follows that tag. Dependabot's and forks' PRs only build;
+the `dev` → `main` PR builds nothing, since `dev`'s own run published it.
 Needs the repo secret **`SIGNING_SECRET`** (the same cosign key as
 immutable-sbc / lm-server).
 

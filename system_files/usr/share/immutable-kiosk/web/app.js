@@ -146,6 +146,8 @@ window.kioskShown = () => {
     if (cfg && cfg.mode !== "installer") { showTab(currentTab); refreshDevice(); }
 };
 window.kioskHidden = () => { settingsVisible = false; };
+// kiosk-shell's update card tapped: Settings opens on System (kioskShown follows).
+window.kioskOpenTab = name => { currentTab = name; };
 
 /* ---------- HMI */
 let hmiDraft = null;
@@ -1171,6 +1173,8 @@ function renderPeaks(u) {
 async function loadSystem() {
     try { sys = await api("/system"); }
     catch (e) { sys = { available: false, error: e.message }; }
+    if (cfg) $("opt-auto-upd").checked = cfg.auto_update !== false;
+    renderAutoOff();
     renderSysInfo();
     renderUpdate();
     followSysJob();
@@ -1374,12 +1378,44 @@ async function loadBoot() {
     $("boot-failed").hidden = !problems.length;
 }
 
+// Auto shutdown (Power card): the charger unplugged this long -> sleep or
+// power off (kioskd); kiosk-shell shows the countdown with Cancel.
+const AO_STEPS = [30, 60, 120, 180, 300, 600, 900, 1800, 3600];
+const fmtDelay = s => s < 60 ? `${s} s` : `${Math.round(s / 60)} min`;
+function renderAutoOff() {
+    if (!cfg) return;
+    const on = !!cfg.auto_shutdown, action = cfg.auto_shutdown_action || "suspend";
+    $("opt-auto-off").checked = on;
+    $("ao-opts").hidden = !on;
+    $("ao-val").textContent = fmtDelay(cfg.auto_shutdown_delay || 120);
+    seg($("ao-action"), action);
+    $("ao-hint").textContent = _(action === "poweroff"
+        ? "Powers off completely; the power button starts it again."
+        : "Goes to sleep and wakes up when the power comes back (or with the power button).");
+}
+// Not saveCfg: kiosk-shell has nothing to reload.
+const saveAutoOff = part => api("/config", part).then(c => { cfg = c; renderAutoOff(); })
+    .catch(e => { toast(e.message, true); renderAutoOff(); });
+
 function initSystem() {
     setInterval(() => { if (settingsVisible && currentTab === "system") loadUsage(); }, 2000);
     holdButton($("peaks-clear"), () => api("/usage/peaks/clear", {}).then(loadUsage).catch(e => toast(e.message, true)));
     // The upgrade job checks first; downloads only if newer.
     $("sys-upgrade").addEventListener("click", () => startSysJob("/system/upgrade"));
     $("sys-check").addEventListener("click", () => startSysJob("/system/check"));
+    $("opt-auto-off").addEventListener("change", e => saveAutoOff({ auto_shutdown: e.target.checked }));
+    const aoStep = dir => {
+        const cur = cfg.auto_shutdown_delay || 120;
+        const next = dir > 0 ? AO_STEPS.find(v => v > cur) : [...AO_STEPS].reverse().find(v => v < cur);
+        if (next) saveAutoOff({ auto_shutdown_delay: next });
+    };
+    $("ao-minus").addEventListener("click", () => aoStep(-1));
+    $("ao-plus").addEventListener("click", () => aoStep(1));
+    seg($("ao-action"), cfg.auto_shutdown_action || "suspend", v => saveAutoOff({ auto_shutdown_action: v }));
+    // kioskd checks hourly and stages new versions; kiosk-shell's card offers the restart.
+    $("opt-auto-upd").addEventListener("change", e => saveCfg({ auto_update: e.target.checked })
+        .then(c => { e.target.checked = c.auto_update !== false; })
+        .catch(err => { toast(err.message, true); e.target.checked = !e.target.checked; }));
     $("chan").querySelectorAll("button").forEach(b => holdButton(b, () =>
         api("/system/channel", { channel: b.dataset.v })
             .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
@@ -1391,9 +1427,11 @@ function initSystem() {
     holdButton($("sys-rollback"), () => api("/system/rollback", {})
         .then(j => { sysJob = j; sysWasRunning = true; renderUpdate(); followSysJob(); })
         .catch(e => toast(e.message, true)));
-    const power = action => () => api("/power", { action }).then(() => toast(action === "reboot" ? "Restarting…" : "Shutting down…"))
+    const POWER_TOASTS = { suspend: "Going to sleep…", reboot: "Restarting…", poweroff: "Shutting down…" };
+    const power = action => () => api("/power", { action }).then(() => toast(POWER_TOASTS[action]))
         .catch(e => toast(e.message, true));
     holdButton($("sys-reboot-now"), power("reboot"));
+    holdButton($("pw-sleep"), power("suspend"));
     holdButton($("pw-reboot"), power("reboot"));
     // kioskd restarts the kiosk a second later, as freshly installed.
     holdButton($("pw-reset"), () => api("/settings/reset", {})
@@ -1489,7 +1527,12 @@ function initEvents() {
         currentTab === "net" ? Promise.all([loadWifi(false, true), loadNet(true)]) : null,
     ]).catch(() => {}));
     const net = () => { netLive(); };
-    const config = () => api("/config").then(c => { cfg = c; if (currentTab === "screen") loadScreen(); }).catch(() => {});
+    const config = () => api("/config").then(c => {
+        cfg = c;
+        $("opt-auto-upd").checked = c.auto_update !== false;
+        renderAutoOff();
+        if (currentTab === "screen") loadScreen();
+    }).catch(() => {});
     const system = () => { if (currentTab === "system") loadSystem(); };
     listen({
         net: vis(net), power: vis(refreshDevice), clock: vis(refreshDevice), device: vis(refreshDevice),

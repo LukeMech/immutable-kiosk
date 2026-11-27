@@ -1,7 +1,9 @@
-"""Kernel argument video=<connector>:panel_orientation=<...> from devices.toml,
-for every device of this variant that sets panel_connector and
-panel_orientation. It sets the DRM connector's "panel orientation", which
-Plymouth (the boot splash) and the kernel console rotate by.
+"""Kernel argument video=<connector>:panel_orientation=<...> for every device
+of this variant with a panel_connector in devices.toml, from its rotation --
+so the boot splash (Plymouth) and the kernel console are turned as the
+screen from the first boot on. Afterwards kioskd rewrites the same argument
+from the rotation in use (its PANEL_ORIENTATIONS, the same mapping), also
+after a change in Settings.
 
 The image is per variant, not per device: two devices disagreeing about the
 same connector fail the build. A connector a device doesn't have is ignored
@@ -13,18 +15,23 @@ import tomllib
 DEVICES = "/ctx/images/devices.toml"   # the build context; not in the image
 OUT = "/usr/lib/bootc/kargs.d/31-panel-orientation.toml"
 VARIANT = "x86"
-ORIENTATIONS = {"normal", "upside_down", "left_side_up", "right_side_up"}
+# kioskd's PANEL_ORIENTATIONS: wlr-randr transform -> DRM panel orientation.
+ORIENTATIONS = {"normal": "normal", "90": "left_side_up", "180": "upside_down", "270": "right_side_up"}
 
 with open(DEVICES, "rb") as f:
     devices = tomllib.load(f)
 
 args = {}
 for key, dev in devices.items():
-    if not isinstance(dev, dict) or dev.get("variant") != VARIANT or "panel_orientation" not in dev:
+    if not isinstance(dev, dict) or dev.get("variant") != VARIANT or "panel_connector" not in dev:
         continue
-    conn, orient = dev.get("panel_connector"), dev["panel_orientation"]
-    if not conn or orient not in ORIENTATIONS:
-        raise SystemExit(f"devices.toml [{key}]: needs panel_connector and a panel_orientation of {sorted(ORIENTATIONS)}")
+    if "panel_orientation" in dev:
+        raise SystemExit(f"devices.toml [{key}]: panel_orientation is gone, it follows rotation now")
+    conn, rotation = dev["panel_connector"], dev.get("rotation")
+    if rotation not in ORIENTATIONS:
+        raise SystemExit(f"devices.toml [{key}]: with panel_connector, rotation must be a transform "
+                         f"({sorted(ORIENTATIONS)}), not {rotation!r}: the panel's native mode isn't known here")
+    orient = ORIENTATIONS[rotation]
     if args.get(conn, orient) != orient:
         raise SystemExit(f"devices.toml: {conn} is {args[conn]} on one device and {orient} on [{key}]")
     args[conn] = orient

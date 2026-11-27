@@ -24,9 +24,10 @@ systemctl enable immutable-kiosk-growroot.service
 # /etc stays writable: `timedatectl set-timezone` still works.
 ln -sf ../usr/share/zoneinfo/Europe/Warsaw /etc/localtime
 
-# A wall display never sleeps (logind ignores idle/lid/power key too:
-# logind.conf.d).
-systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+# A wall display never sleeps on its own (logind ignores idle/lid/power key
+# too: logind.conf.d). Suspend stays possible for kioskd's auto shutdown
+# (the charger unplugged, Settings > System > Power), and only for that.
+systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 
 # This timer pulls AND reboots on its own; a kiosk must not go dark in use.
 # Updates are started from Settings instead.

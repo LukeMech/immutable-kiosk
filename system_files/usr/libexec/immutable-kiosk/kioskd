@@ -74,6 +74,14 @@ DEFAULT_CONFIG = {
     "brightness": None,
     # GitHub owner/name whose releases are the update changelog.
     "releases_repo": "LukeMech/immutable-kiosk",
+    # New versions downloaded and staged in the background (auto_update_loop);
+    # they start at the next restart, which kiosk-shell's corner card offers.
+    "auto_update": True,
+    # The charger unplugged (the machine's power off) this many seconds:
+    # "suspend" (sleep; the charger coming back wakes it) or "poweroff".
+    "auto_shutdown": False,
+    "auto_shutdown_delay": 120,
+    "auto_shutdown_action": "suspend",
 }
 
 ACCENTS = ("blue", "teal", "green", "purple", "pink", "orange", "graphite")
@@ -85,6 +93,9 @@ BRIGHTNESS_MIN = 5
 BACKLIGHT_DIR = Path("/sys/class/backlight")
 
 CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+
+AUTO_OFF_ACTIONS = ("suspend", "poweroff")
+AUTO_OFF_DELAY = (10, 3600)  # s
 
 
 # ---------------------------------------------------------------- helpers
@@ -318,9 +329,21 @@ def save_config(update):
         if r is not None and r not in ROTATIONS:
             raise ApiError("Invalid orientation")
         cfg["rotation"] = r
-    for key in ("osk_in_hmi", "accept_self_signed"):
+    for key in ("osk_in_hmi", "accept_self_signed", "auto_update", "auto_shutdown"):
         if key in update:
             cfg[key] = bool(update[key])
+    if "auto_shutdown_delay" in update:
+        try:
+            d = int(update["auto_shutdown_delay"])
+        except (TypeError, ValueError):
+            raise ApiError("The delay must be a number of seconds")
+        if not AUTO_OFF_DELAY[0] <= d <= AUTO_OFF_DELAY[1]:
+            raise ApiError(Msg("Delay: {min}-{max} s", min=AUTO_OFF_DELAY[0], max=AUTO_OFF_DELAY[1]))
+        cfg["auto_shutdown_delay"] = d
+    if "auto_shutdown_action" in update:
+        if update["auto_shutdown_action"] not in AUTO_OFF_ACTIONS:
+            raise ApiError("Unknown action")
+        cfg["auto_shutdown_action"] = update["auto_shutdown_action"]
     if "zoom" in update:
         z = float(update["zoom"])
         if not 0.5 <= z <= 3.0:
@@ -378,7 +401,8 @@ def write_config(cfg):
 RESET_KEYS = {
     "hmi": ("hmi", "osk_in_hmi", "accept_self_signed", "zoom"),
     "screen": ("rotation", "scale", "settings_corner", "accent", "brightness"),
-    "system": ("language", "releases_repo"),
+    "system": ("language", "releases_repo", "auto_update",
+               "auto_shutdown", "auto_shutdown_delay", "auto_shutdown_action"),
 }
 RESET_PARTS = ("hmi", "network", "screen", "system")
 
@@ -918,8 +942,10 @@ def watch_lines(cmd, debounce, name, wanted=None, on_line=None):
 def watch_power():
     """Charger changes come from udev; battery % is also polled every 30 s."""
     poke = Debounce("power", 0.5)
+    # Each udev line also wakes auto_off_loop: the charger's state at once.
     threading.Thread(target=watch_lines, daemon=True, name="udev-power", args=(
-        ["udevadm", "monitor", "--udev", "--subsystem-match=power_supply"], poke, "power")).start()
+        ["udevadm", "monitor", "--udev", "--subsystem-match=power_supply"], poke, "power",
+        None, AUTO_OFF_WAKE.set)).start()
     last = None
     while True:
         try:
@@ -1020,6 +1046,10 @@ class Job:
         self.result = None
         self.started = time.time()
         self.finished = None
+        # upgrade: the version being installed, once the check found it
+        # ({version, digest}); background: started by auto_update_loop.
+        self.target = None
+        self.background = False
         # Drawn by the page as a chain: done, active, pending.
         self.steps = [{"key": k, "label": label, "state": "pending", "detail": "",
                        "fraction": None, "started": None, "took": None, "pace": None}
@@ -1057,11 +1087,9 @@ class Job:
             return
         now, p = time.time(), st["pace"]
         if p:
-            left = 1 - p["floor"]
-            shown = p["floor"] + left * (1 - math.exp(-1.5 * max(0, now - p["since"]) / max(1, p["expect"] * left)))
             if floor <= p["floor"]:
                 return
-            floor = max(floor, shown)
+            floor = max(floor, paced(p, now))
         st["pace"] = {"floor": floor, "since": now, "expect": expect}
         JOB_CHANGED.poke()
 
@@ -1095,6 +1123,14 @@ class Job:
         return {k: getattr(self, k) for k in
                 ("kind", "title", "state", "stage", "fraction", "detail", "result", "started", "finished",
                  "steps")} | {"log": self.log[-40:], "now": time.time()}
+
+
+def paced(p, now):
+    """Where a Job.pace bar is at `now` (app.js renderSteps: the same formula)."""
+    if not p:
+        return 0.0
+    left = 1 - p["floor"]
+    return p["floor"] + left * (1 - math.exp(-1.5 * max(0, now - p["since"]) / max(1, p["expect"] * left)))
 
 
 JOB_LOCK = threading.Lock()
@@ -1157,10 +1193,14 @@ def decimal(x, digits=1):
     return f"{x:.{digits}f}"
 
 
+# A background update gives way to the HMI: lowest CPU priority, low I/O priority.
+BACKGROUND = ["nice", "-n", "19", "ionice", "-c", "2", "-n", "7"]
+
+
 def run_bootc_with_progress(job, args):
     """bootc <args> --progress-fd N, events (JSON Lines) drive job's bar."""
     r, w = os.pipe()
-    proc = subprocess.Popen(["bootc"] + args + ["--progress-fd", str(w)],
+    proc = subprocess.Popen((BACKGROUND if job.background else []) + ["bootc"] + args + ["--progress-fd", str(w)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             pass_fds=(w,))
     os.close(w)
@@ -1453,6 +1493,7 @@ def job_upgrade(job):
         job.result = st
         return
     update = st["update"]
+    job.target = {"version": update.get("version") or "", "digest": update.get("digest") or ""}
     job.step("check", Msg("New version: {version}",
                           version=update.get("version") or update.get("digest", "")[7:19]))
     run_bootc_with_progress(job, ["upgrade"])
@@ -1461,6 +1502,102 @@ def job_upgrade(job):
     job.stage = "Done"
     job.detail = "The new version starts after a restart"
     job.result = bootc_status()
+
+
+# ---------------------------------------------------------------- automatic updates
+#
+# With "auto_update" on, the registry is asked every AUTO_EVERY_S (the same
+# check as Settings' button: a few small HTTPS requests), and a new version
+# is downloaded and staged by the upgrade job, niced -- never applied: it
+# starts at the next restart. kiosk-shell shows it all in a small card over
+# the HMI (/api/update): found, the progress, then "ready to restart".
+
+AUTO_FIRST_S = 120          # the first check, after the boot is confirmed good
+AUTO_EVERY_S = 3600
+AUTO_RETRY_S = 15 * 60      # after a check that failed (offline) or a busy kioskd
+AUTO_BOOT_WAIT_S = 20 * 60  # boot-counter's "ok" waited for at most this long
+BOOT_OK_FLAG = Path("/run/immutable-kiosk/boot-ok")  # boot-counter's OK_FLAG
+AUTO_WAKE = threading.Event()  # the option turned on: check now
+
+
+def wait_job(job):
+    while job.finished is None:
+        time.sleep(1)
+    return job
+
+
+def auto_update_once():
+    """One check, and the update if there is one. The delay until the next."""
+    if not load_config().get("auto_update", True):
+        return AUTO_EVERY_S
+    try:
+        check = wait_job(start_job("check", "Checking for updates", job_check))
+    except ApiError:
+        return AUTO_RETRY_S  # another job running (an update from Settings...)
+    if check.state != "done":
+        return AUTO_RETRY_S
+    if not (check.result or {}).get("update"):
+        return AUTO_EVERY_S
+
+    def background(job):
+        job.background = True
+        job_upgrade(job)
+    try:
+        wait_job(start_job("upgrade", "Automatic update", background, UPGRADE_STEPS))
+    except ApiError:
+        return AUTO_RETRY_S
+    # A failed download is tried again with the next regular check, not
+    # sooner: its card would come back every few minutes.
+    return AUTO_EVERY_S
+
+
+def auto_update_loop():
+    """Not before the boot is good: until then a new deployment may still
+    be rolled back by boot-counter."""
+    deadline = time.monotonic() + AUTO_BOOT_WAIT_S
+    while not BOOT_OK_FLAG.exists() and time.monotonic() < deadline:
+        time.sleep(10)
+    delay = AUTO_FIRST_S
+    while True:
+        AUTO_WAKE.wait(delay)
+        AUTO_WAKE.clear()
+        try:
+            delay = auto_update_once()
+        except Exception as e:  # noqa: BLE001 -- the loop must survive anything
+            print(f"kioskd: automatic update: {e!r}", flush=True)
+            delay = AUTO_RETRY_S
+
+
+# Of the whole bar in kiosk-shell's card: the download, then the install.
+DOWNLOAD_SHARE = 0.3
+
+
+def update_notice():
+    """kiosk-shell's update card: phase found / download / install (an
+    upgrade running past its check), failed (one that had found a version),
+    ready (a version staged, waiting for a restart) or idle."""
+    job = CURRENT_JOB
+    if job and job.kind == "upgrade" and job.target:
+        base = {"id": f"upgrade:{job.started}", "version": job.target["version"],
+                "digest": job.target["digest"], "background": job.background}
+        if job.state == "running":
+            steps = {st["key"]: st for st in job.steps}
+            pull, local = steps.get("pull"), steps.get("local")
+            if local and local["state"] == "active":
+                done = min(1.0, paced(local["pace"], time.time()))
+                return base | {"phase": "install", "fraction": DOWNLOAD_SHARE + (1 - DOWNLOAD_SHARE) * done}
+            if pull and pull["state"] == "active" and pull["fraction"] is not None:
+                return base | {"phase": "download", "fraction": DOWNLOAD_SHARE * pull["fraction"],
+                               "mb": dict(getattr(pull["detail"], "values", None) or {})}
+            return base | {"phase": "found", "fraction": None}
+        if job.state == "failed":
+            return base | {"phase": "failed", "error": str(job.detail or "")}
+    st = LAST_STATUS["value"] or {}
+    staged = st.get("staged")
+    if staged and not st.get("rollback_queued"):
+        return {"phase": "ready", "id": f"ready:{staged['digest']}", "version": staged["version"],
+                "digest": staged["digest"]}
+    return {"phase": "idle"}
 
 
 # ---------------------------------------------------------------- changelog
@@ -1788,6 +1925,111 @@ def power_state():
     elif ac is None and status == "Discharging":
         ac = False
     return {"ac_online": ac, "battery": battery, "battery_status": status}
+
+
+# ---- Auto shutdown: with "auto_shutdown" on, the charger unplugged for
+# "auto_shutdown_delay" s (the machine the tablet is built into lost its
+# power) puts the tablet to sleep -- woken by the charger coming back, as
+# far as the hardware wakes on it, or by the power button -- or powers it
+# off. kiosk-shell shows the countdown with Cancel (/api/power/auto), which
+# holds until the charger is back.
+
+AUTO_OFF_AFTER_WAKE_S = 30  # woken on battery (power button, a stray wakeup): sleeps again after
+AUTO_OFF_EVERY_S = 5        # the charger's state polled, besides udev's events
+AUTO_OFF = {"deadline": None, "total": None, "cancelled": False, "woke": False}
+AUTO_OFF_LOCK = threading.Lock()
+AUTO_OFF_WAKE = threading.Event()
+
+
+def auto_off_notice():
+    with AUTO_OFF_LOCK:
+        deadline = AUTO_OFF["deadline"]
+        if deadline is None:
+            return {"state": "idle"}
+        return {"state": "counting", "left": max(0.0, deadline - time.monotonic()),
+                "total": AUTO_OFF["total"],
+                "action": load_config().get("auto_shutdown_action", "suspend")}
+
+
+def enable_power_wakeup():
+    """Before sleeping: wakeup on for the chargers', the battery's devices
+    and their parents (the PMIC, the ACPI AC adapter) -- whatever of them
+    can wake the system on this hardware."""
+    seen = set()
+    for ps in Path("/sys/class/power_supply").glob("*"):
+        try:
+            dev = (ps / "device").resolve()
+        except OSError:
+            continue
+        for d in (ps.resolve(), dev, dev.parent, dev.parent.parent):
+            w = d / "power" / "wakeup"
+            if w in seen:
+                continue
+            seen.add(w)
+            try:
+                if w.read_text().strip() == "disabled":
+                    w.write_text("enabled")
+            except OSError:
+                pass
+
+
+def suspend():
+    """Returns once the system has woken up again."""
+    enable_power_wakeup()
+    p = subprocess.run(["systemctl", "suspend"], capture_output=True, text=True, timeout=None)
+    if p.returncode != 0:
+        print(f"kioskd: suspend: {cmd_error(p, 'systemctl')}", flush=True)
+
+
+def auto_off_act(action):
+    print(f"kioskd: auto shutdown: {action}, the charger has been unplugged", flush=True)
+    if action == "poweroff":
+        power_off("poweroff")
+        return
+    suspend()
+
+
+def auto_off_step(cfg, ac, now):
+    """One look at the charger: the action due now, or None. Changes AUTO_OFF;
+    True as the second value when kiosk-shell's countdown changed."""
+    with AUTO_OFF_LOCK:
+        was = AUTO_OFF["deadline"]
+        if ac is not False:
+            # Charger back (or not known): no countdown; Cancel ends with it.
+            AUTO_OFF.update(deadline=None, cancelled=False, woke=False)
+        elif not cfg.get("auto_shutdown") or AUTO_OFF["cancelled"]:
+            AUTO_OFF["deadline"] = None
+        elif AUTO_OFF["deadline"] is None:
+            total = int(cfg.get("auto_shutdown_delay") or 120)
+            if AUTO_OFF["woke"]:
+                total = min(total, AUTO_OFF_AFTER_WAKE_S)
+            AUTO_OFF.update(deadline=now + total, total=total)
+        elif now >= AUTO_OFF["deadline"]:
+            action = cfg.get("auto_shutdown_action", "suspend")
+            if action not in AUTO_OFF_ACTIONS:
+                action = "suspend"
+            AUTO_OFF.update(deadline=None, woke=action == "suspend")
+            return action, True
+        return None, AUTO_OFF["deadline"] != was
+
+
+def auto_off_loop():
+    while True:
+        AUTO_OFF_WAKE.wait(AUTO_OFF_EVERY_S)
+        AUTO_OFF_WAKE.clear()
+        try:
+            ac = power_state()["ac_online"]
+        except Exception:  # noqa: BLE001 -- sysfs oddities: not known
+            ac = None
+        action, changed = auto_off_step(load_config(), ac, time.monotonic())
+        if changed:
+            EVENTS.emit("power")
+        if action:
+            try:
+                auto_off_act(action)
+            except Exception as e:  # noqa: BLE001 -- the loop must survive anything
+                print(f"kioskd: auto shutdown: {e!r}", flush=True)
+            AUTO_OFF_WAKE.set()  # woken up: look at the charger at once
 
 
 def boot_medium():
@@ -2427,6 +2669,10 @@ def r_config_set(body, q):
     EVENTS.emit("config")
     if "hmi" in body:
         HMI_WAKE.set()
+    if body.get("auto_update") is True:
+        AUTO_WAKE.set()  # turned on: the first check now (auto_update_loop)
+    if any(k.startswith("auto_shutdown") for k in body):
+        AUTO_OFF_WAKE.set()
     def look(what):
         set_splash_look(what)
         set_grub_splash()
@@ -2617,7 +2863,8 @@ CAGE_UNIT = "immutable-kiosk-cage.service"
 # A Settings rotation rewrites it in the BLS entries' options lines; ostree
 # reads kargs back from there, so it survives bootc upgrade. (Not `ostree
 # admin kargs edit-in-place`: it only appends, and the kernel takes the
-# first video=<connector>.) HP 408: left_side_up is the kiosk's "90".
+# first video=<connector>.) The build sets it from devices.toml the same way
+# (20-panel-orientation.py); keep the two mappings alike.
 PANEL_ORIENTATIONS = {"normal": "normal", "90": "left_side_up",
                       "180": "upside_down", "270": "right_side_up"}
 BLS_ENTRIES = Path("/boot/loader/entries")
@@ -3514,21 +3761,41 @@ def r_settings_reset(body, q):
 
 def r_power(body, q):
     action = body.get("action")
-    if action not in ("reboot", "poweroff"):
+    if action not in ("suspend", "reboot", "poweroff"):
         raise ApiError("Unknown action")
     # Reply first: the screen comes up meanwhile (no delay -- it covers the
     # page anyway).
     def act():
         try:
-            power_off(action)
+            if action == "suspend":
+                suspend()
+            else:
+                power_off(action)
         except (ApiError, OSError, subprocess.SubprocessError) as e:
             print(f"kioskd: {action}: {e}", flush=True)
     threading.Thread(target=act, daemon=True).start()
     return {"ok": True}
 
 
+def r_power_auto(body, q):
+    return auto_off_notice()
+
+
+def r_power_auto_cancel(body, q):
+    """Cancel on kiosk-shell's countdown: no auto shutdown until the charger
+    has been back."""
+    with AUTO_OFF_LOCK:
+        AUTO_OFF.update(cancelled=True, deadline=None)
+    EVENTS.emit("power")
+    return {"ok": True}
+
+
 def r_job(body, q):
     return {"job": CURRENT_JOB.as_dict() if CURRENT_JOB else None}
+
+
+def r_update(body, q):
+    return update_notice()
 
 
 def r_installer(body, q):
@@ -3582,8 +3849,11 @@ ROUTES = {
     ("POST", "/api/system/channel"): r_system_channel,
     ("POST", "/api/system/rollback"): r_system_rollback,
     ("POST", "/api/power"): r_power,
+    ("GET", "/api/power/auto"): r_power_auto,
+    ("POST", "/api/power/auto/cancel"): r_power_auto_cancel,
     ("POST", "/api/settings/reset"): r_settings_reset,
     ("GET", "/api/job"): r_job,
+    ("GET", "/api/update"): r_update,
     ("GET", "/api/splash"): r_splash,
     ("POST", "/api/display"): r_display_set,
     ("GET", "/api/installer"): r_installer,
@@ -3610,6 +3880,8 @@ def main():
         set_system_locale()
         threading.Thread(target=usage_loop, daemon=True).start()
         threading.Thread(target=hmi_watch, daemon=True).start()
+        threading.Thread(target=auto_update_loop, daemon=True, name="auto-update").start()
+        threading.Thread(target=auto_off_loop, daemon=True, name="auto-off").start()
     srv.serve_forever()
 
 
