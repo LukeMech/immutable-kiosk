@@ -115,6 +115,10 @@ CI: [build.yml](.github/workflows/build.yml) builds, rechunks, pushes and signs
 `ghcr.io/lukemech/immutable-kiosk-<variant>` and publishes a release
 (`v<fedora>.<date>`); [build-media.yml](.github/workflows/build-media.yml) then
 builds the installer ISO per device and attaches it (the raw disk image is only its payload, not a release asset).
+A pull request publishes `:pr-<number>` and keeps its ISOs as run artifacts
+(7 days), and so does a hand-started run on another branch (`:test-<branch>`).
+The installed system follows that tag. Dependabot's and forks' PRs only build;
+the `dev` → `main` PR builds nothing, since `dev`'s own run published it.
 Needs the repo secret **`SIGNING_SECRET`** (the same cosign key as
 immutable-sbc / lm-server).
 

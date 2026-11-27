@@ -1,13 +1,14 @@
 name: Build installer ISOs
 
-# Called by build.yml and promote.yml (attaches to the release), or by hand
-# (artifacts only, unless publish + tag). The installed system follows
-# image_tag, so a dev ISO installs a dev-channel kiosk.
+# Called by build.yml and promote.yml, or by hand. With publish, the ISOs are
+# attached to release <tag>; without (pr-* / test-* builds, by hand), they are
+# run artifacts. The installed system follows image_tag, so a dev ISO installs
+# a dev-channel kiosk and a pr-12 ISO one that follows :pr-12.
 #
 # Per device in images/devices.toml: raw disk image (shrunk, ia32 EFI files
 # ensured) -> installer payload -> installer container -> ISO (+ ia32 boot
-# files if needed) -> checked, split if >= 2 GiB, attached. Only the ISO is
-# released.
+# files if needed) -> checked, split if >= 2 GiB for the release. Only the
+# ISO is published.
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +17,7 @@ on:
         type: boolean
         default: false
       tag:
-        description: "Existing release tag (required if publish is checked)"
+        description: "Version in the ISO's name; the existing release to attach to if publish is checked"
         type: string
         default: ""
       image_tag:
@@ -190,14 +191,14 @@ jobs:
           fi
           exit "${rc}"
 
-      - name: Prepare release files
+      - name: Checksum, split for the release
         run: |
           set -euo pipefail
           cd release
           sha256sum "${ISO_NAME}" > "${ISO_NAME}.sha256"
           # Release assets are capped at 2 GiB. <iso>.001, .002...: 7-Zip opens
           # .001 as one split file; `cat`/`copy /b` join them too.
-          if (( $(stat -c %s "${ISO_NAME}") >= 2147483648 )); then
+          if [[ "${{ inputs.publish }}" == "true" ]] && (( $(stat -c %s "${ISO_NAME}") >= 2147483648 )); then
             split -b 2000M -d -a 3 --numeric-suffixes=1 "${ISO_NAME}" "${ISO_NAME}." && rm -f "${ISO_NAME}"
           fi
           ls -la
@@ -206,9 +207,10 @@ jobs:
         if: inputs.publish != true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: immutable-kiosk-${{ matrix.device }}-media
+          name: immutable-kiosk-installer-${{ matrix.device }}-${{ env.DEFAULT_TAG }}
           path: release/
-          retention-days: 3
+          compression-level: 0  # an ISO doesn't shrink
+          retention-days: 7
 
       # gh, not action-gh-release, which would also rewrite the release's
       # pre-release/latest flags; --clobber replaces same-named files.

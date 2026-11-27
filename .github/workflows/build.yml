@@ -6,7 +6,12 @@ name: Build container image
 #   dev branch  -> :dev     + one rolling pre-release (v<fedora>.<commit>);
 #   main        -> :latest  + a release (v<fedora>.<date>[.N]).
 # A main push with a pre-release's exact tree (dev merged) builds nothing:
-# promote.yml promotes the tested image. Other branches: testing-<branch>.
+# promote.yml promotes the tested image.
+# Not released, ISOs kept as run artifacts (the installed system follows the tag):
+#   pull request            -> :pr-<number>;
+#   by hand on other branch -> :test-<branch>.
+# PRs without the signing key (Dependabot, forks) only build. The dev -> main
+# PR builds nothing: dev's push run published that tree already.
 on:
   pull_request:
     paths-ignore: &ignored
@@ -18,9 +23,7 @@ on:
   schedule:
     - cron: '0 10 1,15 * *'  # picks up Fedora updates in quiet periods
   push:
-    # Dependabot's branch pushes get no SIGNING_SECRET; its PR run builds the change.
-    branches-ignore:
-      - 'dependabot/**'
+    branches: [main, dev]
     paths-ignore: *ignored
   workflow_dispatch:
 
@@ -34,6 +37,7 @@ concurrency:
 jobs:
   discover:
     name: Discover variants
+    if: github.head_ref != 'dev'
     runs-on: ubuntu-latest
     outputs:
       variants: ${{ steps.list.outputs.variants }}
@@ -49,22 +53,28 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # stable / dev / testing / none (PRs, never pushed), plus its image tag.
+      # stable / dev / pr / test / none (never pushed), plus its image tag.
       - name: Compute channel
         id: channel
         env:
           GH_TOKEN: ${{ github.token }}
+          CAN_SIGN: ${{ secrets.SIGNING_SECRET != '' }}
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            CHANNEL=none; IMAGE_TAG=latest
+            # Devices refuse unsigned images: no key, nothing to publish.
+            if [[ "${CAN_SIGN}" == "true" ]]; then
+              CHANNEL=pr; IMAGE_TAG="pr-${{ github.event.pull_request.number }}"
+            else
+              CHANNEL=none; IMAGE_TAG=latest
+            fi
           elif [[ "${{ github.ref }}" == "refs/heads/${{ github.event.repository.default_branch }}" ]]; then
             CHANNEL=stable; IMAGE_TAG=latest
           elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
             CHANNEL=dev; IMAGE_TAG=dev
           else
-            CHANNEL=testing
-            IMAGE_TAG="testing-$(printf '%s' "${{ github.ref_name }}" | tr -c 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z')"
+            CHANNEL=test
+            IMAGE_TAG="test-$(printf '%s' "${{ github.ref_name }}" | tr -c 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z')"
           fi
           # Newest release with this tree: promote it if still a pre-release.
           # Not on schedule (that run is for Fedora updates).
@@ -216,19 +226,30 @@ jobs:
             /tmp/package-changelog-${{ matrix.variant }}.tsv
           retention-days: 1
 
+      # Not when never pushed, nor when a scheduled run found no package change.
+      - name: Decide whether to push
+        id: publish
+        run: |
+          if [[ "${{ needs.discover.outputs.channel }}" == "none" ]] ||
+             [[ "${{ github.event_name }}" == "schedule" && "${{ steps.check-changes.outputs.changed }}" == "false" ]]; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Rechunk with chunkah
-        if: github.event_name != 'pull_request' && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
+        if: steps.publish.outputs.push == 'true'
         run: just rechunk ${IMAGE_NAME} ${DEFAULT_TAG}
 
       - name: Generate Build Tags
         id: gen-build-tags
-        if: github.event_name != 'pull_request' && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
+        if: steps.publish.outputs.push == 'true'
         run: |
           alias_tags="$(just generate-build-tags ${IMAGE_NAME} ${DEFAULT_TAG})"
           echo "alias_tags=${alias_tags}" >> $GITHUB_OUTPUT
 
       - name: Tag Image
-        if: github.event_name != 'pull_request' && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
+        if: steps.publish.outputs.push == 'true'
         env:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
         run: just tag-images "${IMAGE_NAME}" "${DEFAULT_TAG}" "${ALIAS_TAGS}"
@@ -236,7 +257,7 @@ jobs:
       # Push once, then skopeo the other tags: each podman push makes a new
       # digest, which would leave tags unsigned.
       - name: Push To GHCR
-        if: needs.discover.outputs.channel != 'none' && !(github.event_name == 'schedule' && steps.check-changes.outputs.changed == 'false')
+        if: steps.publish.outputs.push == 'true'
         id: push-image
         env:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
@@ -273,7 +294,7 @@ jobs:
           path: published.marker
           retention-days: 1
 
-      # Sign testing-* too: devices refuse unsigned images, even on `bootc switch`.
+      # Sign pr-* and test-* too: devices refuse unsigned images, even on `bootc switch`.
       - name: Install Cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         if: steps.push-image.outcome == 'success'
@@ -292,7 +313,7 @@ jobs:
   aggregate:
     name: Check publish status
     needs: [discover, build_push]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.build_push.result == 'success' }}
+    if: ${{ !cancelled() && needs.build_push.result == 'success' && (needs.discover.outputs.channel == 'stable' || needs.discover.outputs.channel == 'dev') }}
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.check.outputs.published }}
@@ -316,12 +337,10 @@ jobs:
   release-meta:
     name: Publish release
     needs: [discover, build_push, aggregate]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.aggregate.result == 'success' && needs.aggregate.outputs.published == 'true' }}
+    if: ${{ !cancelled() && needs.aggregate.result == 'success' && needs.aggregate.outputs.published == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      tag: ${{ needs.discover.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -431,14 +450,15 @@ jobs:
               gh release delete "${OLD}" --cleanup-tag --yes
             done
 
+  # Attached to the release; pr-* and test-* ISOs stay run artifacts.
   build-media:
     name: Build installer ISOs
     needs: [discover, build_push, release-meta]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.release-meta.result == 'success' }}
+    if: ${{ !cancelled() && (needs.release-meta.result == 'success' || (needs.build_push.result == 'success' && (needs.discover.outputs.channel == 'pr' || needs.discover.outputs.channel == 'test'))) }}
     uses: ./.github/workflows/build-media.yml
     with:
-      publish: true
-      tag: ${{ needs.release-meta.outputs.tag }}
+      publish: ${{ needs.release-meta.result == 'success' }}
+      tag: ${{ needs.discover.outputs.release_tag }}
       # The tag the installed system then follows.
       image_tag: ${{ needs.discover.outputs.image_tag }}
     permissions:
